@@ -1,0 +1,15 @@
+# Runtime state — contains real personal data, never commit
+state.json
+event_log.jsonl
+
+# OAuth tokens and API credentials
+credentials/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Environment
+.env

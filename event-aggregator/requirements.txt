@@ -1,0 +1,18 @@
+# Google APIs (Gmail + Calendar)
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+google-auth-httplib2>=0.2
+
+# Slack
+slack-sdk>=3.0
+
+# Fuzzy title dedup
+thefuzz[speedup]>=0.22
+python-Levenshtein>=0.25
+
+# Secrets / config
+keyring>=25.0
+python-dotenv>=1.0
+
+# HTTP (Discord REST, Ollama)
+requests>=2.31
