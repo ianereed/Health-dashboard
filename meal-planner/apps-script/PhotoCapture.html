@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 24px;
+      text-align: center;
+      color: #333;
+    }
+    p { margin: 0 0 20px; color: #555; font-size: 14px; }
+    #photoBtn {
+      padding: 12px 28px;
+      font-size: 15px;
+      cursor: pointer;
+      background: #4285f4;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    #photoBtn:hover:not(:disabled) { background: #3367d6; }
+    #photoBtn:disabled { background: #ccc; cursor: default; }
+    #fileInput { display: none; }
+    #status {
+      margin-top: 18px;
+      font-size: 13px;
+      min-height: 20px;
+      color: #555;
+    }
+    #status.error { color: #d93025; }
+    #status.success { color: #0f9d58; }
+  </style>
+</head>
+<body>
+  <p>Select a photo of a recipe or take one with your camera.<br>
+     Gemini will extract the ingredients automatically.</p>
+
+  <button id="photoBtn" onclick="document.getElementById('fileInput').click()">
+    📷 Choose / Take Photo
+  </button>
+
+  <!--
+    accept="image/*" captures any image format
+    capture="environment" opens the back camera on mobile;
+    ignored on desktop (falls back to file picker)
+  -->
+  <input
+    type="file"
+    id="fileInput"
+    accept="image/*"
+    capture="environment"
+    onchange="handleFile(this)"
+  >
+
+  <div id="status"></div>
+
+  <script>
+    function handleFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+
+      setStatus('Reading photo…');
+      document.getElementById('photoBtn').disabled = true;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        // e.target.result = "data:image/jpeg;base64,/9j/..."
+        const dataUrl = e.target.result;
+        const commaIdx = dataUrl.indexOf(',');
+        const header = dataUrl.substring(0, commaIdx);       // "data:image/jpeg;base64"
+        const base64 = dataUrl.substring(commaIdx + 1);      // the raw base64 data
+        const mimeType = header.match(/:(.*?);/)[1];         // "image/jpeg"
+
+        setStatus('Parsing recipe with Gemini... (this takes ~10 seconds)');
+
+        google.script.run
+          .withSuccessHandler(function (recipeName) {
+            setStatus('✓ Added "' + recipeName + '" to your sheet!', 'success');
+            setTimeout(function () { google.script.host.close(); }, 2000);
+          })
+          .withFailureHandler(function (err) {
+            setStatus('Error: ' + err.message, 'error');
+            document.getElementById('photoBtn').disabled = false;
+          })
+          .parseRecipeImage(base64, mimeType);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function setStatus(msg, cls) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = cls || '';
+    }
+  </script>
+</body>
+</html>

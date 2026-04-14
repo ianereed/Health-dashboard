@@ -1,0 +1,436 @@
+// =============================================================================
+// Meal Planner — Google Apps Script
+// Attach this script to your recipe Google Sheet via Extensions > Apps Script
+// =============================================================================
+//
+// Script Properties (set once via Project Settings > Script properties):
+//   TODOIST_API_TOKEN   — your Todoist API token
+//   TODOIST_PROJECT_ID  — numeric ID of your grocery Todoist project
+//   TODOIST_SECTIONS    — JSON map of section names to section IDs
+//                         e.g. {"Fruits + Veggies":"id","Dairy":"id","Meats":"id"}
+//   GEMINI_API_KEY      — free key from aistudio.google.com
+//   SHEET_NAME          — sheet tab name (default: "Sheet1")
+//
+// Sheet format:
+//   Row 1: Recipe name (one per column)
+//   Row 2+: Ingredients, one per cell ("2 cups flour", "1 lb chicken", ...)
+//   Empty cell = end of that recipe's ingredient list
+
+const PROPS = PropertiesService.getScriptProperties();
+const TODOIST_LABEL = 'meal-planner';
+
+// =============================================================================
+// Menu
+// =============================================================================
+
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Grocery')
+    .addItem('Build Grocery List…', 'openRecipeSidebar_')
+    .addItem('Add Recipe from Photo…', 'openPhotoCapture_')
+    .addSeparator()
+    .addItem('Consolidate List', 'consolidateList_')
+    .addItem('Sort List', 'sortList_')
+    .addItem('Clear List', 'clearList_')
+    .addToUi();
+}
+
+// =============================================================================
+// Recipe sidebar — multi-select push
+// =============================================================================
+
+function openRecipeSidebar_() {
+  const template = HtmlService.createTemplateFromFile('RecipeSidebar');
+  template.recipesJson = JSON.stringify(getRecipeNames_());
+  SpreadsheetApp.getUi().showSidebar(template.evaluate().setTitle('Grocery List'));
+}
+
+/** Called from sidebar on load. Returns [{name, colIndex}, ...] */
+function getRecipesForSidebar() {
+  return getRecipeNames_();
+}
+
+/**
+ * Called from sidebar when user clicks "Add to Grocery List".
+ * @param {number[]} colIndices  Column indices of selected recipes (0-based)
+ * @returns {string}             Status message to display in the sidebar
+ */
+function pushSelectedRecipes(colIndices) {
+  if (!colIndices || colIndices.length === 0) {
+    return 'No recipes selected.';
+  }
+
+  const sheet = getSheet_();
+  const lastRow = sheet.getLastRow();
+  const allIngredients = [];
+
+  colIndices.forEach(colIndex => {
+    for (let row = 2; row <= lastRow; row++) {
+      const val = sheet.getRange(row, colIndex + 1).getValue();
+      if (!val) break;
+      allIngredients.push(String(val).trim());
+    }
+  });
+
+  if (allIngredients.length === 0) {
+    return 'No ingredients found in the selected recipes.';
+  }
+
+  const categorized = categorizeIngredients_(allIngredients);
+  const pushed = createTodoistTasks_(categorized);
+
+  const n = colIndices.length;
+  return `Added ${pushed} ingredients from ${n} recipe${n > 1 ? 's' : ''} to your grocery list.`;
+}
+
+// =============================================================================
+// Todoist task creation
+// =============================================================================
+
+function createTodoistTasks_(categorized) {
+  const token = PROPS.getProperty('TODOIST_API_TOKEN');
+  const projectId = PROPS.getProperty('TODOIST_PROJECT_ID');
+  const sections = JSON.parse(PROPS.getProperty('TODOIST_SECTIONS') || '{}');
+  const sectionNames = Object.keys(sections);
+  const fallbackSectionId = sections[sectionNames[0]];
+
+  let pushed = 0;
+  categorized.forEach(({ ingredient, section }) => {
+    const sectionId = sections[section] || fallbackSectionId;
+    const resp = UrlFetchApp.fetch('https://api.todoist.com/api/v1/tasks', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: `Bearer ${token}` },
+      payload: JSON.stringify({
+        content: ingredient,
+        project_id: projectId,
+        section_id: sectionId,
+        labels: [TODOIST_LABEL],
+      }),
+      muteHttpExceptions: true,
+    });
+    if (resp.getResponseCode() === 200) pushed++;
+  });
+
+  return pushed;
+}
+
+// =============================================================================
+// Ingredient categorization via Gemini
+// =============================================================================
+
+function categorizeIngredients_(ingredients) {
+  const apiKey = PROPS.getProperty('GEMINI_API_KEY');
+  const sections = JSON.parse(PROPS.getProperty('TODOIST_SECTIONS') || '{}');
+  const sectionNames = Object.keys(sections);
+  const fallback = sectionNames[0] || 'Other';
+
+  const prompt =
+    `Categorize each grocery ingredient into one of these sections: ${sectionNames.join(', ')}.\n\n` +
+    `Ingredients:\n${ingredients.map((i, n) => `${n + 1}. ${i}`).join('\n')}\n\n` +
+    `Respond with a JSON array only — no other text:\n` +
+    `[{"ingredient": "...", "section": "..."}, ...]\n\n` +
+    `Use the exact section names provided. If unsure, use "${fallback}".`;
+
+  const resp = UrlFetchApp.fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+      muteHttpExceptions: true,
+    }
+  );
+
+  const raw = resp.getContentText();
+  const body = JSON.parse(raw);
+
+  if (!body.candidates || body.candidates.length === 0) {
+    throw new Error('Gemini error: ' + raw);
+  }
+
+  const text = body.candidates[0].content.parts[0].text;
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error('Could not parse categorization response from Gemini.');
+  return JSON.parse(match[0]);
+}
+
+// =============================================================================
+// Consolidate list (Gemini)
+// =============================================================================
+
+function consolidateList_() {
+  const tasks = fetchLabeledTasks_();
+
+  if (tasks.length === 0) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Grocery list is empty — nothing to consolidate.', 'Grocery', 4);
+    return;
+  }
+
+  const apiKey = PROPS.getProperty('GEMINI_API_KEY');
+  const sections = JSON.parse(PROPS.getProperty('TODOIST_SECTIONS') || '{}');
+  const sectionNames = Object.keys(sections);
+  const fallback = sectionNames[0];
+
+  const ingredientLines = tasks.map(t => `- ${t.content}`).join('\n');
+  const prompt =
+    `You are a grocery list assistant. Consolidate this ingredient list:\n` +
+    `- Combine duplicate or equivalent ingredients into one entry\n` +
+    `- Sum quantities where possible (e.g. "1 cup olive oil" + "2 tbsp olive oil" → "1 cup + 2 tbsp olive oil")\n` +
+    `- Assign each item to one of these sections: ${sectionNames.join(', ')}\n` +
+    `- Keep the format "quantity unit ingredient" (e.g. "2 cups flour")\n\n` +
+    `Ingredients:\n${ingredientLines}\n\n` +
+    `Respond with a JSON array only — no other text:\n` +
+    `[{"content": "...", "section": "..."}, ...]\n\n` +
+    `Use the exact section names provided. If unsure, use "${fallback}".`;
+
+  const resp = UrlFetchApp.fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+      muteHttpExceptions: true,
+    }
+  );
+
+  const raw = resp.getContentText();
+  const body = JSON.parse(raw);
+  if (!body.candidates || body.candidates.length === 0) {
+    throw new Error('Gemini error: ' + raw);
+  }
+
+  const text = body.candidates[0].content.parts[0].text;
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error('Could not parse consolidation response from Gemini.');
+  const consolidated = JSON.parse(match[0]);
+
+  const ui = SpreadsheetApp.getUi();
+  const confirm = ui.alert(
+    'Consolidate Grocery List',
+    `Replace ${tasks.length} items with ${consolidated.length} consolidated items?`,
+    ui.ButtonSet.YES_NO
+  );
+  if (confirm !== ui.Button.YES) return;
+
+  tasks.forEach(t => deleteTask_(t.id));
+
+  const token = PROPS.getProperty('TODOIST_API_TOKEN');
+  const projectId = PROPS.getProperty('TODOIST_PROJECT_ID');
+  const fallbackId = sections[sectionNames[0]];
+
+  consolidated.forEach(({ content, section }) => {
+    const sectionId = sections[section] || fallbackId;
+    UrlFetchApp.fetch('https://api.todoist.com/api/v1/tasks', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: `Bearer ${token}` },
+      payload: JSON.stringify({
+        content,
+        project_id: projectId,
+        section_id: sectionId,
+        labels: [TODOIST_LABEL],
+      }),
+      muteHttpExceptions: true,
+    });
+  });
+
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    `Consolidated ${tasks.length} items into ${consolidated.length}.`, 'Done', 5
+  );
+}
+
+// =============================================================================
+// Sort list (alphabetical within sections, no LLM)
+// =============================================================================
+
+function sortList_() {
+  const tasks = fetchLabeledTasks_();
+
+  if (tasks.length === 0) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Grocery list is empty — nothing to sort.', 'Grocery', 4);
+    return;
+  }
+
+  // Group by section_id, sort each group alphabetically
+  const bySectionId = {};
+  tasks.forEach(t => {
+    if (!bySectionId[t.section_id]) bySectionId[t.section_id] = [];
+    bySectionId[t.section_id].push(t);
+  });
+  Object.values(bySectionId).forEach(group => {
+    group.sort((a, b) => a.content.localeCompare(b.content));
+  });
+
+  // Delete all, recreate in sorted order (Todoist preserves creation order within a section)
+  tasks.forEach(t => deleteTask_(t.id));
+
+  const token = PROPS.getProperty('TODOIST_API_TOKEN');
+  const projectId = PROPS.getProperty('TODOIST_PROJECT_ID');
+
+  Object.entries(bySectionId).forEach(([sectionId, group]) => {
+    group.forEach(({ content }) => {
+      UrlFetchApp.fetch('https://api.todoist.com/api/v1/tasks', {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({
+          content,
+          project_id: projectId,
+          section_id: sectionId,
+          labels: [TODOIST_LABEL],
+        }),
+        muteHttpExceptions: true,
+      });
+    });
+  });
+
+  SpreadsheetApp.getActiveSpreadsheet().toast(`Sorted ${tasks.length} items alphabetically.`, 'Done', 4);
+}
+
+// =============================================================================
+// Clear list
+// =============================================================================
+
+function clearList_() {
+  const tasks = fetchLabeledTasks_();
+
+  if (tasks.length === 0) {
+    SpreadsheetApp.getActiveSpreadsheet().toast('Grocery list is already empty.', 'Grocery', 4);
+    return;
+  }
+
+  const ui = SpreadsheetApp.getUi();
+  const confirm = ui.alert(
+    'Clear Grocery List',
+    `Delete all ${tasks.length} items from your grocery list?`,
+    ui.ButtonSet.YES_NO
+  );
+  if (confirm !== ui.Button.YES) return;
+
+  tasks.forEach(t => deleteTask_(t.id));
+  SpreadsheetApp.getActiveSpreadsheet().toast(`Cleared ${tasks.length} items.`, 'Done', 4);
+}
+
+// =============================================================================
+// Photo capture / recipe parser
+// =============================================================================
+
+function openPhotoCapture_() {
+  const html = HtmlService.createHtmlOutputFromFile('PhotoCapture')
+    .setWidth(420)
+    .setHeight(320);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Add Recipe from Photo');
+}
+
+/**
+ * Called from PhotoCapture.html after the user selects a photo.
+ * @param {string} base64Data  Base64-encoded image data (no data: prefix)
+ * @param {string} mimeType    e.g. "image/jpeg"
+ * @returns {string}           Recipe name that was added
+ */
+function parseRecipeImage(base64Data, mimeType) {
+  const apiKey = PROPS.getProperty('GEMINI_API_KEY');
+
+  const prompt =
+    'Extract the recipe from this image. Return a JSON object with:\n' +
+    '- "name": the recipe name (string)\n' +
+    '- "ingredients": array of strings, each formatted as "quantity unit ingredient"\n' +
+    '  e.g. ["2 cups flour", "1 lb chicken thighs", "3 cloves garlic"]\n\n' +
+    'Return only the JSON object, no other text.';
+
+  const resp = UrlFetchApp.fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        contents: [{
+          parts: [
+            { inlineData: { mimeType: mimeType, data: base64Data } },
+            { text: prompt },
+          ],
+        }],
+      }),
+      muteHttpExceptions: true,
+    }
+  );
+
+  const body = JSON.parse(resp.getContentText());
+  const text = body.candidates[0].content.parts[0].text;
+
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('Could not parse recipe from image. Try a clearer photo.');
+  const recipe = JSON.parse(match[0]);
+
+  const sheet = getSheet_();
+  const nextCol = sheet.getLastColumn() + 1;
+  sheet.getRange(1, nextCol).setValue(recipe.name);
+  recipe.ingredients.forEach((ingredient, idx) => {
+    sheet.getRange(idx + 2, nextCol).setValue(ingredient);
+  });
+
+  return recipe.name;
+}
+
+// =============================================================================
+// Todoist API helpers
+// =============================================================================
+
+/** Fetch all meal-planner-labeled tasks, handling cursor pagination. */
+function fetchLabeledTasks_() {
+  const token = PROPS.getProperty('TODOIST_API_TOKEN');
+  const projectId = PROPS.getProperty('TODOIST_PROJECT_ID');
+  const tasks = [];
+  let cursor = null;
+
+  do {
+    let url = `https://api.todoist.com/api/v1/tasks?project_id=${encodeURIComponent(projectId)}&label=${encodeURIComponent(TODOIST_LABEL)}`;
+    if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+
+    const resp = UrlFetchApp.fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      muteHttpExceptions: true,
+    });
+    const data = JSON.parse(resp.getContentText());
+    (data.results || []).forEach(t => tasks.push(t));
+    cursor = data.next_cursor || null;
+  } while (cursor);
+
+  return tasks;
+}
+
+function deleteTask_(id) {
+  const token = PROPS.getProperty('TODOIST_API_TOKEN');
+  UrlFetchApp.fetch(`https://api.todoist.com/api/v1/tasks/${id}`, {
+    method: 'delete',
+    headers: { Authorization: `Bearer ${token}` },
+    muteHttpExceptions: true,
+  });
+}
+
+// =============================================================================
+// Sheet helpers
+// =============================================================================
+
+function getSheet_() {
+  const sheetName = PROPS.getProperty('SHEET_NAME') || 'Sheet1';
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  if (!sheet) throw new Error(`Sheet "${sheetName}" not found. Check the SHEET_NAME Script Property.`);
+  return sheet;
+}
+
+function getRecipeNames_() {
+  const sheet = getSheet_();
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) return [];
+
+  const row1 = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const results = [];
+  row1.forEach((name, idx) => {
+    if (name) results.push({ name: String(name), colIndex: idx });
+  });
+  return results;
+}

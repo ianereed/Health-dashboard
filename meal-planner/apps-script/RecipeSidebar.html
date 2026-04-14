@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #202124; padding: 12px; margin: 0; }
+    h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px 0; }
+    #controls { margin-bottom: 10px; }
+    #controls a { color: #1a73e8; cursor: pointer; font-size: 12px; margin-right: 10px; }
+    #recipe-list { border: 1px solid #dadce0; border-radius: 4px; max-height: calc(100vh - 155px); overflow-y: auto; margin-bottom: 10px; }
+    .recipe-item { padding: 8px 10px; border-bottom: 1px solid #f1f3f4; display: flex; align-items: center; }
+    .recipe-item:last-child { border-bottom: none; }
+    .recipe-item input { margin-right: 8px; cursor: pointer; }
+    .recipe-item label { cursor: pointer; }
+    #add-btn { width: 100%; padding: 8px; background: #1a73e8; color: white; border: none; border-radius: 4px; font-size: 13px; font-weight: 500; cursor: pointer; }
+    #add-btn:hover:not(:disabled) { background: #1765cc; }
+    #add-btn:disabled { background: #dadce0; color: #80868b; cursor: default; }
+    #status { margin-top: 8px; font-size: 12px; min-height: 16px; word-wrap: break-word; }
+    .msg { padding: 16px 10px; color: #5f6368; font-style: italic; text-align: center; }
+  </style>
+</head>
+<body>
+
+<h3>Select Recipes</h3>
+<div id="controls">
+  <a onclick="selectAll()">Select all</a>
+  <a onclick="deselectAll()">Deselect all</a>
+</div>
+<div id="recipe-list"></div><button id="add-btn" onclick="addToList()" disabled>Add to Grocery List</button>
+<div id="status"></div>
+
+<script>
+var RECIPES = <?!= recipesJson ?>;
+
+function init() {
+  if (!RECIPES || RECIPES.length === 0) {
+    document.getElementById('recipe-list').innerHTML = '<div class="msg">No recipes found. Add recipe names to Row 1 of the sheet, then reopen this sidebar.</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < RECIPES.length; i++) {
+    var r = RECIPES[i];
+    var name = r.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    html += '<div class="recipe-item">';
+    html += '<input type="checkbox" id="cb' + r.colIndex + '" value="' + r.colIndex + '" onchange="updateBtn()">';
+    html += '<label for="cb' + r.colIndex + '">' + name + '</label>';
+    html += '</div>';
+  }
+  document.getElementById('recipe-list').innerHTML = html;
+  updateBtn();
+}
+
+function selectAll() {
+  var boxes = document.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = true;
+  updateBtn();
+}
+
+function deselectAll() {
+  var boxes = document.querySelectorAll('input[type="checkbox"]');
+  for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
+  updateBtn();
+}
+
+function updateBtn() {
+  var n = document.querySelectorAll('input[type="checkbox"]:checked').length;
+  document.getElementById('add-btn').disabled = (n === 0);
+}
+
+function addToList() {
+  var checked = document.querySelectorAll('input[type="checkbox"]:checked');
+  if (checked.length === 0) return;
+  var cols = [];
+  for (var i = 0; i < checked.length; i++) cols.push(parseInt(checked[i].value, 10));
+  document.getElementById('add-btn').disabled = true;
+  var statusEl = document.getElementById('status');
+  statusEl.style.color = '#5f6368';
+  statusEl.textContent = 'Adding ' + cols.length + ' recipe(s)...';
+  google.script.run
+    .withSuccessHandler(function(msg) {
+      statusEl.textContent = msg;
+      statusEl.style.color = '#137333';
+      document.getElementById('add-btn').disabled = false;
+    })
+    .withFailureHandler(function(err) {
+      statusEl.textContent = 'Error: ' + (err && err.message ? err.message : String(err));
+      statusEl.style.color = '#d93025';
+      document.getElementById('add-btn').disabled = false;
+    })
+    .pushSelectedRecipes(cols);
+}
+
+init();
+</script>
+</body>
+</html>
