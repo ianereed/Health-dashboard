@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.health-dashboard.collect</string>
+    <string>com.health-dashboard.staleness</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard/venv/bin/python3</string>
         <string>-m</string>
-        <string>collectors.collect_all</string>
+        <string>collectors.staleness_check</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard</string>
@@ -22,19 +22,21 @@
         </dict>
         <dict>
             <key>Hour</key>
-            <integer>7</integer>
+            <integer>21</integer>
             <key>Minute</key>
-            <integer>20</integer>
+            <integer>0</integer>
         </dict>
     </array>
     <key>StandardOutPath</key>
-    <string>/Users/ianreed/Library/Logs/health-dashboard/collect.log</string>
+    <string>/Users/ianreed/Library/Logs/health-dashboard/staleness.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/ianreed/Library/Logs/health-dashboard/collect.log</string>
+    <string>/Users/ianreed/Library/Logs/health-dashboard/staleness.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/ianreed</string>
     </dict>
 </dict>
 </plist>

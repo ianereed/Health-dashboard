@@ -3,34 +3,25 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.health-dashboard.collect</string>
+    <string>com.health-dashboard.intervals-poll</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard/venv/bin/python3</string>
         <string>-m</string>
-        <string>collectors.collect_all</string>
+        <string>collectors.intervals_collector</string>
+        <string>--days</string>
+        <string>14</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard</string>
-    <key>StartCalendarInterval</key>
-    <array>
-        <dict>
-            <key>Hour</key>
-            <integer>7</integer>
-            <key>Minute</key>
-            <integer>0</integer>
-        </dict>
-        <dict>
-            <key>Hour</key>
-            <integer>7</integer>
-            <key>Minute</key>
-            <integer>20</integer>
-        </dict>
-    </array>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <true/>
     <key>StandardOutPath</key>
-    <string>/Users/ianreed/Library/Logs/health-dashboard/collect.log</string>
+    <string>/Users/ianreed/Library/Logs/health-dashboard/intervals-poll.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/ianreed/Library/Logs/health-dashboard/collect.log</string>
+    <string>/Users/ianreed/Library/Logs/health-dashboard/intervals-poll.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

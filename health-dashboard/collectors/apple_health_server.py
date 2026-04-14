@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .db import get_connection, init_db
 
@@ -222,7 +222,7 @@ def _normalize_timestamp(ts: str) -> str:
 def run_server():
     """Start the HTTP server."""
     init_db()
-    server = HTTPServer(("0.0.0.0", PORT), HealthDataHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthDataHandler)
     logger.info(f"Apple Health receiver listening on port {PORT}")
     logger.info(f"Configure Health Auto Export to POST to: http://<your-mac-ip>:{PORT}/")
     try:
