@@ -8,6 +8,9 @@
     #controls { margin-bottom: 10px; }
     #controls a { color: #1a73e8; cursor: pointer; font-size: 12px; margin-right: 10px; }
     #recipe-list { border: 1px solid #dadce0; border-radius: 4px; max-height: calc(100vh - 155px); overflow-y: auto; margin-bottom: 10px; }
+    .sheet-group { border-top: 1px solid #dadce0; }
+    .sheet-group:first-child { border-top: none; }
+    .sheet-label { padding: 7px 10px 3px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #5f6368; background: #f8f9fa; }
     .recipe-item { padding: 8px 10px; border-bottom: 1px solid #f1f3f4; display: flex; align-items: center; }
     .recipe-item:last-child { border-bottom: none; }
     .recipe-item input { margin-right: 8px; cursor: pointer; }
@@ -32,20 +35,34 @@
 <script>
 var RECIPES = <?!= recipesJson ?>;
 
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function init() {
   if (!RECIPES || RECIPES.length === 0) {
-    document.getElementById('recipe-list').innerHTML = '<div class="msg">No recipes found. Add recipe names to Row 1 of the sheet, then reopen this sidebar.</div>';
+    document.getElementById('recipe-list').innerHTML = '<div class="msg">No recipes found. Add recipe names to Row 1 of any sheet, then reopen this sidebar.</div>';
     return;
   }
   var html = '';
+  var currentSheet = null;
   for (var i = 0; i < RECIPES.length; i++) {
     var r = RECIPES[i];
-    var name = r.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if (r.sheetName !== currentSheet) {
+      if (currentSheet !== null) html += '</div>';
+      html += '<div class="sheet-group">';
+      html += '<div class="sheet-label">' + escHtml(r.sheetName) + '</div>';
+      currentSheet = r.sheetName;
+    }
+    var name = escHtml(r.name);
+    var val = escHtml(r.sheetName) + '|' + r.colIndex;
+    var cbId = 'cb_' + escHtml(r.sheetName) + '_' + r.colIndex;
     html += '<div class="recipe-item">';
-    html += '<input type="checkbox" id="cb' + r.colIndex + '" value="' + r.colIndex + '" onchange="updateBtn()">';
-    html += '<label for="cb' + r.colIndex + '">' + name + '</label>';
+    html += '<input type="checkbox" id="' + cbId + '" value="' + val + '" onchange="updateBtn()">';
+    html += '<label for="' + cbId + '">' + name + '</label>';
     html += '</div>';
   }
+  if (currentSheet !== null) html += '</div>';
   document.getElementById('recipe-list').innerHTML = html;
   updateBtn();
 }
@@ -70,12 +87,17 @@ function updateBtn() {
 function addToList() {
   var checked = document.querySelectorAll('input[type="checkbox"]:checked');
   if (checked.length === 0) return;
-  var cols = [];
-  for (var i = 0; i < checked.length; i++) cols.push(parseInt(checked[i].value, 10));
+  var selections = [];
+  for (var i = 0; i < checked.length; i++) {
+    var pipeIdx = checked[i].value.indexOf('|');
+    var sheetName = checked[i].value.substring(0, pipeIdx);
+    var colIndex = parseInt(checked[i].value.substring(pipeIdx + 1), 10);
+    selections.push({ sheetName: sheetName, colIndex: colIndex });
+  }
   document.getElementById('add-btn').disabled = true;
   var statusEl = document.getElementById('status');
   statusEl.style.color = '#5f6368';
-  statusEl.textContent = 'Adding ' + cols.length + ' recipe(s)...';
+  statusEl.textContent = 'Adding ' + selections.length + ' recipe(s)...';
   google.script.run
     .withSuccessHandler(function(msg) {
       statusEl.textContent = msg;
@@ -87,7 +109,7 @@ function addToList() {
       statusEl.style.color = '#d93025';
       document.getElementById('add-btn').disabled = false;
     })
-    .pushSelectedRecipes(cols);
+    .pushSelectedRecipes(selections);
 }
 
 init();

@@ -9,7 +9,9 @@
       text-align: center;
       color: #333;
     }
-    p { margin: 0 0 20px; color: #555; font-size: 14px; }
+    p { margin: 0 0 16px; color: #555; font-size: 14px; }
+    .field-label { display: block; text-align: left; font-size: 12px; color: #5f6368; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    #sheetSelect { width: 100%; padding: 7px 8px; font-size: 13px; border: 1px solid #dadce0; border-radius: 4px; margin-bottom: 18px; color: #202124; }
     #photoBtn {
       padding: 12px 28px;
       font-size: 15px;
@@ -37,8 +39,11 @@
   <p>Select a photo of a recipe or take one with your camera.<br>
      Gemini will extract the ingredients automatically.</p>
 
+  <label class="field-label" for="sheetSelect">Add to sheet</label>
+  <select id="sheetSelect"></select>
+
   <button id="photoBtn" onclick="document.getElementById('fileInput').click()">
-    📷 Choose / Take Photo
+    Choose / Take Photo
   </button>
 
   <!--
@@ -57,40 +62,58 @@
   <div id="status"></div>
 
   <script>
+    var SHEET_NAMES = <?!= sheetNamesJson ?>;
+
+    (function init() {
+      var sel = document.getElementById('sheetSelect');
+      SHEET_NAMES.forEach(function(name) {
+        var opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      });
+    })();
+
     function handleFile(input) {
-      const file = input.files[0];
+      var file = input.files[0];
       if (!file) return;
 
-      setStatus('Reading photo…');
+      var sheetName = document.getElementById('sheetSelect').value;
+      if (!sheetName) {
+        setStatus('Please select a sheet first.', 'error');
+        return;
+      }
+
+      setStatus('Reading photo...');
       document.getElementById('photoBtn').disabled = true;
 
-      const reader = new FileReader();
-      reader.onload = function (e) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
         // e.target.result = "data:image/jpeg;base64,/9j/..."
-        const dataUrl = e.target.result;
-        const commaIdx = dataUrl.indexOf(',');
-        const header = dataUrl.substring(0, commaIdx);       // "data:image/jpeg;base64"
-        const base64 = dataUrl.substring(commaIdx + 1);      // the raw base64 data
-        const mimeType = header.match(/:(.*?);/)[1];         // "image/jpeg"
+        var dataUrl = e.target.result;
+        var commaIdx = dataUrl.indexOf(',');
+        var header = dataUrl.substring(0, commaIdx);       // "data:image/jpeg;base64"
+        var base64 = dataUrl.substring(commaIdx + 1);      // the raw base64 data
+        var mimeType = header.match(/:(.*?);/)[1];         // "image/jpeg"
 
         setStatus('Parsing recipe with Gemini... (this takes ~10 seconds)');
 
         google.script.run
-          .withSuccessHandler(function (recipeName) {
-            setStatus('✓ Added "' + recipeName + '" to your sheet!', 'success');
-            setTimeout(function () { google.script.host.close(); }, 2000);
+          .withSuccessHandler(function(recipeName) {
+            setStatus('Added "' + recipeName + '" to ' + sheetName + '!', 'success');
+            setTimeout(function() { google.script.host.close(); }, 2000);
           })
-          .withFailureHandler(function (err) {
+          .withFailureHandler(function(err) {
             setStatus('Error: ' + err.message, 'error');
             document.getElementById('photoBtn').disabled = false;
           })
-          .parseRecipeImage(base64, mimeType);
+          .parseRecipeImage(base64, mimeType, sheetName);
       };
       reader.readAsDataURL(file);
     }
 
     function setStatus(msg, cls) {
-      const el = document.getElementById('status');
+      var el = document.getElementById('status');
       el.textContent = msg;
       el.className = cls || '';
     }

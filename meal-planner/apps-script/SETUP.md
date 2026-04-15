@@ -61,3 +61,52 @@ You only need to do this once.
 
 - Supports up to 20 recipes (columns A–T). This covers most home recipe rotations; add more stubs to `Code.gs` if needed.
 - Apps Script has a 6-minute execution timeout, which is well above the typical ~10-second Claude API call.
+
+---
+
+## Bulk photo import (`bulk_import.py`)
+
+Use this to load recipes in bulk from a folder of photos. Python handles all
+the Gemini vision calls and POSTs the results to an Apps Script web app.
+
+### 1. Add optional secret (recommended)
+
+In the Apps Script editor: **Project Settings → Script properties → Add property**
+
+| Property | Value |
+|---|---|
+| `BULK_IMPORT_SECRET` | Any random string (e.g. `openssl rand -hex 16`). Leave blank to skip auth. |
+
+### 2. Deploy as web app
+
+1. In the Apps Script editor, click **Deploy → New deployment**
+2. Click the gear icon next to "Select type" → choose **Web app**
+3. Set **Execute as:** Me (your Google account)
+4. Set **Who has access:** Anyone
+5. Click **Deploy** → copy the **Web app URL**
+
+### 3. Add to `.env`
+
+```
+APPS_SCRIPT_WEBAPP_URL=https://script.google.com/macros/s/YOUR_ID/exec
+BULK_IMPORT_SECRET=your_random_secret   # must match Script Property value
+```
+
+### 4. Verify & run
+
+```bash
+# Verify the web app is live
+python bulk_import.py --check
+
+# Dry run (Gemini extracts recipes, nothing written to sheet)
+python bulk_import.py ~/Desktop/recipe-photos/ --dry-run
+
+# Full run (extracts + writes to sheet)
+python bulk_import.py ~/Desktop/recipe-photos/ --yes
+```
+
+### Re-deploying after Code.gs changes
+
+Each time you update `Code.gs`, you must create a **new deployment version**:
+**Deploy → Manage deployments → Edit → "New version" → Deploy**.
+The web app URL stays the same; only the live version changes.

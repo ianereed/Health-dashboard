@@ -41,35 +41,43 @@ function onOpen() {
 
 function openRecipeSidebar_() {
   const template = HtmlService.createTemplateFromFile('RecipeSidebar');
-  template.recipesJson = JSON.stringify(getRecipeNames_());
+  template.recipesJson = JSON.stringify(getAllRecipes_());
   SpreadsheetApp.getUi().showSidebar(template.evaluate().setTitle('Grocery List'));
 }
 
-/** Called from sidebar on load. Returns [{name, colIndex}, ...] */
+/** Called from sidebar on load. Returns [{name, colIndex, sheetName}, ...] */
 function getRecipesForSidebar() {
-  return getRecipeNames_();
+  return getAllRecipes_();
 }
 
 /**
  * Called from sidebar when user clicks "Add to Grocery List".
- * @param {number[]} colIndices  Column indices of selected recipes (0-based)
- * @returns {string}             Status message to display in the sidebar
+ * @param {{sheetName: string, colIndex: number}[]} selections  Selected recipes
+ * @returns {string}  Status message to display in the sidebar
  */
-function pushSelectedRecipes(colIndices) {
-  if (!colIndices || colIndices.length === 0) {
+function pushSelectedRecipes(selections) {
+  if (!selections || selections.length === 0) {
     return 'No recipes selected.';
   }
 
-  const sheet = getSheet_();
-  const lastRow = sheet.getLastRow();
-  const allIngredients = [];
+  // Group by sheetName so we only open each sheet once
+  const bySheet = {};
+  selections.forEach(({ sheetName, colIndex }) => {
+    if (!bySheet[sheetName]) bySheet[sheetName] = [];
+    bySheet[sheetName].push(colIndex);
+  });
 
-  colIndices.forEach(colIndex => {
-    for (let row = 2; row <= lastRow; row++) {
-      const val = sheet.getRange(row, colIndex + 1).getValue();
-      if (!val) break;
-      allIngredients.push(String(val).trim());
-    }
+  const allIngredients = [];
+  Object.entries(bySheet).forEach(([sheetName, colIndices]) => {
+    const sheet = getSheet_(sheetName);
+    const lastRow = sheet.getLastRow();
+    colIndices.forEach(colIndex => {
+      for (let row = 2; row <= lastRow; row++) {
+        const val = sheet.getRange(row, colIndex + 1).getValue();
+        if (!val) break;
+        allIngredients.push(String(val).trim());
+      }
+    });
   });
 
   if (allIngredients.length === 0) {
@@ -79,7 +87,7 @@ function pushSelectedRecipes(colIndices) {
   const categorized = categorizeIngredients_(allIngredients);
   const pushed = createTodoistTasks_(categorized);
 
-  const n = colIndices.length;
+  const n = selections.length;
   return `Added ${pushed} ingredients from ${n} recipe${n > 1 ? 's' : ''} to your grocery list.`;
 }
 
@@ -319,19 +327,22 @@ function clearList_() {
 // =============================================================================
 
 function openPhotoCapture_() {
-  const html = HtmlService.createHtmlOutputFromFile('PhotoCapture')
-    .setWidth(420)
-    .setHeight(320);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Add Recipe from Photo');
+  const template = HtmlService.createTemplateFromFile('PhotoCapture');
+  template.sheetNamesJson = JSON.stringify(getSheetNames_());
+  SpreadsheetApp.getUi().showModalDialog(
+    template.evaluate().setWidth(420).setHeight(360),
+    'Add Recipe from Photo'
+  );
 }
 
 /**
  * Called from PhotoCapture.html after the user selects a photo.
  * @param {string} base64Data  Base64-encoded image data (no data: prefix)
  * @param {string} mimeType    e.g. "image/jpeg"
+ * @param {string} sheetName   Target sheet tab name
  * @returns {string}           Recipe name that was added
  */
-function parseRecipeImage(base64Data, mimeType) {
+function parseRecipeImage(base64Data, mimeType, sheetName) {
   const apiKey = PROPS.getProperty('GEMINI_API_KEY');
 
   const prompt =
@@ -365,7 +376,7 @@ function parseRecipeImage(base64Data, mimeType) {
   if (!match) throw new Error('Could not parse recipe from image. Try a clearer photo.');
   const recipe = JSON.parse(match[0]);
 
-  const sheet = getSheet_();
+  const sheet = getSheet_(sheetName);
   const nextCol = sheet.getLastColumn() + 1;
   sheet.getRange(1, nextCol).setValue(recipe.name);
   recipe.ingredients.forEach((ingredient, idx) => {
@@ -415,15 +426,32 @@ function deleteTask_(id) {
 // Sheet helpers
 // =============================================================================
 
-function getSheet_() {
-  const sheetName = PROPS.getProperty('SHEET_NAME') || 'Sheet1';
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
-  if (!sheet) throw new Error(`Sheet "${sheetName}" not found. Check the SHEET_NAME Script Property.`);
+function getSheet_(sheetName) {
+  const name = sheetName || PROPS.getProperty('SHEET_NAME') || 'Sheet1';
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  if (!sheet) throw new Error(`Sheet "${name}" not found.`);
   return sheet;
 }
 
-function getRecipeNames_() {
-  const sheet = getSheet_();
+/** Returns all sheet tab names in their current order. */
+function getSheetNames_() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheets().map(s => s.getName());
+}
+
+/**
+ * Returns all recipes from all sheets, preserving sheet order and column order.
+ * Each entry: {name, colIndex, sheetName}
+ */
+function getAllRecipes_() {
+  const all = [];
+  getSheetNames_().forEach(sheetName => {
+    getRecipeNames_(sheetName).forEach(r => all.push(Object.assign({}, r, { sheetName })));
+  });
+  return all;
+}
+
+function getRecipeNames_(sheetName) {
+  const sheet = getSheet_(sheetName);
   const lastCol = sheet.getLastColumn();
   if (lastCol === 0) return [];
 
@@ -433,4 +461,118 @@ function getRecipeNames_() {
     if (name) results.push({ name: String(name), colIndex: idx });
   });
   return results;
+}
+
+// =============================================================================
+// Bulk import web app (used by bulk_import.py)
+// =============================================================================
+
+/**
+ * Health-check endpoint. Lets bulk_import.py verify the web app is live.
+ * GET https://script.google.com/macros/s/<ID>/exec
+ */
+function doGet(e) {
+  return _jsonResponse({ ok: true }, 200);
+}
+
+/**
+ * Bulk recipe import endpoint. Called by bulk_import.py with a JSON body:
+ *   { "recipes": [ { "name": "...", "ingredients": ["..."] }, ... ], "secret": "..." }
+ *
+ * Deploy via: Extensions > Apps Script > Deploy > New deployment > Web app
+ *   Execute as: Me   |   Who has access: Anyone
+ *
+ * Optional: set BULK_IMPORT_SECRET in Script Properties to gate access.
+ */
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+
+    // Optional shared-secret check
+    const secret = PROPS.getProperty('BULK_IMPORT_SECRET');
+    if (secret && body.secret !== secret) {
+      return _jsonResponse({ error: 'Unauthorized' }, 401);
+    }
+
+    const recipes = body.recipes;
+    if (!Array.isArray(recipes) || recipes.length === 0) {
+      return _jsonResponse({ error: 'No recipes provided' }, 400);
+    }
+
+    const sheetName = body.sheet_name;
+    if (!sheetName) {
+      return _jsonResponse({ error: 'sheet_name is required' }, 400);
+    }
+
+    const result = bulkImportRecipes_(recipes, sheetName);
+    return _jsonResponse(result, 200);
+
+  } catch (err) {
+    return _jsonResponse({ error: err.message }, 500);
+  }
+}
+
+/**
+ * Write an array of {name, ingredients[]} objects to the given sheet.
+ * Skips recipes that already exist (by name, case-insensitive) or when the
+ * 20-column limit is reached.
+ *
+ * @param {Array<{name: string, ingredients: string[]}>} recipes
+ * @param {string} sheetName  Target sheet tab name
+ * @returns {{written: number, skipped: number, errors: string[], current_col_count: number}}
+ */
+function bulkImportRecipes_(recipes, sheetName) {
+  const MAX_COLS = 20;
+  const sheet = getSheet_(sheetName);
+  const errors = [];
+  let written = 0;
+  let skipped = 0;
+
+  // Read existing names once; keep a local copy to catch within-batch duplicates
+  const existingNames = getRecipeNames_(sheetName).map(r => r.name.toLowerCase());
+
+  recipes.forEach(recipe => {
+    // Validate shape
+    if (!recipe.name || !Array.isArray(recipe.ingredients) || recipe.ingredients.length === 0) {
+      errors.push('Invalid recipe shape: ' + JSON.stringify(recipe).substring(0, 80));
+      skipped++;
+      return;
+    }
+
+    // Duplicate name check (case-insensitive)
+    if (existingNames.includes(recipe.name.toLowerCase())) {
+      errors.push('Duplicate name skipped: "' + recipe.name + '"');
+      skipped++;
+      return;
+    }
+
+    // Column limit check
+    const nextCol = sheet.getLastColumn() + 1;
+    if (nextCol > MAX_COLS) {
+      errors.push('Column limit (' + MAX_COLS + ') reached — "' + recipe.name + '" not written');
+      skipped++;
+      return;
+    }
+
+    // Write name + ingredients
+    sheet.getRange(1, nextCol).setValue(recipe.name);
+    recipe.ingredients.forEach((ingredient, idx) => {
+      sheet.getRange(idx + 2, nextCol).setValue(ingredient);
+    });
+
+    // Update local cache so subsequent recipes in this batch see the new name
+    existingNames.push(recipe.name.toLowerCase());
+    written++;
+  });
+
+  return { written, skipped, errors, current_col_count: sheet.getLastColumn() };
+}
+
+/** Wraps a response object as JSON output. Note: Apps Script always returns HTTP 200;
+ *  the `status` field in the body is what callers should check for errors. */
+function _jsonResponse(data, statusCode) {
+  const payload = Object.assign({ status: statusCode }, data);
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
 }
