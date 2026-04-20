@@ -592,6 +592,17 @@ def main() -> int:
             config.OLLAMA_BASE_URL,
         )
 
+    if not args.mock:
+        from analyzers import image_analyzer
+        if not image_analyzer.check_local_vision_available():
+            logger.warning(
+                "Local vision model '%s' not found in Ollama — "
+                "image analysis will fall back to cloud (gemini). "
+                "To enable local analysis: ollama pull %s",
+                config.LOCAL_VISION_MODEL,
+                config.LOCAL_VISION_MODEL,
+            )
+
     sources = [s.strip() for s in args.source.split(",") if s.strip()] if args.source else _ALL_SOURCES
 
     if not args.mock:

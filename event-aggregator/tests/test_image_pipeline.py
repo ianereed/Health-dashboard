@@ -1,8 +1,9 @@
 """
 Tests for the image/PDF intake pipeline.
 
-Covers: Slack file detection (mock), Gemini analyzer (mock), file writer
-(staging/NAS), state tracking, and end-to-end --mock --dry-run flow.
+Covers: Slack file detection (mock), local-first analyzer (mock + unit),
+Gemini cloud fallback (mock), file writer (staging/NAS), state tracking,
+and end-to-end --mock --dry-run flow.
 """
 from __future__ import annotations
 
@@ -404,3 +405,241 @@ class TestFileWriter:
                     assert not (Path(self.tmpdir) / "F_TEST_WRITE").exists()
             finally:
                 shutil.rmtree(nas_dir, ignore_errors=True)
+
+
+# ── Local-first analyzer unit tests ─────────────────────────────────────────
+
+
+class TestSplitPages:
+    def test_split_even(self):
+        from analyzers.image_analyzer import _split_pages
+        pages = [(b"", f"p{i}.jpg", "image/jpeg") for i in range(8)]
+        batches = _split_pages(pages, 4)
+        assert len(batches) == 2
+        assert len(batches[0]) == 4
+        assert len(batches[1]) == 4
+
+    def test_split_uneven(self):
+        from analyzers.image_analyzer import _split_pages
+        pages = [(b"", f"p{i}.jpg", "image/jpeg") for i in range(10)]
+        batches = _split_pages(pages, 4)
+        assert len(batches) == 3
+        assert len(batches[2]) == 2
+
+    def test_split_smaller_than_max(self):
+        from analyzers.image_analyzer import _split_pages
+        pages = [(b"", f"p{i}.jpg", "image/jpeg") for i in range(3)]
+        batches = _split_pages(pages, 4)
+        assert len(batches) == 1
+        assert len(batches[0]) == 3
+
+
+class TestMergePageResults:
+    def _make_page_dict(self, confidence: float = 0.9, page_num: int = 1) -> dict:
+        return {
+            "classification": {
+                "primary_category": "Healthcare/0-Ian Healthcare",
+                "confidence": confidence,
+                "reasoning": "Medical document",
+            },
+            "extraction": {
+                "document_type": "medical_form",
+                "title": f"Lab Results Page {page_num}",
+                "date": "2026-04-20",
+                "structured_text": f"--- SECTION ---\nPage {page_num} content here",
+                "summary": f"Lab results page {page_num}",
+            },
+        }
+
+    def test_highest_confidence_wins_classification(self):
+        from analyzers.image_analyzer import _merge_page_results
+        pages = [self._make_page_dict(0.95, 1), self._make_page_dict(0.60, 2)]
+        result = _merge_page_results(pages, ["p1.jpg", "p2.jpg"])
+        assert result is not None
+        assert result.confidence == 0.95
+        assert result.title == "Lab Results Page 1"
+
+    def test_structured_text_concatenated(self):
+        from analyzers.image_analyzer import _merge_page_results
+        pages = [self._make_page_dict(0.9, 1), self._make_page_dict(0.8, 2)]
+        result = _merge_page_results(pages, ["p1.jpg", "p2.jpg"])
+        assert "Page 1 content" in result.structured_text
+        assert "Page 2 content" in result.structured_text
+        assert "PAGE 1" in result.structured_text
+        assert "PAGE 2" in result.structured_text
+
+    def test_first_non_null_date_wins(self):
+        from analyzers.image_analyzer import _merge_page_results
+        p1 = self._make_page_dict(0.9, 1)
+        p1["extraction"]["date"] = None
+        p2 = self._make_page_dict(0.8, 2)
+        p2["extraction"]["date"] = "2026-03-15"
+        result = _merge_page_results([p1, p2], ["p1.jpg", "p2.jpg"])
+        assert result.date == "2026-03-15"
+
+    def test_empty_list_returns_none(self):
+        from analyzers.image_analyzer import _merge_page_results
+        result = _merge_page_results([], [])
+        assert result is None
+
+    def test_category_split_correctly(self):
+        from analyzers.image_analyzer import _merge_page_results
+        result = _merge_page_results([self._make_page_dict()], ["p.jpg"])
+        assert result.primary_category == "Healthcare"
+        assert result.subcategory == "0-Ian Healthcare"
+
+
+class TestMergeGeminiResults:
+    def _make_result(self, confidence: float, text: str) -> FileAnalysisResult:
+        return FileAnalysisResult(
+            file_id="",
+            primary_category="Financial",
+            subcategory=None,
+            confidence=confidence,
+            title="Test Doc",
+            date="2026-04-20",
+            structured_text=text,
+            summary="A financial document",
+        )
+
+    def test_structured_text_merged(self):
+        from analyzers.image_analyzer import _merge_gemini_results
+        r1 = self._make_result(0.9, "Batch 1 text")
+        r2 = self._make_result(0.8, "Batch 2 text")
+        merged = _merge_gemini_results([r1, r2])
+        assert "Batch 1 text" in merged.structured_text
+        assert "Batch 2 text" in merged.structured_text
+
+    def test_best_confidence_wins(self):
+        from analyzers.image_analyzer import _merge_gemini_results
+        r1 = self._make_result(0.7, "A")
+        r2 = self._make_result(0.95, "B")
+        merged = _merge_gemini_results([r1, r2])
+        assert merged.confidence == 0.95
+
+    def test_calendar_items_deduplicated(self):
+        from analyzers.image_analyzer import _merge_gemini_results
+        from datetime import timedelta
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        event = CandidateEvent(
+            title="Doctor Appointment", start_dt=now, end_dt=None, location=None,
+            confidence=0.85, source="slack_file", source_id="f1", category="health",
+        )
+        event2 = CandidateEvent(
+            title="Doctor Appointment", start_dt=now + timedelta(minutes=5), end_dt=None,
+            location=None, confidence=0.85, source="slack_file", source_id="f2", category="health",
+        )
+        r1 = self._make_result(0.9, "A")
+        r1.calendar_items = [event]
+        r2 = self._make_result(0.8, "B")
+        r2.calendar_items = [event2]  # same event, slightly different time
+        merged = _merge_gemini_results([r1, r2])
+        assert len(merged.calendar_items) == 1  # deduplicated
+
+
+class TestAnalyzePageLocalFallback:
+    """Test that _analyze_page_local returns None gracefully when Ollama is unreachable."""
+
+    def test_returns_none_when_ollama_unreachable(self):
+        from analyzers.image_analyzer import _analyze_page_local
+        with patch("config.OLLAMA_BASE_URL", "http://localhost:19999"):  # nothing here
+            result = _analyze_page_local(b"fake", "test.jpg", "image/jpeg")
+        assert result is None
+
+    def test_returns_none_when_response_malformed(self):
+        from analyzers.image_analyzer import _analyze_page_local
+        from unittest.mock import MagicMock
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"response": "not valid json at all"}
+        mock_resp.raise_for_status = MagicMock()
+        with patch("requests.post", return_value=mock_resp):
+            result = _analyze_page_local(b"fake", "test.jpg", "image/jpeg")
+        assert result is None
+
+
+class TestCloudFallbackChain:
+    """Test that cloud fallback tries models in order and stops on first success."""
+
+    def test_succeeds_on_first_model(self):
+        from analyzers.image_analyzer import _analyze_cloud_fallback
+        mock_result = FileAnalysisResult(
+            file_id="", primary_category="Financial", subcategory=None,
+            confidence=0.9, title="Receipt", date=None,
+            structured_text="Some text", summary="A receipt",
+        )
+        with patch("analyzers.image_analyzer._analyze_gemini", return_value=mock_result) as mock_fn:
+            with patch("config.GEMINI_API_KEY", "fake-key"):
+                with patch("config.GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.5-flash"):
+                    result = _analyze_cloud_fallback(
+                        [(b"fake", "test.jpg", "image/jpeg")], ""
+                    )
+        assert result is mock_result
+        assert mock_fn.call_count == 1
+        assert mock_fn.call_args[0][2] == "gemini-2.5-flash-lite"
+
+    def test_falls_through_to_second_model(self):
+        from analyzers.image_analyzer import _analyze_cloud_fallback
+        mock_result = FileAnalysisResult(
+            file_id="", primary_category="Financial", subcategory=None,
+            confidence=0.85, title="Doc", date=None,
+            structured_text="Text", summary="A doc",
+        )
+
+        def side_effect(pages, text, model):
+            if model == "gemini-2.5-flash-lite":
+                return None  # first model fails
+            return mock_result
+
+        with patch("analyzers.image_analyzer._analyze_gemini", side_effect=side_effect):
+            with patch("config.GEMINI_API_KEY", "fake-key"):
+                with patch("config.GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.5-flash"):
+                    result = _analyze_cloud_fallback(
+                        [(b"fake", "test.jpg", "image/jpeg")], ""
+                    )
+        assert result is mock_result
+
+    def test_returns_none_when_all_fail(self):
+        from analyzers.image_analyzer import _analyze_cloud_fallback
+        with patch("analyzers.image_analyzer._analyze_gemini", return_value=None):
+            with patch("config.GEMINI_API_KEY", "fake-key"):
+                with patch("config.GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.5-flash"):
+                    result = _analyze_cloud_fallback(
+                        [(b"fake", "test.jpg", "image/jpeg")], ""
+                    )
+        assert result is None
+
+    def test_returns_none_with_no_api_key(self):
+        from analyzers.image_analyzer import _analyze_cloud_fallback
+        with patch("config.GEMINI_API_KEY", ""):
+            result = _analyze_cloud_fallback([(b"fake", "test.jpg", "image/jpeg")], "")
+        assert result is None
+
+
+class TestCheckLocalVisionAvailable:
+    def test_returns_false_when_ollama_unreachable(self):
+        from analyzers.image_analyzer import check_local_vision_available
+        with patch("config.OLLAMA_BASE_URL", "http://localhost:19999"):
+            assert check_local_vision_available() is False
+
+    def test_returns_false_when_model_not_in_list(self):
+        from analyzers.image_analyzer import check_local_vision_available
+        from unittest.mock import MagicMock
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"models": [{"name": "llama3.2:latest"}]}
+        with patch("requests.get", return_value=mock_resp):
+            with patch("config.LOCAL_VISION_MODEL", "qwen2.5vl:7b"):
+                assert check_local_vision_available() is False
+
+    def test_returns_true_when_model_present(self):
+        from analyzers.image_analyzer import check_local_vision_available
+        from unittest.mock import MagicMock
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "models": [{"name": "llama3.2:latest"}, {"name": "qwen2.5vl:7b"}]
+        }
+        with patch("requests.get", return_value=mock_resp):
+            with patch("config.LOCAL_VISION_MODEL", "qwen2.5vl:7b"):
+                assert check_local_vision_available() is True
