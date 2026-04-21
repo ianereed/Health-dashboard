@@ -700,25 +700,31 @@ def main() -> int:
         logger.info("  → %d message(s)", len(msgs))
         all_messages.extend(msgs)
 
-    # ── Idle check: gate heavy phases on system idle ──────────────────────────
-    from idle import get_idle_seconds
+    # ── Time-window check: only run heavy phases overnight ───────────────────
+    from zoneinfo import ZoneInfo
     extraction_ran = False
     if args.mock or args.force:
-        system_is_idle = True
+        heavy_phases_allowed = True
     else:
-        idle_secs = get_idle_seconds()
-        system_is_idle = idle_secs >= config.IDLE_MIN_SECONDS
-        if not system_is_idle:
+        local_hour = datetime.now(ZoneInfo(config.USER_TIMEZONE)).hour
+        start = config.OLLAMA_ACTIVE_HOUR_START
+        end = config.OLLAMA_ACTIVE_HOUR_END
+        if start <= end:
+            heavy_phases_allowed = start <= local_hour < end
+        else:  # wrap-around window (e.g. 22 → 6)
+            heavy_phases_allowed = local_hour >= start or local_hour < end
+        if not heavy_phases_allowed:
             logger.info(
-                "System active (idle %.0fs < %ds) — deferring extraction and image analysis to next idle run",
-                idle_secs, config.IDLE_MIN_SECONDS,
+                "Outside Ollama active window (hour=%d, window=%d-%d) — "
+                "deferring extraction and image analysis until next overnight run",
+                local_hour, start, end,
             )
 
     # ── Phase 3: Extract candidate events and todos ──────────────────────────
     all_candidates: list[CandidateEvent] = []
     all_todos: list[CandidateTodo] = []
-    if not system_is_idle:
-        logger.debug("Skipping extraction — system not idle")
+    if not heavy_phases_allowed:
+        logger.debug("Skipping extraction — outside Ollama active window")
     elif extractor.check_ollama_available() or args.mock:
         extraction_ran = True
         for msg in all_messages:
@@ -817,8 +823,8 @@ def main() -> int:
 
     # ── Phase 7: Process file uploads from Slack (image/PDF intake) ──────────
     files_processed = 0
-    if not system_is_idle:
-        logger.debug("Skipping file intake — system not idle")
+    if not heavy_phases_allowed:
+        logger.debug("Skipping file intake — outside Ollama active window")
     elif "slack" in sources and (config.GEMINI_API_KEY or config.LOCAL_VISION_MODEL or args.mock):
         file_result = image_pipeline.process_slack_files(
             state=state,
@@ -838,7 +844,7 @@ def main() -> int:
         logger.debug("No vision model configured — file intake pipeline disabled")
 
     # ── Unload models after heavy phases ───────────────────────────────────
-    if system_is_idle and not args.mock:
+    if heavy_phases_allowed and not args.mock:
         _unload_ollama_models()
 
     # ── Phase 8: Post run summary to Slack thread ────────────────────────────
