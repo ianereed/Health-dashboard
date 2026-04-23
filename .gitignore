@@ -15,3 +15,10 @@ update_sheets.py
 
 # Transient runtime locks — never commit
 *.lock
+
+# Finance monitor — sensitive data never committed
+finance-monitor/.env
+finance-monitor/data/
+finance-monitor/intake/
+finance-monitor/imported/
+finance-monitor/state.json

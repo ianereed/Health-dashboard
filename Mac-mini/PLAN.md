@@ -6,7 +6,7 @@ Living plan for the ongoing build. Update as phases advance. Pair this with
 
 ---
 
-## Quick status (as of 2026-04-22)
+## Quick status (as of 2026-04-23)
 
 Phases 0–5 complete. Event-aggregator + health-dashboard both running on the
 mini under launchd at `~/Home-Tools/<project>` with `.venv`-based LaunchAgents.
@@ -17,7 +17,11 @@ Tailscale. Event-aggregator's staging dir is at
 is unloaded and renamed `.disabled`; mini is now the sole writer to
 Google Calendar. Medical-records and meal-planner stay on the laptop (user
 decision — medical-records Slack migration deferred, meal-planner is Apps
-Script). Phases 6, 7, 8 remain.
+Script).
+
+Phase 8 (finance-monitor) Phase 1 scaffolding is complete (2026-04-23):
+code at `~/Home-Tools/finance-monitor/`, awaiting mini-side venv + Slack
+app setup. Phases 6, 7, and 8 Phase 2+ remain.
 
 See `README.md` for the full status table and running services.
 
@@ -278,50 +282,50 @@ Strava APIs, which only cover recent data. Protect it.
 
 ---
 
-## Phase 8 — Finance automation (the big new work)
+## Phase 8 — Finance automation (IN PROGRESS — Phase 1 done 2026-04-23)
 
-This is the original driver for the server. Multi-week scope. Work at
-`~/Home-Tools/finance-monitor/` (new directory, not yet created).
+Work at `~/Home-Tools/finance-monitor/`. Phase 1 scaffolding is complete.
 
-### Pre-work (apply the porting checklist before writing code)
+### Phase 1 — Local Q&A (DONE 2026-04-23)
 
-Before starting code, do the mini-side setup work from
-`reference_mac_mini_porting_checklist.md`. Specifically: the YNAB and
-Gmail OAuth tokens need to go into the login keychain via the shim
-pattern, and if finance-monitor exposes any HTTP interface (e.g., an
-approval web UI for iMessage-gated transactions), Python's already in the
-AFW allowlist so no extra work there.
+- YNAB CSV export ingestion (`ingest/ynab_csv.py`) → SQLite
+- PDF ingestion via pdfplumber (`ingest/pdf_importer.py`) for advisor plan docs
+- Plain-English Q&A engine (`query_engine.py`) — routes to transaction or document mode, calls qwen3:14b locally
+- Slack DM bot (`slack_bot.py`) — Socket Mode, DMs only (workspace is shared), dedicated Finance Bot Slack app
+- Watcher (`watcher.py`) — scans `intake/` every 5 min, imports new CSVs and PDFs
+- Two LaunchAgents: KeepAlive for Slack bot, 5-min interval for watcher
 
-### Planned sub-phases
+**Mini setup still needed (user action):**
+1. Create Finance Bot Slack app (api.slack.com/apps) — Socket Mode, `im:history` / `im:write` / `chat:write` scopes
+2. Store tokens: `security add-generic-password -s finance-monitor-slack -a app_token -w "xapp-..."` and `bot_token`
+3. Create venv + install deps: `python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+4. Load LaunchAgents: `launchctl load ~/Library/LaunchAgents/com.home-tools.finance-monitor*.plist`
+5. Drop YNAB CSV export + advisor PDF into `~/Home-Tools/finance-monitor/intake/`
 
-1. **YNAB read-only client** — Python package wrapping YNAB's REST API with
-   delta polling + local SQLite cache. No Ollama yet.
-2. **Amazon order reconciliation** — Gmail API parses Amazon confirmation
-   emails, matches them to YNAB Amazon transactions, Ollama categorizes item
-   lists, writes subtransactions via YNAB PATCH.
-3. **Daily morning digest** — launchd, Ollama summarizes yesterday's
-   spending, sends via Pushover (iMessage once BlueBubbles is up —
-   deferred).
-4. **Weekly review + monthly retirement checks** — on top of the daily.
-5. **Anomaly detection** — flag unusual payees, large charges, missed
-   deposits.
+**To use:**
+- DM the Finance Bot in Slack with any question: "How much did I spend on restaurants last month?"
+- To analyze the advisor plan: "Analyze the portfolio allocation in the financial plan"
+- CLI test: `python main.py ask "What were my top 5 categories this month?"`
+
+### Phase 2 — YNAB API (future)
+
+Replace manual CSV drops with automated hourly sync:
+- `ingest/ynab.py` — YNAB REST API client with `since_date` delta polling
+- YNAB API token in keychain: `service="finance-monitor-ynab"`, `account="api_token"`
+- LaunchAgent: `com.home-tools.finance-monitor-ynab-sync.plist` (StartInterval: 3600)
+
+### Phase 3+ — (original sub-phases 2–5)
+
+- Amazon order reconciliation via Gmail API
+- Daily/weekly spending digests via Pushover
+- Anomaly detection
 
 ### Security controls
 
-- YNAB + Gmail tokens in the login keychain (services:
-  `finance-monitor-ynab`, `finance-monitor-gmail`), never in `.env`. Use
-  the keyring shim from health-dashboard as the template for
-  `finance-monitor/__init__.py`.
-- Trusted-tier / untrusted-tier split: email parsing (untrusted input) can
-  only *propose* categorizations; never POST to YNAB automatically above a
-  threshold. User approves via Pushover-link-back for anything >$200 or
-  new payee. (iMessage-based approval deferred with BlueBubbles.)
-- Gmail OAuth in read-only scope (no send access).
-- Per-request `keep_alive=-1` + `num_ctx=8192` to Ollama for batch email
-  parses; otherwise defaults.
-
-This phase deserves its own `finance-monitor/PLAN.md` when we start. Don't
-try to fit the whole design in this Mac-mini-level plan.
+- Slack tokens in keychain (never in `.env`)
+- No LangChain (active critical CVEs: CVE-2025-68664 CVSS 9.3, CVE-2024-36480 CVSS 9.0)
+- All data local (SQLite on mini, Ollama on localhost:11434)
+- Slack bot DM-only — no channel posting
 
 ---
 

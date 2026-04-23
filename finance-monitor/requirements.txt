@@ -1,0 +1,6 @@
+requests>=2.32
+pdfplumber>=0.11
+keyring>=25.0
+python-dotenv>=1.0
+slack-bolt>=1.21
+slack-sdk>=3.30
