@@ -6,12 +6,12 @@
     <string>com.health-dashboard.collect</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard/venv/bin/python3</string>
+        <string>/Users/homeserver/Home-Tools/health-dashboard/.venv/bin/python3</string>
         <string>-m</string>
         <string>collectors.collect_all</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard</string>
+    <string>/Users/homeserver/Home-Tools/health-dashboard</string>
     <key>StartCalendarInterval</key>
     <array>
         <dict>
@@ -28,13 +28,15 @@
         </dict>
     </array>
     <key>StandardOutPath</key>
-    <string>/Users/ianreed/Library/Logs/health-dashboard/collect.log</string>
+    <string>/Users/homeserver/Library/Logs/health-dashboard/collect.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/ianreed/Library/Logs/health-dashboard/collect.log</string>
+    <string>/Users/homeserver/Library/Logs/health-dashboard/collect.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin</string>
+        <key>KEYCHAIN_PATH</key>
+        <string>/Users/homeserver/Library/Keychains/login.keychain-db</string>
     </dict>
 </dict>
 </plist>

@@ -29,7 +29,7 @@ Tailscale.
 | 2 | Remote access (Homebrew, Tailscale, Tailscale SSH from laptop) | ✅ 2026-04-22 |
 | 3 | Core tools (`git`, `python@3.12`, `uv`, `gh`, `ollama`) | ✅ 2026-04-22 |
 | 4 | Ollama configuration + model pulls | ✅ 2026-04-22 |
-| 5 | Port `Home-Tools` repo to server | 🔄 Event-aggregator fully ported at `~/Home-Tools` and verified end-to-end (LaunchAgent fires, exits clean with status 0, daily digest delivered). Health-dashboard + meal-planner: not yet ported. |
+| 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated. Meal-planner stays on laptop (Apps Script, nothing to run on the mini). |
 | 6 | Minimal monitoring (launchd logs + Pushover) | ⏳ Pending |
 | 7 | Backup (Time Machine + off-site) | ⏳ Pending |
 | 8 | Finance automation scripts (YNAB, Amazon reconciliation) | ⏳ Pending |
@@ -60,12 +60,18 @@ Tailscale.
   rsync over Tailscale SSH (plans, memory, settings, slash commands). All 7
   memory project directories renamed from `-Users-ianreed-...` to
   `-Users-homeserver-...` so auto-memory resolves on the server.
-- **Python environment pattern** (proven with event-aggregator):
+- **Python environment pattern** (proven with event-aggregator + health-dashboard):
   - `uv venv --python 3.12` in each project directory
   - `source .venv/bin/activate && uv pip install -r requirements.txt`
   - Run `install_scheduler.sh` from inside the activated venv — it auto-detects
     the venv's python3 via `which python3` and bakes that into the LaunchAgent
     plist
+- **Health-dashboard** at `~/Home-Tools/health-dashboard` with 4 LaunchAgents:
+  `receiver` (port 8095, KeepAlive), `collect` (7:00 + 7:20am), `intervals-poll`
+  (every 5 min), `staleness` (7am + 9pm). iPhone Health Auto Export posts to
+  `http://homeserver:8095/` over Tailscale. Laptop copies of these plists at
+  `~/Library/LaunchAgents/com.health-dashboard.*.plist.disabled` (renamed so
+  they don't auto-load on login).
   - LaunchAgent logs: `/tmp/home-tools-<project>.log` (+ `-error.log`)
 - **Models pulled**:
   - `qwen2.5:7b` (Q4_K_M, ~4.7GB) — event-aggregator extraction model
@@ -105,6 +111,33 @@ Tailscale.
   TCC context), which makes the bug deceptively sneaky. Rule: **on this
   server, all project code lives at `~/<project-name>/` or `~/src/`, never
   under the protected user folders.**
+- **Empty-password login keychain for `homeserver`** (2026-04-22). LaunchAgents
+  on this server run in an aqua audit session whose keychain search list
+  includes `~/Library/Keychains/login.keychain-db` but cannot auto-unlock a
+  password-protected one (no GUI login). A non-empty password means every
+  `keyring.get_password` from a LaunchAgent returns `errSecAuthFailed` (security
+  CLI exit 152). Empty password + `security set-keychain-settings` (no
+  auto-lock) makes the keychain always readable by the homeserver user. Net
+  security loss is negligible given FileVault is off, SSH is Tailscale-gated,
+  and anyone with `homeserver` shell can read `~/Home-Tools/**` anyway. If
+  FileVault is ever turned on, pair it with a real keychain password.
+- **`keyring` library on the mini uses a shim** (2026-04-22). `keyring>=25`
+  ignores `Keyring.keychain` (upstream issue #623). `collectors/__init__.py`
+  in health-dashboard monkey-patches `keyring.{get,set,delete}_password` to
+  shell out to `security` with the keychain path from env var `KEYCHAIN_PATH`
+  (and unlocks the keychain with empty password at module import). The shim is
+  a no-op on the laptop, where `KEYCHAIN_PATH` is unset.
+- **Application Firewall + Stealth Mode silently drops unapproved app inbound
+  traffic** (2026-04-22). Symptom: TCP handshake succeeds from clients but
+  subsequent data is dropped and the request times out with 0 bytes received.
+  Loopback connections work normally, which makes this look like an app bug.
+  Fix: for any project that binds a non-loopback port, add BOTH the Homebrew
+  Python bin shim (`/opt/homebrew/Cellar/python@3.12/X.Y.Z/.../bin/python3.12`)
+  AND the re-exec'd app-bundle binary
+  (`.../Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python`)
+  to the allowlist via `sudo socketfilterfw --add` + `--unblockapp`, then
+  kickstart the LaunchAgent so it re-links. Ollama is unaffected because it
+  binds only to `127.0.0.1`.
 
 ## Critical file paths
 

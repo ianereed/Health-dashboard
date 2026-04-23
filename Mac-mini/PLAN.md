@@ -8,11 +8,11 @@ Living plan for the ongoing build. Update as phases advance. Pair this with
 
 ## Quick status (as of 2026-04-22)
 
-Phases 0–4 complete. Phase 5 has event-aggregator fully ported and running in
-production under launchd on the mini at `~/Home-Tools/event-aggregator`. The
-server is reachable at `homeserver@homeserver` over Tailscale SSH, runs
-Ollama with 5 models, and has verified auto-recovery after reboots. Phases
-5b, 6, 7, 8 remain.
+Phases 0–5 complete. Event-aggregator + health-dashboard both running on the
+mini under launchd at `~/Home-Tools/<project>` with `.venv`-based LaunchAgents.
+iPhone Health Auto Export now posts to `http://homeserver:8095/` over
+Tailscale. Meal-planner stays on the laptop (Apps Script, nothing to run on
+the mini). Phases 6, 7, 8 remain.
 
 See `README.md` for the full status table and running services.
 
@@ -20,34 +20,60 @@ See `README.md` for the full status table and running services.
 
 ## Resume from here
 
-**Next single action**: port `health-dashboard` to the mini, following the
-same pattern that worked for event-aggregator. Detailed steps in Phase 5b
-below.
+**Next single action**: Phase 6 — minimal failure monitoring. Pushover (or
+ntfy) + a shared `notify.sh` that each LaunchAgent calls on non-zero exit.
+Detailed steps in Phase 6 below.
 
 Before touching anything, run these to confirm the server is still healthy:
 
 ```bash
 ssh homeserver@homeserver '
   tailscale status | head -3
-  launchctl list | grep -E "ollama|event-aggregator"
+  launchctl list | grep -E "ollama|event-aggregator|health-dashboard"
   sudo lsof -iTCP:11434 -sTCP:LISTEN -n -P
+  sudo lsof -iTCP:8095 -sTCP:LISTEN -n -P
 '
 ```
 
-Expected: tailscale connected, both LaunchAgents registered with clean exit
-status, Ollama listening on `127.0.0.1:11434`.
+Expected: tailscale connected, Ollama + event-aggregator + 4 health-dashboard
+LaunchAgents registered with clean exit status, Ollama on `127.0.0.1:11434`,
+receiver on `*:8095`.
 
 ---
 
-## Phase 5b — Port health-dashboard
+## Phase 5b — Port health-dashboard (DONE 2026-04-22)
 
-### Why it's not trivial
+Health-dashboard is live on the mini. Receiver on port 8095, collect at
+7:00/7:20, intervals-poll every 5 min, staleness at 7am/9pm. iPhone posts
+to `http://homeserver:8095/` over Tailscale. Laptop plists renamed to
+`*.plist.disabled` so they don't auto-load. Records kept below for future
+reference / if we ever port a similar project.
+
+### Gotchas encountered during the port
+
+- **Login keychain not reachable from LaunchAgents.** `homeserver`'s aqua
+  session on this headless mini never got the interactive login that
+  auto-unlocks the default keychain. Symptoms: `keyring.get_password`
+  returns `errSecAuthFailed` (security CLI exit 152) from within a
+  LaunchAgent, even though it works from an SSH shell and even though the
+  keychain *is* in the search list. Fix: recreate `login.keychain-db` with
+  empty password (`security create-keychain -p ""`), set no-auto-lock, and
+  have the shim in `collectors/__init__.py` explicitly unlock it on import.
+- **keyring>=25 ignores `Keyring.keychain`.** Even after fixing unlock,
+  `keyring` can't be pointed at a specific keychain any more (upstream
+  issue #623). The shim works around this by monkey-patching
+  `keyring.get_password` to shell out to `security` with `KEYCHAIN_PATH`.
+- **Keychain migration needed explicit target.** `security add-generic-password`
+  from SSH writes to `System.keychain` (root-only → "Write permissions
+  error") unless you pass the target keychain as the final positional arg.
+  The same is true on the mini; the default-keychain `-d user` setting
+  exists in the user preference domain but doesn't propagate to the
+  Security framework calls from ssh.
+
+### Why it wasn't trivial
 
 - Health-dashboard ships **4 plists** (collect, intervals-poll, receiver,
   staleness), not 1. All must install cleanly.
-- There's an open issue: `project_health_dashboard.md` memory says "Root
-  cause found (spaces in log path); 3 steps remain to finish." Read that
-  memory first and resolve the outstanding fixes as part of this port.
 - May have its own `requirements.txt` + credential files; treat it like a
   fresh project, not a quick re-run of event-aggregator.
 
