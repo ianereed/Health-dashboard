@@ -32,7 +32,7 @@ def _get(key: str, default: str = "") -> str:
 
 # ── Ollama ──────────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL: str = _get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL: str = _get("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL: str = _get("OLLAMA_MODEL", "qwen3:14b")
 LOCAL_VISION_MODEL: str = _get("LOCAL_VISION_MODEL", "qwen2.5vl:7b")
 GEMINI_FALLBACK_MODELS: str = _get(
     "GEMINI_FALLBACK_MODELS", "gemini-2.5-flash-lite,gemini-2.5-flash"
@@ -44,7 +44,7 @@ GEMINI_FALLBACK_MODELS: str = _get(
 # so the 14GB vision model never competes with the user's active session.
 # Wrap-around windows are supported (e.g. 22 → 6 = 10pm–6am).
 OLLAMA_ACTIVE_HOUR_START: int = int(_get("OLLAMA_ACTIVE_HOUR_START", "0"))
-OLLAMA_ACTIVE_HOUR_END: int = int(_get("OLLAMA_ACTIVE_HOUR_END", "6"))
+OLLAMA_ACTIVE_HOUR_END: int = int(_get("OLLAMA_ACTIVE_HOUR_END", "24"))
 
 # ── Google (Gmail + GCal) ───────────────────────────────────────────────────
 GMAIL_CREDENTIALS_JSON: str = _get(

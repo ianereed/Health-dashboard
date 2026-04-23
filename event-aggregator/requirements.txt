@@ -19,3 +19,7 @@ requests>=2.31
 
 # PDF generation (image/PDF intake pipeline)
 reportlab>=4.0
+
+# Optional: used by image_analyzer.py (graceful fallback if absent) and benchmark script
+Pillow>=10.0
+psutil>=5.9

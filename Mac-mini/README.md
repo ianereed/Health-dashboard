@@ -76,11 +76,14 @@ Tailscale.
   they don't auto-load on login).
   - LaunchAgent logs: `/tmp/home-tools-<project>.log` (+ `-error.log`)
 - **Models pulled**:
-  - `qwen2.5:7b` (Q4_K_M, ~4.7GB) — event-aggregator extraction model
-  - `qwen2.5vl:7b` (~6GB) — event-aggregator vision/image pipeline
+  - `qwen3:14b` (Q4_K_M, ~9GB) — event-aggregator text extraction (upgraded 2026-04-22)
+  - `qwen2.5vl:7b` (~6GB) — event-aggregator vision/image pipeline (unchanged)
   - `qwen2.5:14b` (Q4_K_M, ~9GB) — workhorse for future finance-monitor work
+  - `qwen2.5:7b` (Q4_K_M, ~4.7GB) — previous extraction model; kept for rollback, can remove after 2026-04-29
   - `llama3.2:3b` (Q4_K_M, ~2GB) — fast path for simple classification
   - `nomic-embed-text` (F16, ~275MB) — embeddings for future RAG
+- **event-aggregator schedule**: every 10 min (upgraded from 15 min 2026-04-22); heavy
+  phases (Ollama extraction + vision) run 24/7 — no time-window gate on the mini
 
 ## Key decisions (2026-04-22)
 
@@ -129,6 +132,16 @@ Tailscale.
   shell out to `security` with the keychain path from env var `KEYCHAIN_PATH`
   (and unlocks the keychain with empty password at module import). The shim is
   a no-op on the laptop, where `KEYCHAIN_PATH` is unset.
+- **event-aggregator upgraded to qwen3:14b + 24/7 scheduling (2026-04-22).**
+  Text extraction model upgraded from `qwen2.5:7b` to `qwen3:14b` (Qwen3
+  family; better instruction-following and JSON compliance at same ~9 GB
+  footprint). Scheduler interval tightened from 15 → 10 min. The midnight–6am
+  heavy-phase gate is disabled (`OLLAMA_ACTIVE_HOUR_END=24`) because the mini
+  has no interactive user session to protect. Rollback: flip `OLLAMA_MODEL` in
+  `.env` back to `qwen2.5:7b`; no code change needed. Chinese open-weight
+  models (Qwen3, DeepSeek) are safe for this use case because Ollama is
+  127.0.0.1-bound, GGUF weights are not executable, and every event write is
+  gated behind Slack approval (human-in-the-loop before any GCal write).
 - **Application Firewall + Stealth Mode silently drops unapproved app inbound
   traffic** (2026-04-22). Symptom: TCP handshake succeeds from clients but
   subsequent data is dropped and the request times out with 0 bytes received.

@@ -2,7 +2,7 @@
 Local-first image/PDF analyzer for the intake pipeline.
 
 Analysis order:
-  1. Local: qwen2.5vl (vision/OCR/classify) + qwen2.5 (calendar detection)
+  1. Local: qwen2.5vl (vision/OCR/classify) + qwen3 (calendar detection)
   2. Cloud fallback: gemini-2.5-flash-lite → gemini-2.5-flash
 
 Privacy: all structured_text is treated as PRIVATE (same as RawMessage.body_text).

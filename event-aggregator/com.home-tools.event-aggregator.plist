@@ -15,9 +15,9 @@
   <key>WorkingDirectory</key>
   <string>/Users/homeserver/Home-Tools/event-aggregator</string>
 
-  <!-- Run every 15 minutes -->
+  <!-- Run every 10 minutes -->
   <key>StartInterval</key>
-  <integer>900</integer>
+  <integer>600</integer>
 
   <key>StandardOutPath</key>
   <string>/tmp/home-tools-event-aggregator.log</string>
