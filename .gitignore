@@ -12,3 +12,6 @@ medical-records/
 add_recovery_tab.py
 update_sheets.py
 *.png
+
+# Transient runtime locks — never commit
+*.lock
