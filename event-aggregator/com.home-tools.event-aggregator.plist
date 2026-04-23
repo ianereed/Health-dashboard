@@ -8,12 +8,12 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
-    <string>/Users/ianreed/Documents/GitHub/Home-Tools/event-aggregator/main.py</string>
+    <string>/Users/homeserver/Home-Tools/event-aggregator/.venv/bin/python3</string>
+    <string>/Users/homeserver/Home-Tools/event-aggregator/main.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/ianreed/Documents/GitHub/Home-Tools/event-aggregator</string>
+  <string>/Users/homeserver/Home-Tools/event-aggregator</string>
 
   <!-- Run every 15 minutes -->
   <key>StartInterval</key>

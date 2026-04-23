@@ -11,8 +11,13 @@ Living plan for the ongoing build. Update as phases advance. Pair this with
 Phases 0–5 complete. Event-aggregator + health-dashboard both running on the
 mini under launchd at `~/Home-Tools/<project>` with `.venv`-based LaunchAgents.
 iPhone Health Auto Export now posts to `http://homeserver:8095/` over
-Tailscale. Meal-planner stays on the laptop (Apps Script, nothing to run on
-the mini). Phases 6, 7, 8 remain.
+Tailscale. Event-aggregator's staging dir is at
+`~/Home-Tools/event-aggregator/staging/` (moved out of TCC-protected
+`~/Documents/` 2026-04-22). Laptop's duplicate event-aggregator LaunchAgent
+is unloaded and renamed `.disabled`; mini is now the sole writer to
+Google Calendar. Medical-records and meal-planner stay on the laptop (user
+decision — medical-records Slack migration deferred, meal-planner is Apps
+Script). Phases 6, 7, 8 remain.
 
 See `README.md` for the full status table and running services.
 
@@ -370,6 +375,7 @@ rollback artifacts:
 - `~/Library/LaunchAgents/com.health-dashboard.collect.plist.disabled`
 - `~/Library/LaunchAgents/com.health-dashboard.intervals-poll.plist.disabled`
 - `~/Library/LaunchAgents/com.health-dashboard.staleness.plist.disabled`
+- `~/Library/LaunchAgents/com.home-tools.event-aggregator.plist.disabled` (added 2026-04-22 when the laptop instance was shut down to stop the split-brain with the mini)
 - `~/Documents/GitHub/Home-Tools/health-dashboard/data/health.db` (91MB frozen snapshot)
 - 7 laptop Keychain entries under services `health-dashboard-strava`,
   `health-dashboard-intervals`, `health-dashboard-garmin` (mini has its own
@@ -379,6 +385,7 @@ Cleanup one-liner to run 2026-04-29 or later:
 
 ```bash
 rm /Users/ianreed/Library/LaunchAgents/com.health-dashboard.*.plist.disabled
+rm /Users/ianreed/Library/LaunchAgents/com.home-tools.event-aggregator.plist.disabled
 rm /Users/ianreed/Documents/GitHub/Home-Tools/health-dashboard/data/health.db
 for s in health-dashboard-strava health-dashboard-intervals health-dashboard-garmin; do
   for a in client_id client_secret tokens api_key athlete_id email password; do

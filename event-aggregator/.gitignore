@@ -14,3 +14,6 @@ __pycache__/
 # Environment
 .env
 *.rtf
+
+# Local staging (downloaded images before they land on the NAS)
+staging/

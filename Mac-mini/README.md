@@ -29,7 +29,7 @@ Tailscale.
 | 2 | Remote access (Homebrew, Tailscale, Tailscale SSH from laptop) | ✅ 2026-04-22 |
 | 3 | Core tools (`git`, `python@3.12`, `uv`, `gh`, `ollama`) | ✅ 2026-04-22 |
 | 4 | Ollama configuration + model pulls | ✅ 2026-04-22 |
-| 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated. Meal-planner stays on laptop (Apps Script, nothing to run on the mini). |
+| 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated (event-aggregator staging moved to `~/Home-Tools/event-aggregator/staging/` out of TCC-protected path; laptop instance disabled, mini is sole writer). Medical-records + meal-planner intentionally stay on laptop. |
 | 6 | Minimal monitoring (launchd logs + Pushover) | ⏳ Pending |
 | 7 | Backup (Time Machine + off-site) | ⏳ Pending |
 | 8 | Finance automation scripts (YNAB, Amazon reconciliation) | ⏳ Pending |

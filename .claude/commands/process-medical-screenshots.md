@@ -9,9 +9,12 @@ Arguments (screenshot paths): $ARGUMENTS
 
 Steps:
 1. If $ARGUMENTS is empty, look for loose `.png` files in `medical-records/` or that the user has mentioned in this session. Ask the user to confirm which files to process if it's ambiguous.
-2. Run the processing script:
-   ```
-   python3 /Users/ianreed/Documents/GitHub/Home-Tools/medical-records/process_screenshots.py <paths>
+2. Resolve the script path based on which machine Claude Code is running on, then invoke it:
+   ```bash
+   SCRIPT="$HOME/Home-Tools/medical-records/process_screenshots.py"
+   [ -f "$SCRIPT" ] || SCRIPT="$HOME/Documents/GitHub/Home-Tools/medical-records/process_screenshots.py"
+   [ -f "$SCRIPT" ] || { echo "process_screenshots.py not found on this machine"; exit 1; }
+   python3 "$SCRIPT" <paths>
    ```
 3. Read the output file that was saved and summarize what was extracted — highlight any new appointments, changed times, action items, or insurance notes.
 4. For any NEW appointments not already on the calendar, offer to create them on Google Calendar using the pattern in `medical-records/create_calendar_events.py`.

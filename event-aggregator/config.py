@@ -112,7 +112,7 @@ GEMINI_MODEL: str = _get("GEMINI_MODEL", "gemini-2.5-pro")
 # ── NAS / staging ────────────────────────────────────────────────────────────
 NAS_ROOT: str = _get("NAS_ROOT", "/Volumes/Share1")
 LOCAL_STAGING_DIR: str = _get(
-    "LOCAL_STAGING_DIR", "~/Documents/event-aggregator-intake"
+    "LOCAL_STAGING_DIR", str(Path(__file__).parent / "staging")
 )
 IMAGE_CONFIDENCE_MIN: float = float(_get("IMAGE_CONFIDENCE_MIN", "0.3"))
 
