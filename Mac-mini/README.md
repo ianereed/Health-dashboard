@@ -66,10 +66,12 @@ Tailscale.
   - Run `install_scheduler.sh` from inside the activated venv — it auto-detects
     the venv's python3 via `which python3` and bakes that into the LaunchAgent
     plist
-- **Health-dashboard** at `~/Home-Tools/health-dashboard` with 4 LaunchAgents:
+- **Health-dashboard** at `~/Home-Tools/health-dashboard` with 5 LaunchAgents:
   `receiver` (port 8095, KeepAlive), `collect` (7:00 + 7:20am), `intervals-poll`
-  (every 5 min), `staleness` (7am + 9pm). iPhone Health Auto Export posts to
-  `http://homeserver:8095/` over Tailscale. Laptop copies of these plists at
+  (every 5 min), `staleness` (7am + 9pm), `streamlit` (port 8501, KeepAlive,
+  bound `0.0.0.0`). iPhone Health Auto Export posts to
+  `http://homeserver:8095/` over Tailscale; dashboard UI at
+  `http://homeserver:8501/`. Laptop copies of the 4 data-plane plists at
   `~/Library/LaunchAgents/com.health-dashboard.*.plist.disabled` (renamed so
   they don't auto-load on login).
   - LaunchAgent logs: `/tmp/home-tools-<project>.log` (+ `-error.log`)

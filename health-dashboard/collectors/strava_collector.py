@@ -12,6 +12,10 @@ from .db import get_connection
 
 logger = logging.getLogger(__name__)
 
+# stravalib logs full request params (incl. client_secret + refresh_token) at
+# INFO. Silence the protocol logger so secrets don't end up in collect.log.
+logging.getLogger("stravalib.protocol.ApiV3").setLevel(logging.WARNING)
+
 KEYRING_SERVICE = "health-dashboard-strava"
 
 
