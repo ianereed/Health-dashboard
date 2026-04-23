@@ -2,9 +2,10 @@
 
 ## How It Works
 
-Health Auto Export sends HTTP POST requests with JSON data to a local server
-running on your Mac (`http://192.168.4.123:8095/`). The server parses the data
-and writes it directly to the dashboard's SQLite database.
+Health Auto Export sends HTTP POST requests with JSON data to the receiver
+running on the Mac mini (`http://homeserver:8095/` via Tailscale MagicDNS).
+The server parses the data and writes it directly to the dashboard's SQLite
+database.
 
 ## Important iOS Limitation
 
@@ -46,26 +47,29 @@ This gives you automatic exports every time you plug in your phone.
 
 In Health Auto Export:
 - **Automation type**: REST API
-- **URL**: `http://192.168.4.123:8095/`
+- **URL**: `http://homeserver:8095/` (Tailscale MagicDNS — works from any
+  network, survives router restarts). Fallback: Tailscale IP
+  `http://100.66.241.126:8095/`, or `http://homeserver.local:8095/` on the
+  home LAN.
 - **Format**: JSON (Version 2)
 - **Metrics selected**: Heart Rate, Resting Heart Rate, Sleep Analysis, Heart Rate Variability
 - **Sync cadence**: Every 6 hours (background, best effort)
 
-## If Your Mac's IP Changes
+## If the URL stops working
 
-Your Mac's local IP (192.168.4.123) may change if your router assigns a new one.
-If exports stop working:
-1. Check your Mac's IP: run `ipconfig getifaddr en0` in Terminal
-2. Update the URL in Health Auto Export app settings
-
-To prevent this, you can assign a static IP to your Mac in your router settings,
-or use your Mac's `.local` hostname (e.g., `http://YOUR-MAC-NAME.local:8095/`).
+Tailscale MagicDNS is the primary path, so local IP changes don't matter.
+If exports suddenly stop:
+1. Open Tailscale on the iPhone — is it connected? Any "needs attention"?
+2. From the Mac mini: `curl -sS http://127.0.0.1:8095/` — should return
+   "Health Auto Export receiver is running."
+3. Check `launchctl list | grep health-dashboard.receiver` on the mini —
+   PID present, last exit 0.
 
 ## Verifying It Works
 
-Check the receiver log on your Mac:
+On the Mac mini:
 ```
-tail -f ~/health-dashboard/data/receiver.log
+tail -f ~/Library/Logs/health-dashboard/receiver.log
 ```
 
 You should see lines like:
