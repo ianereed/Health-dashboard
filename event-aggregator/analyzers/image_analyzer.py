@@ -261,17 +261,20 @@ def _merge_page_results(page_dicts: list[dict], filenames: list[str]) -> FileAna
         if date:
             break
 
+    # The model can return literal null for any of these fields, in which case
+    # `.get(key, default)` returns None (not the default), and `None[:N]`
+    # crashes. Guard with `or` so a None value falls through to the default.
     return FileAnalysisResult(
         file_id="",
         primary_category=category,
         subcategory=subcategory,
-        confidence=float(cls.get("confidence", 0.5)),
-        title=ext.get("title", filenames[0] if filenames else "document")[:200],
+        confidence=float(cls.get("confidence") or 0.5),
+        title=(ext.get("title") or (filenames[0] if filenames else "document"))[:200],
         date=date,
-        structured_text=merged_text,
-        summary=ext.get("summary", "Document analyzed")[:120],
+        structured_text=merged_text or "",
+        summary=(ext.get("summary") or "Document analyzed")[:120],
         calendar_items=[],
-        document_type=ext.get("document_type", ""),
+        document_type=ext.get("document_type") or "",
         original_filename=filenames[0] if filenames else "",
     )
 

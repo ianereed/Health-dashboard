@@ -317,6 +317,29 @@ class TestMergePageResults:
         assert result.primary_category == "Healthcare"
         assert result.subcategory == "0-Ian Healthcare"
 
+    def test_null_fields_dont_crash(self):
+        """qwen2.5vl sometimes returns literal null for title/summary/document_type/confidence.
+        .get(key, default) returns None (not the default) when the key exists with null,
+        which used to crash on `None[:N]`. Confirm the merge handles this gracefully."""
+        from analyzers.image_analyzer import _merge_page_results
+        page = {
+            "classification": {"primary_category": "Documents", "confidence": None, "reasoning": "x"},
+            "extraction": {
+                "document_type": None,
+                "title": None,
+                "date": None,
+                "structured_text": None,
+                "summary": None,
+            },
+        }
+        result = _merge_page_results([page], ["scan.jpg"])
+        assert result is not None
+        assert result.title == "scan.jpg"  # falls back to first filename
+        assert result.summary  # non-empty default
+        assert result.document_type == ""
+        assert result.structured_text == ""
+        assert 0.0 <= result.confidence <= 1.0
+
 
 # ── Local vision fallback (Ollama unreachable) ───────────────────────────────
 
