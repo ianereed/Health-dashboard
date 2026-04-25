@@ -37,7 +37,10 @@ if [[ ! -d "$MOUNT_POINT" ]]; then
   exit 1
 fi
 
-# Pull password from keychain.
+# Pull password from keychain. Unlock first — launchd-spawned processes get
+# their own audit session and don't see unlocks done from interactive shells.
+# The mini's login keychain has an empty password (memory: project_mac_mini_keychain_shim).
+security unlock-keychain -p "" "$KEYCHAIN_PATH" 2>/dev/null || true
 P="$(security find-internet-password -s "$KEYCHAIN_SERVER" -a "$SMB_USER" -w "$KEYCHAIN_PATH" 2>/dev/null)"
 if [[ -z "$P" ]]; then
   echo "$LOG_PREFIX no password in keychain (service=$KEYCHAIN_SERVER, account=$SMB_USER)" >&2

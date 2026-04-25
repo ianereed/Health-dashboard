@@ -24,19 +24,42 @@ def _get(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-def _keychain(account: str, service: str = "dispatcher-slack") -> str:
-    """Read a password from the macOS login keychain via the `security` CLI.
-
-    On the mini, the `security` CLI from non-aqua sessions can't reach the
-    default keychain via the search list — the keychain path must be passed
-    positionally. Fall through to the standard login keychain when
-    KEYCHAIN_PATH isn't set so this works in both LaunchAgent and SSH-shell
-    contexts.
-    """
-    keychain_path = os.environ.get("KEYCHAIN_PATH") or os.path.expanduser(
+def _keychain_path() -> str:
+    return os.environ.get("KEYCHAIN_PATH") or os.path.expanduser(
         "~/Library/Keychains/login.keychain-db"
     )
-    cmd = ["security", "find-generic-password", "-s", service, "-a", account, "-w", keychain_path]
+
+
+_unlocked_once = False
+
+
+def _ensure_unlocked() -> None:
+    """Best-effort unlock of the login keychain in this process's audit session.
+
+    On the mini, `security unlock-keychain` from a launchd-spawned process
+    only affects that process's own audit session — unlocks done from an
+    interactive ssh shell don't propagate. So each launchd-spawned process
+    that needs to read the keychain must self-unlock first. The mini's
+    keychain has an empty password (per project_mac_mini_keychain_shim
+    memory), so this works without prompting. Idempotent (caches success).
+    """
+    global _unlocked_once
+    if _unlocked_once:
+        return
+    try:
+        subprocess.run(
+            ["security", "unlock-keychain", "-p", "", _keychain_path()],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception as exc:
+        logger.debug("keychain unlock attempt failed: %s", exc)
+    _unlocked_once = True
+
+
+def _keychain(account: str, service: str = "dispatcher-slack") -> str:
+    """Read a password from the macOS login keychain via the `security` CLI."""
+    _ensure_unlocked()
+    cmd = ["security", "find-generic-password", "-s", service, "-a", account, "-w", _keychain_path()]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
