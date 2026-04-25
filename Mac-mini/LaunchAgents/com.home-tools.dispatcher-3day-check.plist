@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.home-tools.dispatcher-3day-check</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/homeserver/Home-Tools/Mac-mini/scripts/dispatcher-3day-check.sh</string>
+  </array>
+
+  <!-- Fires once at 09:00 local on April 27. The script self-unloads after
+       firing, so the recurring StartCalendarInterval doesn't repeat next year.
+       The script also re-checks the date as a belt-and-suspenders. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Month</key>
+    <integer>4</integer>
+    <key>Day</key>
+    <integer>27</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/home-tools-dispatcher-3day-check.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/home-tools-dispatcher-3day-check-error.log</string>
+</dict>
+</plist>
