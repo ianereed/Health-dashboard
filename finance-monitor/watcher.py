@@ -11,7 +11,9 @@ from pathlib import Path
 
 import config
 import db
-from ingest import pdf_importer, ynab_api, ynab_csv
+from ingest import image_importer, pdf_importer, ynab_api, ynab_csv
+
+_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".heic", ".heif", ".tiff", ".tif", ".webp", ".gif"})
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +64,16 @@ def run() -> None:
             else:
                 logger.info("watcher: %s already imported — moving anyway", path.name)
                 shutil.move(str(path), dest / path.name)
+
+        elif suffix in _IMAGE_EXTS:
+            logger.info("watcher: importing image: %s", path.name)
+            ok = image_importer.import_file(path)
+            if ok:
+                shutil.move(str(path), dest / path.name)
+            else:
+                # OCR failure — leave the file in intake/ so it gets retried
+                # on the next tick once Ollama is reachable.
+                logger.warning("watcher: image import failed for %s — leaving in intake/", path.name)
 
         else:
             logger.warning("watcher: unrecognised file type %s — skipping", path.name)
