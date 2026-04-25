@@ -317,14 +317,15 @@ def _insert_transaction(path: Path, receipt: dict, memo_text: str) -> bool:
     memo = (receipt.get("memo") or "")[:400]
 
     txn_id = hashlib.sha256(f"img|{path.name}|{date}|{merchant}|{amount:.2f}".encode()).hexdigest()[:32]
+    now = datetime.now(tz=timezone.utc).isoformat()
 
     conn = db.get_connection()
     try:
-        conn.execute(
+        cur = conn.execute(
             """INSERT OR IGNORE INTO transactions
                (id, date, payee, outflow, inflow, amount, category, account, memo, cleared,
-                is_transfer, source)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                is_transfer, source, raw_file, imported_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 txn_id,
                 date,
@@ -338,13 +339,22 @@ def _insert_transaction(path: Path, receipt: dict, memo_text: str) -> bool:
                 "uncleared",
                 0,
                 "image_import",
+                path.name,
+                now,
             ),
         )
         conn.commit()
+        inserted = cur.rowcount > 0
     finally:
         conn.close()
 
-    logger.info("image_importer: transaction %s | %s %s (%.2f)", path.name, date, merchant, amount)
+    if inserted:
+        logger.info("image_importer: transaction %s | %s %s (%.2f)", path.name, date, merchant, amount)
+    else:
+        # INSERT OR IGNORE: row already exists (re-uploaded image with the same
+        # date/merchant/amount). Treat as success so the watcher moves the file
+        # out of intake/ rather than retrying forever.
+        logger.info("image_importer: transaction %s already present — skipping insert", path.name)
     return True
 
 
