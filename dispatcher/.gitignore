@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+tmp/*
+!tmp/.gitkeep
+nas-staging/*
+!nas-staging/.gitkeep

@@ -33,8 +33,9 @@ Tailscale.
 | 6 | Minimal monitoring (launchd logs + Pushover) | ⏳ Pending |
 | 7 | Backup (Time Machine + off-site) | ⏳ Pending |
 | 8 | Finance automation scripts (YNAB, Amazon reconciliation) | ⏳ Pending |
-| 9 | (Deferred) BlueBubbles iMessage bridge | ⏳ Deferred |
-| 10 | (Deferred) Hermes Agent / OpenClaw eval | ⏳ Deferred |
+| 9 | Slack UX split — dispatcher bot + `#ian-image-intake` (local-only classify/OCR) | 🟡 Code complete 2026-04-24; user must create Slack app + channel before loading LaunchAgent |
+| 10 | (Deferred) BlueBubbles iMessage bridge | ⏳ Deferred |
+| 11 | (Deferred) Hermes Agent / OpenClaw eval | ⏳ Deferred |
 
 ## What's running right now
 

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.home-tools.dispatcher</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/homeserver/Home-Tools/dispatcher/.venv/bin/python3</string>
+    <string>/Users/homeserver/Home-Tools/dispatcher/main.py</string>
+    <string>serve</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/homeserver/Home-Tools/dispatcher</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>KEYCHAIN_PATH</key>
+    <string>/Users/homeserver/Library/Keychains/login.keychain-db</string>
+  </dict>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/home-tools-dispatcher.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/home-tools-dispatcher-error.log</string>
+</dict>
+</plist>

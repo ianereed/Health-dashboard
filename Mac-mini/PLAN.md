@@ -329,7 +329,61 @@ Replace manual CSV drops with automated hourly sync:
 
 ---
 
-## Phase 9–10 — Deferred
+## Phase 9 — Slack UX split (dispatcher bot)
+
+**Status:** Code complete 2026-04-24 (`Home-Tools/dispatcher/`). Pending user
+actions before it goes live on the mini.
+
+**What shipped** (see plan at
+`~/.claude/plans/we-are-going-to-ancient-platypus.md`):
+
+- New project `dispatcher/` — long-running Socket Mode bot that listens in
+  `#ian-event-aggregator` (interactive commands) and `#ian-image-intake` (file
+  uploads). Routes images locally via qwen2.5vl:7b, drops financial docs into
+  `finance-monitor/intake/`, and invokes `event-aggregator main.py
+  ingest-image` for event-type files.
+- New CLI subcommands on event-aggregator: `classify`, `ingest-image`,
+  `approve`, `reject`, `add-event`, `status`, `query`.
+- Cloud fallback (Gemini) **removed** from event-aggregator. All intake is
+  local-only now. PDF rasterization via `pypdfium2` added so PDFs still work
+  without the cloud path.
+- finance-monitor watcher extended to OCR images via qwen2.5vl (`ingest/image_importer.py`).
+- Old Slack file scanner retired (`connectors/slack.py:fetch_files` deleted).
+
+**User actions required (mini):**
+
+1. Create `#ian-image-intake` in Slack.
+2. Create a new Slack app "Home Router Bot" — Socket Mode on, App-Level Token
+   with `connections:write`, Bot Token with scopes: `channels:history,
+   channels:read, groups:history, groups:read, chat:write, files:read,
+   reactions:write`. Install and invite to both channels.
+3. Add tokens to the mini's login keychain:
+   ```bash
+   security add-generic-password -U -s dispatcher-slack -a app_token \
+     -w "xapp-..." ~/Library/Keychains/login.keychain-db
+   security add-generic-password -U -s dispatcher-slack -a bot_token \
+     -w "xoxb-..." ~/Library/Keychains/login.keychain-db
+   ```
+4. `git pull` on the mini. `cd ~/Home-Tools/dispatcher && bash install.sh`.
+5. Set `ALLOWED_SLACK_USER_IDS` in `dispatcher/.env` to your Slack user ID.
+6. Pull the same ID into `event-aggregator/.env` too — `pypdfium2` must be
+   installed in the event-aggregator venv: `source .venv/bin/activate && pip
+   install -r requirements.txt`.
+7. `launchctl list | grep dispatcher` → PID + exit 0, then `tail -f
+   /tmp/home-tools-dispatcher.log` to confirm the bot is connected.
+
+**Verification (no real data — per privacy rule):**
+
+- Post `help` in `#ian-event-aggregator` → bot replies with command list
+- Post `status` → JSON summary appears within a few seconds
+- Drop a harmless test image in `#ian-image-intake` → bot posts "Received…
+  classifying" ack, then a routing decision
+- Confirm no outbound Google traffic: `ssh homeserver 'sudo lsof -iTCP
+  -sTCP:ESTABLISHED | grep -i google'` while an upload processes
+
+---
+
+## Phase 10–11 — Deferred
 
 - **BlueBubbles iMessage bridge** — requires signing into iCloud on the
   mini. Defer until we actually want iMessage-based control of the finance
