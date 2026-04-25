@@ -17,7 +17,13 @@ if [[ ! -d "$HERE/.venv" ]]; then
 fi
 
 echo "  installing requirements"
-"$HERE/.venv/bin/pip" install -q -r "$HERE/requirements.txt"
+# uv-created venvs ship without pip; use `uv pip` against the venv's python.
+# Falls back to the venv's pip if uv isn't on PATH (e.g. python -m venv setups).
+if command -v uv >/dev/null 2>&1; then
+  uv pip install --python "$HERE/.venv/bin/python" -q -r "$HERE/requirements.txt"
+else
+  "$HERE/.venv/bin/pip" install -q -r "$HERE/requirements.txt"
+fi
 
 # Sanity-check keychain entries (non-fatal — let `main.py check` report)
 echo "  verifying keychain entries (dispatcher-slack/app_token, bot_token)"
