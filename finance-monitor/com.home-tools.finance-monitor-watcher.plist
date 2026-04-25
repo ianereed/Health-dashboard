@@ -33,9 +33,9 @@
   <false/>
 
   <key>StandardOutPath</key>
-  <string>/tmp/home-tools-finance-monitor-watcher.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools-finance-monitor-watcher.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/tmp/home-tools-finance-monitor-watcher-error.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools-finance-monitor-watcher-error.log</string>
 </dict>
 </plist>

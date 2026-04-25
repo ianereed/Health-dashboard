@@ -13,6 +13,7 @@ Routing rules (see /Users/ianreed/.claude/plans/we-are-going-to-ancient-platypus
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
@@ -55,6 +56,7 @@ def route(
     src_file: Path,
     classification: Classification,
     override: str | None = None,
+    slack_thread: dict | None = None,
 ) -> RouteResult:
     """Move the source file to its routing destination.
 
@@ -62,6 +64,8 @@ def route(
         src_file: file currently sitting in tmp/
         classification: result from classifier.classify()
         override: if set, treat this as the category (bypass classifier result)
+        slack_thread: optional {"channel", "thread_ts"} so finance-monitor can
+            post extraction results back to the originating Slack thread.
     """
     category = (override or classification.category or _FALLBACK_CATEGORY).strip()
 
@@ -89,6 +93,9 @@ def route(
     shutil.move(str(src_file), str(dest))
     logger.info("router: %s → %s (category=%s, project=%s)", src_file.name, dest, category, project)
 
+    if project == "finance-monitor" and slack_thread:
+        _write_finance_sidecar(dest, slack_thread)
+
     return RouteResult(
         destination=dest,
         project=project,
@@ -96,6 +103,26 @@ def route(
         was_low_confidence=was_low_confidence,
         override_used=override,
     )
+
+
+def _write_finance_sidecar(dest: Path, slack_thread: dict) -> None:
+    """Drop a <file>.thread.json next to the routed file so finance-monitor's
+    image_importer can post extraction results back to the originating thread."""
+    channel = slack_thread.get("channel") or ""
+    thread_ts = slack_thread.get("thread_ts") or ""
+    if not channel or not thread_ts:
+        return
+    sidecar = dest.with_name(dest.name + ".thread.json")
+    payload = {
+        "channel": channel,
+        "thread_ts": thread_ts,
+        "attempts": 0,
+        "notified_failure": False,
+    }
+    try:
+        sidecar.write_text(json.dumps(payload))
+    except OSError as exc:
+        logger.warning("router: failed to write sidecar %s: %s", sidecar, exc)
 
 
 def ingest_as_event(src_file: Path) -> tuple[bool, str]:

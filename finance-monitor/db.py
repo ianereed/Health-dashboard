@@ -1,4 +1,5 @@
 """SQLite schema and connection helpers."""
+import os
 import sqlite3
 
 import config
@@ -10,6 +11,17 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def _restrict_db_permissions() -> None:
+    """Ensure the DB file and its WAL/SHM sidecars are 0600."""
+    for suffix in ("", "-wal", "-shm"):
+        p = config.DB_PATH.with_name(config.DB_PATH.name + suffix)
+        if p.exists():
+            try:
+                os.chmod(p, 0o600)
+            except OSError:
+                pass
 
 
 def init_db() -> None:
@@ -67,6 +79,7 @@ def init_db() -> None:
     """)
     conn.commit()
     conn.close()
+    _restrict_db_permissions()
 
 
 if __name__ == "__main__":

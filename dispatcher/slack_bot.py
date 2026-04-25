@@ -12,6 +12,7 @@ Slack Socket Mode listener — lives in two channels:
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import time
 from pathlib import Path
@@ -79,8 +80,10 @@ def _is_authorized(user_id: str) -> bool:
 
 def _download_to_tmp(url: str, filename: str) -> Path:
     config.TMP_DIR.mkdir(parents=True, exist_ok=True)
-    safe = filename.replace("/", "_") or "upload"
-    # Prefix with a short timestamp so repeated uploads of the same name don't clobber
+    # Slack supplies the filename as user-controlled input. Strip everything
+    # outside a conservative ASCII set and bound length to keep downstream
+    # filesystem / argv / Slack-rendered paths predictable.
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename)[:120] or "upload"
     stamp = str(int(time.time()))
     dest = config.TMP_DIR / f"{stamp}_{safe}"
     resp = requests.get(
@@ -241,7 +244,10 @@ def _handle_intake_upload(event, client, channel: str) -> None:
             continue
 
         try:
-            result = router.route(local, cls)
+            result = router.route(
+                local, cls,
+                slack_thread={"channel": channel, "thread_ts": msg_ts},
+            )
         except Exception as exc:
             _reply(client, channel, msg_ts, f":x: routing failed: {exc}")
             continue
@@ -284,7 +290,11 @@ def _handle_route_override(text: str, thread_ts: str, client, channel: str) -> N
         return
 
     try:
-        new_result = router.route(src, state["classification"], override=category)
+        new_result = router.route(
+            src, state["classification"],
+            override=category,
+            slack_thread={"channel": channel, "thread_ts": thread_ts},
+        )
     except Exception as exc:
         _reply(client, channel, thread_ts, f":x: reroute failed: {exc}")
         return

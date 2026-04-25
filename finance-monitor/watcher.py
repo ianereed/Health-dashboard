@@ -3,6 +3,7 @@ Scan the intake/ folder for new YNAB CSV exports and PDF documents.
 Imports each file, then moves it to imported/YYYY-MM/.
 Runs once and exits (invoked by a 5-minute interval LaunchAgent).
 """
+import fcntl
 import logging
 import shutil
 import sys
@@ -31,6 +32,19 @@ def _dest_dir() -> Path:
 
 
 def run() -> None:
+    # launchd's StartInterval fires on wall-clock; if a previous tick is still
+    # OCRing, a second instance would race on intake/ files and the SQLite
+    # writer. Hold a non-blocking flock for the lifetime of this run.
+    config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = config.DB_PATH.parent / "watcher.lock"
+    lock_fp = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.info("watcher: another instance is running — exiting")
+        lock_fp.close()
+        return
+
     db.init_db()
     config.INTAKE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,6 +61,10 @@ def run() -> None:
     for path in files:
         if path.name.startswith("."):
             continue
+        if path.is_dir():
+            continue  # e.g. intake/quarantine/
+        if path.name.endswith(image_importer.SIDECAR_SUFFIX):
+            continue  # Slack thread sidecar — handled alongside its main file
 
         suffix = path.suffix.lower()
 
@@ -70,10 +88,22 @@ def run() -> None:
             ok = image_importer.import_file(path)
             if ok:
                 shutil.move(str(path), dest / path.name)
+                # importer should have removed the sidecar already; clean up if not
+                sc = path.with_name(path.name + image_importer.SIDECAR_SUFFIX)
+                if sc.exists():
+                    try:
+                        sc.unlink()
+                    except OSError:
+                        pass
             else:
-                # OCR failure — leave the file in intake/ so it gets retried
-                # on the next tick once Ollama is reachable.
-                logger.warning("watcher: image import failed for %s — leaving in intake/", path.name)
+                attempts = image_importer.get_attempts(path)
+                if attempts >= image_importer.MAX_OCR_ATTEMPTS:
+                    image_importer.quarantine(path)
+                else:
+                    logger.warning(
+                        "watcher: image import failed for %s (attempt %d/%d) — leaving in intake/",
+                        path.name, attempts, image_importer.MAX_OCR_ATTEMPTS,
+                    )
 
         else:
             logger.warning("watcher: unrecognised file type %s — skipping", path.name)

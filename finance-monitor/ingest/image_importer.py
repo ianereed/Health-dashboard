@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 _MAX_TEXT_CHARS = 60_000
 _LOCAL_VISION_MODEL = "qwen2.5vl:7b"  # must be pulled on the mini's Ollama
 
+# Dispatcher writes a <file>.thread.json sidecar so we can post extraction
+# results back to the originating Slack thread. Watcher and importer also use
+# the sidecar to track per-file OCR attempts before quarantining.
+SIDECAR_SUFFIX = ".thread.json"
+MAX_OCR_ATTEMPTS = 3
+
 _OCR_PROMPT = """\
 You are an OCR assistant. Extract ALL readable text from this image as plain
 text. Preserve amounts, dates, line items, and headings. If the image is
@@ -60,7 +66,16 @@ OCR text:
 
 
 def import_file(path: Path) -> bool:
-    """OCR and ingest an image. Returns True on successful insert, False otherwise."""
+    """OCR and ingest an image. Returns True on successful insert, False otherwise.
+
+    Side effects: reads / writes / deletes a sidecar JSON next to the file,
+    and posts a single Slack message in-thread when the dispatcher provided
+    thread context.
+    """
+    sidecar = _load_sidecar(path)
+    channel = sidecar.get("channel") or ""
+    thread_ts = sidecar.get("thread_ts") or ""
+
     try:
         file_bytes = path.read_bytes()
     except Exception as exc:
@@ -69,19 +84,166 @@ def import_file(path: Path) -> bool:
 
     text = _ocr_local(file_bytes, path.name)
     if text is None:
+        attempts = int(sidecar.get("attempts") or 0) + 1
+        sidecar["attempts"] = attempts
+        if not sidecar.get("notified_failure"):
+            _post_to_slack(
+                channel, thread_ts,
+                f":hourglass_flowing_sand: OCR failed for `{path.name}` — will retry next "
+                f"5-min tick. Check that `qwen2.5vl:7b` is loaded.",
+            )
+            sidecar["notified_failure"] = True
+        _save_sidecar(path, sidecar)
         logger.warning(
-            "image_importer: OCR failed for %s — Ollama unreachable or model missing", path.name
+            "image_importer: OCR failed for %s (attempt %d/%d) — Ollama unreachable or model missing",
+            path.name, attempts, MAX_OCR_ATTEMPTS,
         )
         return False
+
     if text.strip().upper() == "NOT_A_DOCUMENT" or len(text.strip()) < 10:
         logger.info("image_importer: %s looks non-textual — leaving as document", path.name)
-        return _insert_document(path, text, file_bytes)
+        ok = _insert_document(path, text, file_bytes)
+        if ok:
+            _post_to_slack(
+                channel, thread_ts,
+                f":grey_question: `{path.name}` doesn't look like a document — saved as `image_other`.",
+            )
+            _remove_sidecar(path)
+        return ok
 
     receipt = _probe_receipt(text)
     if receipt and receipt.get("is_receipt") and receipt.get("date") and receipt.get("amount") is not None:
-        return _insert_transaction(path, receipt, memo_text=text[:500])
+        ok = _insert_transaction(path, receipt, memo_text=text[:500])
+        if ok:
+            _post_to_slack(channel, thread_ts, _format_receipt_message(receipt))
+            _remove_sidecar(path)
+        return ok
 
-    return _insert_document(path, text, file_bytes)
+    ok = _insert_document(path, text, file_bytes)
+    if ok:
+        _post_to_slack(
+            channel, thread_ts,
+            f":page_facing_up: Saved `{path.name}` as a document — couldn't extract a "
+            f"date and amount, so it's not booked as a transaction.",
+        )
+        _remove_sidecar(path)
+    return ok
+
+
+def quarantine(file_path: Path) -> None:
+    """Move a file (and its sidecar) into intake/quarantine/ after exhausting
+    OCR retries; post a one-time Slack notice if we have thread context.
+    """
+    sidecar = _load_sidecar(file_path)
+    channel = sidecar.get("channel") or ""
+    thread_ts = sidecar.get("thread_ts") or ""
+
+    qdir = config.INTAKE_DIR / "quarantine"
+    qdir.mkdir(parents=True, exist_ok=True)
+
+    target = qdir / file_path.name
+    try:
+        file_path.rename(target)
+    except OSError as exc:
+        logger.error("image_importer: quarantine move failed for %s: %s", file_path.name, exc)
+        return
+
+    sc = _sidecar_path(file_path)
+    if sc.exists():
+        try:
+            sc.rename(qdir / sc.name)
+        except OSError:
+            pass
+
+    logger.error(
+        "image_importer: %s quarantined after %d failed OCR attempts",
+        file_path.name, MAX_OCR_ATTEMPTS,
+    )
+    _post_to_slack(
+        channel, thread_ts,
+        f":warning: `{file_path.name}` quarantined after {MAX_OCR_ATTEMPTS} failed OCR "
+        f"attempts. Inspect at `intake/quarantine/`.",
+    )
+
+
+def get_attempts(file_path: Path) -> int:
+    """How many times has OCR failed on this file? Used by the watcher to decide
+    when to quarantine."""
+    return int(_load_sidecar(file_path).get("attempts") or 0)
+
+
+# ── Sidecar helpers ──────────────────────────────────────────────────────────
+
+def _sidecar_path(file_path: Path) -> Path:
+    return file_path.with_name(file_path.name + SIDECAR_SUFFIX)
+
+
+def _load_sidecar(file_path: Path) -> dict:
+    p = _sidecar_path(file_path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def _save_sidecar(file_path: Path, data: dict) -> None:
+    p = _sidecar_path(file_path)
+    try:
+        p.write_text(json.dumps(data))
+    except OSError as exc:
+        logger.warning("image_importer: failed to write sidecar %s: %s", p, exc)
+
+
+def _remove_sidecar(file_path: Path) -> None:
+    p = _sidecar_path(file_path)
+    if p.exists():
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+# ── Slack callback ───────────────────────────────────────────────────────────
+
+def _post_to_slack(channel: str, thread_ts: str, text: str) -> bool:
+    """Best-effort thread reply. Silent no-op if context or token missing."""
+    if not channel or not thread_ts:
+        return False
+    if not config.SLACK_BOT_TOKEN:
+        logger.debug("image_importer: no SLACK_BOT_TOKEN — skipping callback")
+        return False
+    try:
+        resp = requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={
+                "Authorization": f"Bearer {config.SLACK_BOT_TOKEN}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={"channel": channel, "thread_ts": thread_ts, "text": text},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        if not resp.json().get("ok", False):
+            logger.warning("image_importer: Slack callback not-ok: %s", resp.text[:200])
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("image_importer: Slack callback failed: %s", exc)
+        return False
+
+
+def _format_receipt_message(receipt: dict) -> str:
+    merchant = (receipt.get("merchant") or "(unknown)").strip() or "(unknown)"
+    try:
+        amount = float(receipt.get("amount") or 0.0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    date_str = str(receipt.get("date") or "")[:10]
+    account = (receipt.get("account") or "").strip()
+    account_note = f" _(account: ****{account})_" if account else ""
+    return f":moneybag: Booked: *{merchant}* — ${amount:.2f} on {date_str}{account_note}"
 
 
 # ── OCR ──────────────────────────────────────────────────────────────────────

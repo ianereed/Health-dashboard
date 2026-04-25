@@ -29,9 +29,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/tmp/home-tools-finance-monitor.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools-finance-monitor.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/tmp/home-tools-finance-monitor-error.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools-finance-monitor-error.log</string>
 </dict>
 </plist>

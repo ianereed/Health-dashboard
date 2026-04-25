@@ -29,9 +29,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/tmp/home-tools-dispatcher.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools-dispatcher.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/tmp/home-tools-dispatcher-error.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools-dispatcher-error.log</string>
 </dict>
 </plist>

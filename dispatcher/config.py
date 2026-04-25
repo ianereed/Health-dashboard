@@ -86,4 +86,10 @@ def validate() -> list[str]:
         )
     if not EVENT_AGGREGATOR_DIR.exists():
         problems.append(f"EVENT_AGGREGATOR_DIR does not exist: {EVENT_AGGREGATOR_DIR}")
+    if not ALLOWED_SLACK_USER_IDS:
+        problems.append(
+            "ALLOWED_SLACK_USER_IDS is empty — refusing to start. The dispatcher "
+            "now ingests user-supplied files into the OCR/DB pipeline; running "
+            "without an allowlist would let any workspace member trigger it."
+        )
     return problems

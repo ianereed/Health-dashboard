@@ -9,8 +9,8 @@ Privacy: raw transaction data and document text are never logged.
 from __future__ import annotations
 
 import logging
-import time
 from datetime import date, datetime, timedelta, timezone
+from typing import Callable
 
 import requests
 
@@ -19,22 +19,33 @@ import db
 
 logger = logging.getLogger(__name__)
 
-_DOCUMENT_KEYWORDS = frozenset([
+# Single-word hits are weak signals; many show up in casual phrasing
+# ("did I overspend my plan?"). Require either a strong phrase or
+# two distinct weak keywords before pulling in 60K chars of document text.
+_DOC_WEAK_KEYWORDS = frozenset([
     "plan", "advisor", "portfolio", "allocation", "securities",
     "etf", "fund", "invest", "retire", "analyze", "analysis",
     "strategy", "asset", "stock", "bond", "equity", "vanguard",
     "schwab", "fidelity", "proposal",
 ])
+_DOC_STRONG_PHRASES = (
+    "advisor said", "asset allocation", "asset class",
+    "financial plan", "retirement strategy",
+    "1099", "k-1", "w-2", "tax return",
+)
 
-_TEXT_MAX_CHARS = 60_000
-_OLLAMA_TIMEOUT = 120
+_TEXT_MAX_CHARS = 30_000
+_OLLAMA_TIMEOUT = 90
 
 
 def _question_mode(question: str) -> str:
     lower = question.lower()
+    if any(phrase in lower for phrase in _DOC_STRONG_PHRASES):
+        return "combined"
     words = set(lower.split())
-    has_doc = bool(words & _DOCUMENT_KEYWORDS)
-    return "combined" if has_doc else "transaction"
+    if len(words & _DOC_WEAK_KEYWORDS) >= 2:
+        return "combined"
+    return "transaction"
 
 
 # ── Data fetch helpers ────────────────────────────────────────────────────────
@@ -207,11 +218,15 @@ QUESTION: {question}"""
 # ── Ollama call ───────────────────────────────────────────────────────────────
 
 def _call_ollama(prompt: str, num_ctx: int = 16384) -> str:
+    # ~3.5 chars/token is a rough qwen heuristic; surfacing this lets us see
+    # truncation risk without parsing tokenizer state.
+    logger.info("query_engine: prompt chars=%d (~%d tokens), num_ctx=%d",
+                len(prompt), len(prompt) // 3, num_ctx)
     payload = {
         "model": config.OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "keep_alive": "10s",
+        "keep_alive": "30m",
         "think": False,  # required for qwen3; safe no-op on other models
         "options": {"num_ctx": num_ctx},
     }
@@ -226,10 +241,13 @@ def _call_ollama(prompt: str, num_ctx: int = 16384) -> str:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def answer(question: str) -> str:
+def answer(question: str, on_stage: Callable[[str], None] | None = None) -> str:
     """
     Answer a plain-English finance question. Returns a plain-text response.
     Never raises — returns an error string on failure.
+
+    `on_stage(label)` is called once after mode/document resolution and before
+    the LLM call so the caller (e.g. Slack bot) can update a status message.
     """
     mode = _question_mode(question)
     summary = _fetch_spending_summary(days=90)
@@ -238,30 +256,26 @@ def answer(question: str) -> str:
         recent = _fetch_recent_transactions(days=30)
         prompt = _build_transaction_prompt(question, summary, recent)
         num_ctx = 16384
+        if on_stage:
+            on_stage("Querying transactions (last 90 days)")
     else:
-        # Extract keywords from question to find the best matching document
         q_words = [w for w in question.lower().split() if len(w) > 3]
         doc = _fetch_most_recent_document(keywords=q_words)
         if doc:
             prompt = _build_document_prompt(question, doc, summary)
             num_ctx = 32768
+            if on_stage:
+                on_stage(f'Reading "{doc["filename"]}"')
         else:
-            # No documents — fall back to transaction mode with a note
             recent = _fetch_recent_transactions(days=30)
             prompt = _build_transaction_prompt(question, summary, recent)
             prompt += "\n\nNote: No financial documents have been uploaded yet."
             num_ctx = 16384
+            if on_stage:
+                on_stage("Querying transactions (no documents on file)")
 
-    for attempt in range(3):
-        try:
-            return _call_ollama(prompt, num_ctx=num_ctx)
-        except (requests.RequestException, KeyError) as exc:
-            if attempt < 2:
-                delay = 2 ** attempt
-                logger.warning("query_engine: attempt %d failed: %s — retrying in %ds", attempt + 1, exc, delay)
-                time.sleep(delay)
-            else:
-                logger.error("query_engine: all 3 attempts failed: %s", exc)
-                return "Sorry, I couldn't reach the local AI model. Check that Ollama is running."
-
-    return "Sorry, something went wrong."
+    try:
+        return _call_ollama(prompt, num_ctx=num_ctx)
+    except (requests.RequestException, KeyError) as exc:
+        logger.error("query_engine: ollama call failed: %s", exc)
+        return "Sorry, I couldn't reach the local AI model. Check that Ollama is running."
