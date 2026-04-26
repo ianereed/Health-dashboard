@@ -203,171 +203,6 @@ def _proposal_item_to_candidate(item: dict) -> CandidateEvent:
     )
 
 
-def _process_pending_approvals(
-    state: state_module.State,
-    dry_run: bool,
-    thread_ts: str | None,
-) -> tuple[int, int, int]:
-    """
-    Check pending proposals for approval/rejection replies and act on them.
-
-    Returns (approved_count, rejected_count, expired_count).
-    """
-    approved = 0
-    rejected = 0
-    snapshot = state.calendar_snapshot()
-
-    # 1. Expire old proposals
-    expired_items = state.expire_old_proposals(hours=config.PROPOSAL_EXPIRY_HOURS)
-    for item in expired_items:
-        fp = item.get("fingerprint")
-        if fp:
-            state.remove_proposal_fingerprint(fp)
-        logger.info("Proposal #%d expired: %r", item["num"], item["title"])
-    expired = len(expired_items)
-
-    if expired and thread_ts and not dry_run:
-        titles = ", ".join(f"#{i['num']} {i['title']}" for i in expired_items[:5])
-        slack_notifier.post_to_thread(
-            thread_ts,
-            f":hourglass: {expired} proposal{'s' if expired != 1 else ''} expired (no response after "
-            f"{config.PROPOSAL_EXPIRY_HOURS}h): {titles}",
-        )
-
-    # 2. Check for approvals in each pending batch
-    day_thread_ts, _ = state.get_day_thread()
-    if not day_thread_ts:
-        return approved, rejected, expired
-
-    for batch in state.get_pending_proposals():
-        batch_slack_ts = batch.get("slack_ts")
-        if not batch_slack_ts:
-            continue
-
-        try:
-            replies = slack_notifier.check_proposal_replies(day_thread_ts, batch_slack_ts)
-        except Exception as exc:
-            logger.warning("Error checking proposal replies for batch %s: %s", batch.get("batch_id"), exc)
-            continue
-
-        approve_all = replies["approve_all"]
-        reject_all = replies["reject_all"]
-        approve_nums = set(replies["approve_nums"])
-        reject_nums = set(replies["reject_nums"])
-
-        # Process rejections first so approvals win if both specified for same #
-        for item in batch.get("items", []):
-            num = item["num"]
-            if item["status"] != "pending":
-                continue
-
-            should_reject = reject_all or num in reject_nums
-            should_approve = approve_all or num in approve_nums
-
-            if should_reject and not should_approve:
-                rejected_item = state.reject_proposal(num)
-                if rejected_item:
-                    fp = rejected_item.get("fingerprint")
-                    if fp:
-                        state.remove_proposal_fingerprint(fp)
-                    rejected += 1
-                    logger.info("Proposal #%d rejected: %r", num, item["title"])
-
-            elif should_approve:
-                approved_item = state.approve_proposal(num)
-                if not approved_item:
-                    continue
-
-                candidate = _proposal_item_to_candidate(approved_item)
-                now = datetime.now(timezone.utc)
-
-                # Skip if event is now in the past
-                if candidate.start_dt < now:
-                    logger.info("Proposal #%d skipped — event time has passed: %r", num, candidate.title)
-                    if thread_ts and not dry_run:
-                        slack_notifier.post_to_thread(
-                            thread_ts,
-                            f":warning: Proposal #{num} skipped — event time has already passed: *{candidate.title}*",
-                        )
-                    continue
-
-                # Execute the appropriate GCal action
-                action_taken = None
-                new_conflicts: list[str] = []
-
-                if candidate.is_cancellation and candidate.gcal_event_id_to_update:
-                    deleted = gcal_writer.delete_event(
-                        candidate.gcal_event_id_to_update, dry_run=dry_run
-                    )
-                    if deleted:
-                        record_cancellation(
-                            gcal_id=candidate.gcal_event_id_to_update,
-                            title=candidate.original_title_hint or candidate.title,
-                            source=candidate.source,
-                        )
-                        action_taken = "cancelled"
-
-                elif candidate.gcal_event_id_to_update:
-                    written, new_conflicts = gcal_writer.update_event(
-                        candidate.gcal_event_id_to_update, candidate, dry_run=dry_run
-                    )
-                    if written:
-                        state.add_written_event(
-                            gcal_id=written.gcal_event_id,
-                            title=candidate.title,
-                            start_iso=candidate.start_dt.isoformat(),
-                            fingerprint=written.fingerprint,
-                            is_tentative=(candidate.confidence_band == "medium"),
-                        )
-                        log_event(written, action="updated", conflicts=new_conflicts)
-                        action_taken = "updated"
-
-                else:
-                    written, new_conflicts = gcal_writer.write_event(
-                        candidate, dry_run=dry_run, snapshot=snapshot
-                    )
-                    if written:
-                        state.add_fingerprint(written.fingerprint)
-                        state.add_written_event(
-                            gcal_id=written.gcal_event_id,
-                            title=candidate.title,
-                            start_iso=candidate.start_dt.isoformat(),
-                            fingerprint=written.fingerprint,
-                            is_tentative=(candidate.confidence_band == "medium"),
-                        )
-                        log_event(written, action="created", conflicts=new_conflicts)
-                        action_taken = "created"
-
-                if action_taken:
-                    approved += 1
-                    logger.info(
-                        "%sProposal #%d %s: %r on %s",
-                        "DRY RUN " if dry_run else "",
-                        num, action_taken, candidate.title,
-                        candidate.start_dt.date() if not candidate.is_cancellation else "n/a",
-                    )
-                    if thread_ts and not dry_run:
-                        action_icon = {
-                            "created": ":white_check_mark:",
-                            "updated": ":pencil2:",
-                            "cancelled": ":wastebasket:",
-                        }.get(action_taken, ":white_check_mark:")
-                        start_str = ""
-                        if not candidate.is_cancellation:
-                            try:
-                                start_str = f" | {candidate.start_dt.strftime('%b %-d %-I:%M%p').lower()}"
-                            except Exception:
-                                pass
-                        conflict_note = ""
-                        if new_conflicts:
-                            conflict_note = f"\n  :warning: New conflict: {', '.join(new_conflicts[:3])}"
-                        slack_notifier.post_to_thread(
-                            thread_ts,
-                            f"{action_icon} #{num} {action_taken}: *{candidate.title}*{start_str}{conflict_note}",
-                        )
-
-    return approved, rejected, expired
-
 
 def _propose_events(
     all_candidates: list[CandidateEvent],
@@ -375,10 +210,10 @@ def _propose_events(
     snapshot: dict,
     dry_run: bool,
     mock: bool,
-    get_thread,
 ) -> dict:
     """
-    In proposal mode: collect candidates into a batch, post to Slack, store in state.
+    In proposal mode: collect candidates into a batch and store in state.
+    Slack posting happens in main() after this returns.
     Returns counts dict.
     """
     counts = {
@@ -434,31 +269,16 @@ def _propose_events(
     if not batch_items:
         return counts
 
-    # Build the batch
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H:%M")
     batch = {
         "batch_id": now_str,
-        "slack_ts": None,  # filled in after posting
+        "slack_ts": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "items": batch_items,
     }
     state.add_proposal_batch(batch)
 
-    # Post to Slack
-    if not mock:
-        thread_ts = get_thread()
-        if thread_ts:
-            posted_ts = slack_notifier.post_proposals(thread_ts, batch_items)
-            if posted_ts:
-                state.set_proposal_slack_ts(now_str, posted_ts)
-                logger.info(
-                    "Posted %d proposal(s) to Slack (batch %s, ts=%s)",
-                    len(batch_items), now_str, posted_ts,
-                )
-            else:
-                logger.warning("Failed to post proposals to Slack")
-    else:
-        # Log proposals for mock/dry-run mode
+    if mock:
         for item in batch_items:
             logger.info(
                 "MOCK PROPOSE #%d: %r on %s (confidence=%.2f, source=%s)",
@@ -638,8 +458,9 @@ def main() -> int:
         return 0
 
     run_start = datetime.now(timezone.utc)
+    today_str = run_start.strftime("%Y-%m-%d")
 
-    # Slack thread (lazily created on first action)
+    # Slack day-thread (used in auto mode)
     thread_ts: str | None = None
 
     def _get_thread() -> str | None:
@@ -648,17 +469,16 @@ def main() -> int:
             thread_ts = slack_notifier.get_or_create_day_thread(state)
         return thread_ts
 
-    # ── Phase 0: Process pending approvals ──────────────────────────────────
+    # ── Pre-Phase: Expire stale proposals ────────────────────────────────────
+    expired_items: list[dict] = []
     if config.EVENT_APPROVAL_MODE == "propose" and not args.mock:
-        t = _get_thread()
-        approved, rejected, expired = _process_pending_approvals(
-            state, dry_run=args.dry_run, thread_ts=t
-        )
-        if approved or rejected or expired:
-            logger.info(
-                "Approvals: %d approved, %d rejected, %d expired",
-                approved, rejected, expired,
-            )
+        expired_items = state.expire_old_proposals(hours=config.PROPOSAL_EXPIRY_HOURS)
+        for item in expired_items:
+            fp = item.get("fingerprint")
+            if fp:
+                state.remove_proposal_fingerprint(fp)
+        if expired_items:
+            logger.info("%d proposal(s) expired", len(expired_items))
 
     # ── Phase 1: Fetch calendar context for Ollama prompt injection ──────────
     calendar_context = ""
@@ -760,7 +580,7 @@ def main() -> int:
     if config.EVENT_APPROVAL_MODE == "propose":
         propose_counts = _propose_events(
             all_candidates, state, snapshot,
-            dry_run=args.dry_run, mock=args.mock, get_thread=_get_thread,
+            dry_run=args.dry_run, mock=args.mock,
         )
         proposed = propose_counts.get("proposed", 0)
         skipped_recurring = propose_counts.get("skipped_recurring", 0)
@@ -770,6 +590,12 @@ def main() -> int:
             proposed, skipped_recurring, skipped_duplicate,
             " [DRY RUN]" if args.dry_run else "",
         )
+        # Post/update the live dashboard whenever there's something to show
+        if not args.mock and not args.dry_run:
+            all_dashboard_items = state.get_all_proposal_items_for_dashboard(today_str)
+            dashboard_exists = state.get_proposal_dashboard_ts(today_str) is not None
+            if all_dashboard_items or (dashboard_exists and expired_items):
+                slack_notifier.post_or_update_dashboard(all_dashboard_items, state)
     else:
         auto_counts = _auto_create_events(
             all_candidates, state, snapshot,
@@ -807,7 +633,10 @@ def main() -> int:
                         todo.title, todo.source, todo.priority, todo.confidence,
                     )
                     if not args.dry_run and not args.mock:
-                        t = _get_thread()
+                        if config.EVENT_APPROVAL_MODE == "propose":
+                            t = state.get_proposal_dashboard_ts(today_str)
+                        else:
+                            t = _get_thread()
                         if t:
                             slack_notifier.post_todo_action(
                                 thread_ts=t,
@@ -839,11 +668,14 @@ def main() -> int:
     if heavy_phases_allowed and not args.mock:
         _unload_ollama_models()
 
-    # ── Phase 8: Post run summary to Slack thread ────────────────────────────
+    # ── Phase 8: Post run summary ────────────────────────────────────────────
     if not args.dry_run and not args.mock:
-        t = _get_thread()
+        # In propose mode, thread under the dashboard; in auto mode, use the day thread
+        if config.EVENT_APPROVAL_MODE == "propose":
+            t = state.get_proposal_dashboard_ts(today_str)
+        else:
+            t = _get_thread()
         pending_proposal_count = len(state.get_pending_proposals())
-        # In propose mode, report proposals in the summary; in auto mode, use auto counts
         if config.EVENT_APPROVAL_MODE == "propose":
             proposed = propose_counts.get("proposed", 0)
             skipped_recurring = propose_counts.get("skipped_recurring", 0)

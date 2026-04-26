@@ -274,114 +274,99 @@ class TestProposalPruning:
         assert len(remaining) == 1
 
 
-# ── Reply parsing ─────────────────────────────────────────────────────────────
+# ── Block Kit dashboard ───────────────────────────────────────────────────────
 
 
-class TestParseNums:
-    def test_comma_separated(self):
-        from notifiers.slack_notifier import _parse_nums
-        assert _parse_nums("1,3,5") == [1, 3, 5]
+class TestBuildDashboardBlocks:
+    def test_header_contains_day(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        blocks = build_dashboard_blocks([], "2026-04-28")
+        assert blocks[0]["type"] == "header"
+        assert "Apr 28" in blocks[0]["text"]["text"]
 
-    def test_space_separated(self):
-        from notifiers.slack_notifier import _parse_nums
-        assert _parse_nums("1 3 5") == [1, 3, 5]
+    def test_empty_dashboard_shows_placeholder(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        blocks = build_dashboard_blocks([], "2026-04-28")
+        texts = [b.get("text", {}).get("text", "") for b in blocks if b["type"] == "section"]
+        assert any("No proposals" in t for t in texts)
 
-    def test_mixed_separators(self):
-        from notifiers.slack_notifier import _parse_nums
-        assert _parse_nums("1, 3, 5") == [1, 3, 5]
+    def test_pending_item_has_approve_reject_buttons(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        item = _make_proposal_item(num=1, title="Team Standup")
+        blocks = build_dashboard_blocks([item], "2026-04-28")
+        action_blocks = [b for b in blocks if b["type"] == "actions"]
+        assert len(action_blocks) == 1
+        action_ids = [e["action_id"] for e in action_blocks[0]["elements"]]
+        assert "ea_approve" in action_ids
+        assert "ea_reject" in action_ids
+        values = [e["value"] for e in action_blocks[0]["elements"]]
+        assert "1" in values
 
-    def test_single_number(self):
-        from notifiers.slack_notifier import _parse_nums
-        assert _parse_nums("7") == [7]
+    def test_approved_item_has_no_buttons(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        item = {**_make_proposal_item(num=1), "status": "approved"}
+        blocks = build_dashboard_blocks([item], "2026-04-28")
+        action_blocks = [b for b in blocks if b["type"] == "actions"]
+        assert len(action_blocks) == 0
 
-    def test_empty_string(self):
-        from notifiers.slack_notifier import _parse_nums
-        assert _parse_nums("") == []
+    def test_approved_item_shows_checkmark(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        item = {**_make_proposal_item(num=1, title="Coffee"), "status": "approved"}
+        blocks = build_dashboard_blocks([item], "2026-04-28")
+        context_texts = []
+        for b in blocks:
+            if b["type"] == "context":
+                for e in b.get("elements", []):
+                    context_texts.append(e.get("text", ""))
+        assert any(":white_check_mark:" in t and "Coffee" in t for t in context_texts)
 
+    def test_rejected_item_shows_x(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        item = {**_make_proposal_item(num=1, title="Coffee"), "status": "rejected"}
+        blocks = build_dashboard_blocks([item], "2026-04-28")
+        context_texts = []
+        for b in blocks:
+            if b["type"] == "context":
+                for e in b.get("elements", []):
+                    context_texts.append(e.get("text", ""))
+        assert any(":x:" in t and "Coffee" in t for t in context_texts)
 
-class TestCheckProposalReplies:
-    def _mock_client(self, messages: list[dict]):
-        client = MagicMock()
-        client.conversations_replies.return_value = {"messages": messages}
-        return client
+    def test_footer_shows_pending_count(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        items = [_make_proposal_item(num=i) for i in range(1, 4)]
+        blocks = build_dashboard_blocks(items, "2026-04-28")
+        footer = blocks[-1]
+        assert footer["type"] == "context"
+        assert "3 pending" in footer["elements"][0]["text"]
 
-    def test_approve_all(self):
-        from notifiers import slack_notifier
-        messages = [
-            {"ts": "100.0", "text": "3 proposals posted"},  # the proposal itself
-            {"ts": "101.0", "text": "approve"},
-        ]
-        with patch("notifiers.slack_notifier._client", return_value=self._mock_client(messages)):
-            with patch("config.SLACK_BOT_TOKEN", "xoxb-test"):
-                with patch("config.SLACK_NOTIFY_CHANNEL", "ian-event-aggregator"):
-                    result = slack_notifier.check_proposal_replies("900.0", "100.0")
-        assert result["approve_all"] is True
+    def test_conflicts_shown_in_context(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        item = {**_make_proposal_item(num=1), "conflicts": ["Weekly Sync"]}
+        blocks = build_dashboard_blocks([item], "2026-04-28")
+        context_texts = []
+        for b in blocks:
+            if b["type"] == "context":
+                for e in b.get("elements", []):
+                    context_texts.append(e.get("text", ""))
+        assert any("Weekly Sync" in t for t in context_texts)
 
-    def test_approve_specific(self):
-        from notifiers import slack_notifier
-        messages = [
-            {"ts": "100.0", "text": "proposals"},
-            {"ts": "101.0", "text": "approve 1,3"},
-        ]
-        with patch("notifiers.slack_notifier._client", return_value=self._mock_client(messages)):
-            with patch("config.SLACK_BOT_TOKEN", "xoxb-test"):
-                with patch("config.SLACK_NOTIFY_CHANNEL", "ian-event-aggregator"):
-                    result = slack_notifier.check_proposal_replies("900.0", "100.0")
-        assert result["approve_nums"] == [1, 3]
-        assert result["approve_all"] is False
+    def test_medium_confidence_shows_question_mark(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        item = {**_make_proposal_item(num=1, title="Maybe Meeting"), "confidence_band": "medium"}
+        blocks = build_dashboard_blocks([item], "2026-04-28")
+        section_texts = [b["text"]["text"] for b in blocks if b["type"] == "section"]
+        assert any("[?]" in t for t in section_texts)
 
-    def test_reject_specific(self):
-        from notifiers import slack_notifier
-        messages = [
-            {"ts": "100.0", "text": "proposals"},
-            {"ts": "101.0", "text": "reject 2"},
-        ]
-        with patch("notifiers.slack_notifier._client", return_value=self._mock_client(messages)):
-            with patch("config.SLACK_BOT_TOKEN", "xoxb-test"):
-                with patch("config.SLACK_NOTIFY_CHANNEL", "ian-event-aggregator"):
-                    result = slack_notifier.check_proposal_replies("900.0", "100.0")
-        assert result["reject_nums"] == [2]
-        assert result["reject_all"] is False
-
-    def test_reject_all(self):
-        from notifiers import slack_notifier
-        messages = [
-            {"ts": "100.0", "text": "proposals"},
-            {"ts": "101.0", "text": "Reject all"},
-        ]
-        with patch("notifiers.slack_notifier._client", return_value=self._mock_client(messages)):
-            with patch("config.SLACK_BOT_TOKEN", "xoxb-test"):
-                with patch("config.SLACK_NOTIFY_CHANNEL", "ian-event-aggregator"):
-                    result = slack_notifier.check_proposal_replies("900.0", "100.0")
-        assert result["reject_all"] is True
-
-    def test_proposal_message_itself_ignored(self):
-        from notifiers import slack_notifier
-        messages = [
-            {"ts": "100.0", "text": "approve"},  # this is the proposal ts itself, should be skipped
-        ]
-        with patch("notifiers.slack_notifier._client", return_value=self._mock_client(messages)):
-            with patch("config.SLACK_BOT_TOKEN", "xoxb-test"):
-                with patch("config.SLACK_NOTIFY_CHANNEL", "ian-event-aggregator"):
-                    result = slack_notifier.check_proposal_replies("900.0", "100.0")
-        # The "approve" text at ts=100.0 is the proposal message itself — skipped
-        assert result["approve_all"] is False
-
-    def test_irrelevant_replies_ignored(self):
-        from notifiers import slack_notifier
-        messages = [
-            {"ts": "100.0", "text": "proposals"},
-            {"ts": "101.0", "text": "ok sounds good"},
-            {"ts": "102.0", "text": "when is the next run?"},
-        ]
-        with patch("notifiers.slack_notifier._client", return_value=self._mock_client(messages)):
-            with patch("config.SLACK_BOT_TOKEN", "xoxb-test"):
-                with patch("config.SLACK_NOTIFY_CHANNEL", "ian-event-aggregator"):
-                    result = slack_notifier.check_proposal_replies("900.0", "100.0")
-        assert not result["approve_all"]
-        assert not result["approve_nums"]
-        assert not result["reject_all"]
-        assert not result["reject_nums"]
+    def test_multiple_pending_items_sorted_by_num(self):
+        from notifiers.slack_notifier import build_dashboard_blocks
+        items = [_make_proposal_item(num=3), _make_proposal_item(num=1), _make_proposal_item(num=2)]
+        blocks = build_dashboard_blocks(items, "2026-04-28")
+        # All three should have action blocks
+        action_blocks = [b for b in blocks if b["type"] == "actions"]
+        assert len(action_blocks) == 3
+        # Button values should be in order 1, 2, 3
+        values = [b["elements"][0]["value"] for b in action_blocks]
+        assert values == ["1", "2", "3"]
 
 
 # ── Extractor: calendar context injection ─────────────────────────────────────

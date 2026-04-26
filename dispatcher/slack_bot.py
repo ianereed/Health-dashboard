@@ -161,6 +161,28 @@ def run() -> None:
                     thread_ts=event.get("ts"),
                 )
 
+    @app.action("ea_approve")
+    def handle_ea_approve(ack, body, logger):
+        ack()
+        try:
+            num = body["actions"][0]["value"]
+            result = commands.handle(f"approve {num}")
+            if result and not result.ok:
+                logger.warning("ea_approve failed for #%s: %s", num, result.text)
+        except Exception as exc:
+            logger.warning("ea_approve handler error: %s", exc)
+
+    @app.action("ea_reject")
+    def handle_ea_reject(ack, body, logger):
+        ack()
+        try:
+            num = body["actions"][0]["value"]
+            result = commands.handle(f"reject {num}")
+            if result and not result.ok:
+                logger.warning("ea_reject failed for #%s: %s", num, result.text)
+        except Exception as exc:
+            logger.warning("ea_reject handler error: %s", exc)
+
     @app.event("file_shared")
     def handle_file_shared(event, client, logger):
         # We handle the full message event above (which includes files[]),

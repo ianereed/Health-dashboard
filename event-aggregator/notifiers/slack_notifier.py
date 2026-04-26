@@ -1,12 +1,10 @@
 """
-Slack notifier — posts to ian-event-aggregator channel with daily threading.
+Slack notifier — posts to ian-event-aggregator channel.
 
-One Slack thread per calendar day. All event actions (created, updated, cancelled)
-and the run summary are posted as replies to that day's thread.
-The thread opener is only created when the first action of the day occurs — no
-empty threads from runs that found nothing.
+Proposal mode: one persistent Block Kit "dashboard" message per day, updated
+in-place as proposals arrive and as the user approves/rejects via buttons.
 
-Thread ts is persisted in state.json so replies stay in the same thread all day.
+Auto mode: still uses daily thread (post_event_batch, post_run_summary).
 """
 from __future__ import annotations
 
@@ -391,7 +389,7 @@ def post_run_summary(
 
     summary = "Run complete: " + ", ".join(parts)
     if pending_proposals:
-        summary += f"\n:clipboard: {pending_proposals} proposal{'s' if pending_proposals != 1 else ''} awaiting approval — reply `approve` to create all"
+        summary += f"\n:clipboard: {pending_proposals} proposal{'s' if pending_proposals != 1 else ''} awaiting approval — tap Approve in the dashboard above"
 
     try:
         client = _client()
@@ -406,163 +404,211 @@ def post_run_summary(
         return False
 
 
-def post_proposals(thread_ts: str, items: list[dict]) -> str | None:
+def build_dashboard_blocks(items: list[dict], today_str: str) -> list[dict]:
     """
-    Post a numbered list of event proposals as a reply in the day thread.
+    Build Slack Block Kit blocks for the live proposal dashboard.
 
-    Each item is a proposal dict from state.pending_proposals[*].items[*].
-    Returns the Slack message ts of the posted message (needed to check replies),
-    or None on failure.
+    items: proposal item dicts (any status — pending, approved, rejected, expired)
+    today_str: YYYY-MM-DD date string for the header
     """
-    if not config.SLACK_BOT_TOKEN or not thread_ts or not items:
-        return None
+    blocks: list[dict] = []
 
-    lines = [f":clipboard: *{len(items)} event proposal{'s' if len(items) != 1 else ''}* — reply to approve/reject\n"]
+    # Header
+    try:
+        d = datetime.strptime(today_str, "%Y-%m-%d")
+        day_display = d.strftime("%a %b %-d")
+    except Exception:
+        day_display = today_str
+    blocks.append({
+        "type": "header",
+        "text": {"type": "plain_text", "text": f"Event proposals · {day_display}", "emoji": True},
+    })
 
-    for item in items:
-        num = item["num"]
-        title = item["title"]
-        confidence_band = item.get("confidence_band", "high")
-        category = item.get("category", "other")
-        source = item.get("source", "")
-        is_update = item.get("is_update", False)
-        is_cancellation = item.get("is_cancellation", False)
-        conflicts = item.get("conflicts") or []
-        attendees = item.get("suggested_attendees") or []
-        source_url = item.get("source_url")
+    pending = [i for i in items if i["status"] == "pending"]
+    actioned = [i for i in items if i["status"] in ("approved", "rejected", "expired")]
 
-        # Parse start time for display
-        start_str = "unknown time"
-        try:
-            start_dt = datetime.fromisoformat(item["start_dt"])
-            start_str = start_dt.strftime("%b %-d %-I:%M%p").lower()
-        except (KeyError, ValueError, TypeError):
-            pass
+    if not pending and not actioned:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "_No proposals yet today._"},
+        })
 
-        # Choose icon and label
-        if is_cancellation:
-            icon = ":wastebasket:"
-            label = "[cancel]"
-        elif is_update:
-            icon = ":pencil2:"
-            label = "[update]"
-        else:
-            icon = ":calendar:"
-            label = ""
+    # Pending items each get a section + optional context + actions + divider
+    for item in sorted(pending, key=lambda x: x.get("num", 0)):
+        blocks.extend(_build_pending_blocks(item))
 
-        title_display = f"[?] {title}" if confidence_band == "medium" else title
+    # Actioned items each get a compact context block
+    for item in sorted(actioned, key=lambda x: x.get("num", 0)):
+        blocks.append(_build_actioned_block(item))
 
-        if is_cancellation:
-            event_line = f"{icon} `#{num}` {label} *{title_display}*"
-        elif is_update:
-            original = item.get("original_title_hint") or title
-            event_line = f"{icon} `#{num}` {label} *{original}* → *{title_display}* | {start_str}"
-        else:
-            event_line = f"{icon} `#{num}` *{title_display}* | {start_str} | `{category}` | `{source}`"
+    # Footer
+    try:
+        from zoneinfo import ZoneInfo
+        now_local = datetime.now(tz=ZoneInfo(config.USER_TIMEZONE))
+    except Exception:
+        now_local = datetime.now()
+    updated_str = now_local.strftime("%-I:%M%p").lower()
 
-        if source_url:
-            event_line += f" | <{source_url}|source>"
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": f"_{len(pending)} pending · updated {updated_str}_"}],
+    })
 
-        lines.append(event_line)
+    return blocks
 
-        # Attendees (skip "calendar" noise names)
-        attendee_parts = []
-        for a in attendees[:5]:
+
+def _build_pending_blocks(item: dict) -> list[dict]:
+    """Block Kit blocks for a single pending proposal item."""
+    blocks: list[dict] = []
+    num = item["num"]
+    title = item["title"]
+    confidence_band = item.get("confidence_band", "high")
+    category = item.get("category", "other")
+    source = item.get("source", "")
+    is_update = item.get("is_update", False)
+    is_cancellation = item.get("is_cancellation", False)
+
+    start_str = "unknown time"
+    try:
+        start_dt = datetime.fromisoformat(item["start_dt"])
+        start_str = start_dt.strftime("%a %b %-d · %-I:%M%p").lower()
+    except (KeyError, ValueError, TypeError):
+        pass
+
+    if is_cancellation:
+        main_text = f":wastebasket: *{title}* _(cancel)_"
+    elif is_update:
+        original = item.get("original_title_hint") or title
+        main_text = f":pencil2: *{original}* → *{title}*\n{start_str} _(update)_"
+    else:
+        conf_note = "  _[?]_" if confidence_band == "medium" else ""
+        main_text = f":calendar: *{title}*{conf_note}\n{start_str} · {category} | {source}"
+
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": main_text}})
+
+    context_parts: list[str] = []
+    for c in (item.get("conflicts") or [])[:3]:
+        context_parts.append(f":warning: Conflicts: _{c}_")
+        break  # one conflict line is enough
+
+    valid_att = [
+        a for a in (item.get("suggested_attendees") or [])[:4]
+        if "calendar" not in (a.get("name") or "").lower()
+    ]
+    if valid_att:
+        att_parts = []
+        for a in valid_att:
             name = a.get("name", "")
             email = a.get("email")
-            if "calendar" in name.lower():
-                continue
-            if email:
-                attendee_parts.append(f"{name} <{email}>" if name else email)
-            elif name:
-                attendee_parts.append(name)
-        if attendee_parts:
-            lines.append(f"    :busts_in_silhouette: {', '.join(attendee_parts)}")
+            att_parts.append(f"{name} <{email}>" if name and email else name or email or "")
+        att_str = ", ".join(p for p in att_parts if p)
+        if att_str:
+            context_parts.append(f":busts_in_silhouette: {att_str}")
 
-        # Conflicts
-        if conflicts:
-            conflict_str = ", ".join(f"'{c}'" for c in conflicts[:3])
-            lines.append(f"    :warning: Conflict: {conflict_str}")
+    if context_parts:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": p} for p in context_parts],
+        })
 
-    lines.append("")
-    lines.append("Reply: `approve` (all) · `approve 1,3` · `reject 2` · `reject all`")
+    blocks.append({
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Approve ✓", "emoji": True},
+                "style": "primary",
+                "action_id": "ea_approve",
+                "value": str(num),
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Reject ✗", "emoji": True},
+                "style": "danger",
+                "action_id": "ea_reject",
+                "value": str(num),
+            },
+        ],
+    })
 
-    text = "\n".join(lines)
+    blocks.append({"type": "divider"})
+    return blocks
 
+
+def _build_actioned_block(item: dict) -> dict:
+    """Compact context block for an approved/rejected/expired proposal."""
+    title = item["title"]
+    status = item["status"]
+
+    start_str = ""
     try:
-        client = _client()
-        result = client.chat_postMessage(
-            channel=config.SLACK_NOTIFY_CHANNEL,
-            thread_ts=thread_ts,
-            text=text,
-        )
-        if result.get("ok"):
-            return result["ts"]
-        logger.warning("slack notifier: post_proposals failed: %s", result.get("error"))
-        return None
-    except Exception as exc:
-        logger.warning("slack notifier: post_proposals error: %s", exc)
-        return None
+        start_dt = datetime.fromisoformat(item["start_dt"])
+        start_str = f" · {start_dt.strftime('%b %-d %-I:%M%p').lower()}"
+    except Exception:
+        pass
+
+    if status == "approved":
+        return {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f":white_check_mark: *{title}*{start_str} _added_"},
+        ]}
+    elif status == "rejected":
+        return {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f":x: ~{title}~{start_str} _dismissed_"},
+        ]}
+    else:  # expired
+        return {"type": "context", "elements": [
+            {"type": "mrkdwn", "text": f":hourglass: ~{title}~{start_str} _expired_"},
+        ]}
 
 
-def check_proposal_replies(day_thread_ts: str, proposal_ts: str) -> dict:
+def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> str | None:
     """
-    Check the day thread for approval/rejection replies posted after proposal_ts.
+    Post or update the live proposal dashboard for today.
 
-    Parses replies that start with "approve" or "reject" (case-insensitive).
-    Returns:
-      {
-        "approve_all": bool,
-        "approve_nums": list[int],
-        "reject_all": bool,
-        "reject_nums": list[int],
-      }
+    Creates a new top-level channel message on first call for the day.
+    On subsequent calls, edits the existing message in-place.
+    Returns the dashboard message ts, or None on failure.
     """
-    result = {"approve_all": False, "approve_nums": [], "reject_all": False, "reject_nums": []}
-
     if not config.SLACK_BOT_TOKEN:
-        return result
+        return None
+
+    import state as _state_mod
+    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    blocks = build_dashboard_blocks(items, today)
+    pending_count = sum(1 for i in items if i["status"] == "pending")
+    fallback_text = f"Event proposals: {pending_count} pending"
+
+    dashboard_ts = state.get_proposal_dashboard_ts(today)
 
     try:
         client = _client()
-        replies = client.conversations_replies(
-            channel=config.SLACK_NOTIFY_CHANNEL,
-            ts=day_thread_ts,
-            oldest=proposal_ts,
-        )
-        for msg in replies.get("messages", []):
-            if msg.get("ts") == proposal_ts:
-                continue  # skip the proposal message itself
-            text = msg.get("text", "").strip().lower()
-            if not text:
-                continue
-
-            if text.startswith("approve"):
-                rest = text[len("approve"):].strip(" ,:")
-                if not rest or rest in ("all", "everything"):
-                    result["approve_all"] = True
-                else:
-                    nums = _parse_nums(rest)
-                    result["approve_nums"].extend(nums)
-
-            elif text.startswith("reject"):
-                rest = text[len("reject"):].strip(" ,:")
-                if not rest or rest in ("all", "everything"):
-                    result["reject_all"] = True
-                else:
-                    nums = _parse_nums(rest)
-                    result["reject_nums"].extend(nums)
-
+        if dashboard_ts:
+            result = client.chat_update(
+                channel=config.SLACK_NOTIFY_CHANNEL,
+                ts=dashboard_ts,
+                blocks=blocks,
+                text=fallback_text,
+            )
+            if result.get("ok"):
+                return dashboard_ts
+            logger.warning("slack notifier: dashboard update failed: %s", result.get("error"))
+            return None
+        else:
+            result = client.chat_postMessage(
+                channel=config.SLACK_NOTIFY_CHANNEL,
+                blocks=blocks,
+                text=fallback_text,
+            )
+            if result.get("ok"):
+                ts = result["ts"]
+                state.set_proposal_dashboard_ts(today, ts)
+                _state_mod.save(state)
+                return ts
+            logger.warning("slack notifier: dashboard post failed: %s", result.get("error"))
+            return None
     except Exception as exc:
-        logger.warning("slack notifier: check_proposal_replies error: %s", exc)
-
-    return result
-
-
-def _parse_nums(text: str) -> list[int]:
-    """Extract integers from a comma/space-separated string like '1,3,5' or '1 3 5'."""
-    import re
-    return [int(m) for m in re.findall(r'\d+', text)]
+        logger.warning("slack notifier: post_or_update_dashboard failed: %s", exc)
+        return None
 
 
 def post_to_thread(thread_ts: str, text: str) -> bool:

@@ -20,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "*Available commands:*\n"
-    "• `approve` / `approve 1,3` — approve pending proposals (all or specific numbers)\n"
-    "• `reject` / `reject 2` — reject pending proposals\n"
+    "• Use the *Approve ✓* / *Reject ✗* buttons in the dashboard to act on proposals\n"
+    "• `approve` / `approve 1,3` — approve by number (fallback for text-based approval)\n"
+    "• `reject` / `reject 2` — reject by number\n"
     "• `add: <description>` — manual event entry, e.g. `add: dinner with Bryan Sat 7pm`\n"
     "• `status` — show last run, pending count, ollama health\n"
     "• `last run` — show summary of the most recent run\n"

@@ -208,8 +208,7 @@ def _do_approve(state, nums: list[int]) -> int:
     errors: list[str] = []
     now = datetime.now(timezone.utc)
     snapshot = state.calendar_snapshot()
-
-    thread_ts, _ = state.get_day_thread()
+    today_str = now.strftime("%Y-%m-%d")
 
     for num in nums:
         item = state.approve_proposal(num)
@@ -258,17 +257,13 @@ def _do_approve(state, nums: list[int]) -> int:
 
         if action:
             approved += 1
-            if thread_ts:
-                start_str = ""
-                if not candidate.is_cancellation:
-                    try:
-                        start_str = f" | {candidate.start_dt.strftime('%b %-d %-I:%M%p').lower()}"
-                    except Exception:
-                        pass
-                icon = {"created": ":white_check_mark:", "updated": ":pencil2:", "cancelled": ":wastebasket:"}.get(action, ":white_check_mark:")
-                slack_notifier.post_to_thread(thread_ts, f"{icon} #{num} {action}: *{candidate.title}*{start_str}")
 
     state_module.save(state)
+
+    # Refresh the live dashboard to reflect the new approved status
+    all_items = state.get_all_proposal_items_for_dashboard(today_str)
+    slack_notifier.post_or_update_dashboard(all_items, state)
+    state_module.save(state)  # persist dashboard ts if it was newly created
 
     msg = f":white_check_mark: {approved} approved"
     if errors:
@@ -278,10 +273,13 @@ def _do_approve(state, nums: list[int]) -> int:
 
 
 def _do_reject(state, nums: list[int]) -> int:
+    from notifiers import slack_notifier
     import state as state_module
 
     rejected = 0
     errors: list[str] = []
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     for num in nums:
         item = state.reject_proposal(num)
         if item is None:
@@ -293,6 +291,12 @@ def _do_reject(state, nums: list[int]) -> int:
         rejected += 1
 
     state_module.save(state)
+
+    # Refresh the live dashboard to reflect the new rejected status
+    all_items = state.get_all_proposal_items_for_dashboard(today_str)
+    slack_notifier.post_or_update_dashboard(all_items, state)
+    state_module.save(state)  # persist dashboard ts if it was newly created
+
     msg = f":x: {rejected} rejected"
     if errors:
         msg += "\n" + "\n".join(errors)
@@ -313,6 +317,7 @@ def _cmd_add_event(text: str) -> int:
     from main import _candidate_to_proposal_item
 
     state = state_module.load()
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     msg = RawMessage(
         id=f"manual_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}",
         source="manual",
@@ -349,19 +354,15 @@ def _cmd_add_event(text: str) -> int:
     }
     state.add_proposal_batch(batch)
 
-    # Post to Slack day thread
-    thread_ts = slack_notifier.get_or_create_day_thread(state)
-    if thread_ts:
-        posted_ts = slack_notifier.post_proposals(thread_ts, batch_items)
-        if posted_ts:
-            state.set_proposal_slack_ts(batch_id, posted_ts)
+    # Post/update the live dashboard
+    all_items = state.get_all_proposal_items_for_dashboard(today_str)
+    slack_notifier.post_or_update_dashboard(all_items, state)
 
     state_module.save(state)
     lines = [f":memo: proposed {len(batch_items)} event(s):"]
     for item in batch_items:
         start = item.get("start_dt", "")[:16].replace("T", " ")
         lines.append(f"  • #{item['num']} *{item['title']}* — {start}")
-    lines.append(f"_Reply `approve {batch_items[0]['num']}` (or `approve all`)._")
     print("\n".join(lines))
     return 0
 

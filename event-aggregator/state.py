@@ -260,6 +260,35 @@ class State:
         if fp in fps:
             fps.remove(fp)
 
+    # ── proposal dashboard (live Block Kit message per day) ──────────────────────
+
+    def get_proposal_dashboard_ts(self, date_str: str) -> str | None:
+        """Return the Slack ts of today's live dashboard message, or None."""
+        return self._data.get("proposal_dashboard", {}).get(date_str)
+
+    def set_proposal_dashboard_ts(self, date_str: str, ts: str) -> None:
+        """Persist the Slack ts of the dashboard message for date_str."""
+        self._data.setdefault("proposal_dashboard", {})[date_str] = ts
+
+    def get_all_proposal_items_for_dashboard(self, today_str: str | None = None) -> list[dict]:
+        """Return items to display on today's dashboard: all pending + today's actioned items."""
+        if today_str is None:
+            today_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        result = []
+        seen_nums: set[int] = set()
+        for batch in self._data.get("pending_proposals", []):
+            created_date = (batch.get("created_at") or "")[:10]
+            for item in batch.get("items", []):
+                num = item.get("num")
+                if num in seen_nums:
+                    continue
+                seen_nums.add(num)
+                if item["status"] == "pending":
+                    result.append(item)
+                elif created_date == today_str and item["status"] in ("approved", "rejected", "expired"):
+                    result.append(item)
+        return sorted(result, key=lambda x: x.get("num", 0))
+
     # ── processed Slack files (image/PDF intake) ────────────────────────────────
 
     def is_file_processed(self, file_id: str) -> bool:
@@ -330,6 +359,13 @@ class State:
             )
             psf = {k: psf[k] for k in sorted_ids[:500]}
         self._data["processed_slack_files"] = psf
+
+        # Prune proposal_dashboard: keep last 7 days of dashboard message ts entries.
+        cutoff_dash = (_utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        self._data["proposal_dashboard"] = {
+            k: v for k, v in self._data.get("proposal_dashboard", {}).items()
+            if k >= cutoff_dash
+        }
 
         # Prune pending_proposals: remove batches where all items are non-pending
         # AND the batch is older than 72 hours (3x the default expiry window).
