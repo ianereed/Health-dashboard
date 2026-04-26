@@ -524,7 +524,18 @@ def _build_pending_blocks(item: dict) -> list[dict]:
     except (KeyError, ValueError, TypeError):
         pass
 
-    if kind == "merge":
+    if kind == "fuzzy_event":
+        # No specific date determinable — ask user for one (or skip).
+        description = item.get("event_description", title)
+        source_display = f"<{item['source_url']}|{source}>" if item.get("source_url") else source
+        main_text = (
+            f":thinking_face: *{title}*\n"
+            f"_{description}_\n"
+            f"Date/time unknown · from {source_display}\n"
+            "Reply to this message with a date/time, or use "
+            "`cli add-event --text \"...\"` for full control."
+        )
+    elif kind == "merge":
         # Additive merge proposal — patch a primary-calendar event with new info.
         matched_title = item.get("matched_title", "(matched event)")
         additions = item.get("additions") or {}
@@ -594,7 +605,12 @@ def _build_pending_blocks(item: dict) -> list[dict]:
             "elements": [{"type": "mrkdwn", "text": p} for p in context_parts],
         })
 
-    primary_label = "Merge" if kind == "merge" else "Add to calendar"
+    if kind == "fuzzy_event":
+        primary_label = "Already handled"  # marks the fuzzy item as resolved without writing
+    elif kind == "merge":
+        primary_label = "Merge"
+    else:
+        primary_label = "Add to calendar"
     blocks.append({
         "type": "actions",
         "elements": [

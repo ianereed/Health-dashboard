@@ -54,6 +54,13 @@ class CandidateEvent:
     # Category for GCal color coding
     category: str = "other"
 
+    # Date certainty — "specific" (real ISO datetime), "approximate" (best-guess
+    # ISO datetime, surfaced visually), or "unknown" (no date determinable;
+    # routed to fuzzy_event proposal flow). Defaults to "specific" so the
+    # legacy path doesn't break; extractor sets it explicitly.
+    date_certainty: str = "specific"
+    event_description: str | None = None  # required when date_certainty == "unknown"
+
     def __post_init__(self) -> None:
         # Clamp confidence to valid range
         self.confidence = max(0.0, min(1.0, self.confidence))

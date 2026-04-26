@@ -46,7 +46,8 @@ _SCHEMA = (
     "Respond with JSON matching exactly this schema:\n"
     '{"events": [{\n'
     '  "title": "...",\n'
-    '  "start": "YYYY-MM-DDTHH:MM:SS+HH:MM",\n'
+    '  "date_certainty": "specific|approximate|unknown",\n'
+    '  "start": "YYYY-MM-DDTHH:MM:SS+HH:MM (omit or null when date_certainty=unknown)",\n'
     '  "end": "YYYY-MM-DDTHH:MM:SS+HH:MM or null",\n'
     '  "location": "... or null",\n'
     '  "confidence": 0.0,\n'
@@ -56,7 +57,8 @@ _SCHEMA = (
     '  "is_recurring": false,\n'
     '  "recurrence_hint": "e.g. weekly on Tuesdays, or null",\n'
     '  "attendees": [{"name": "...", "email": "... or null"}],\n'
-    '  "category": "work|personal|social|health|travel|other"\n'
+    '  "category": "work|personal|social|health|travel|other",\n'
+    '  "event_description": "natural-language description of what is being planned (used when date_certainty is unknown)"\n'
     "}],\n"
     '"todos": [{\n'
     '  "title": "short action item (max 200 chars)",\n'
@@ -69,7 +71,13 @@ _SCHEMA = (
     'If no action items are found, use: "todos": []\n'
     "\n"
     "Event field instructions:\n"
-    "- confidence: 0.0–1.0. How certain are you this is a real scheduled event with a specific date/time?\n"
+    '- date_certainty: "specific" if a precise date and time are explicitly given; '
+    '"approximate" if you must guess (e.g. "next week" → pick a sensible date but flag it); '
+    '"unknown" if the message is clearly proposing/discussing an event but no date is determinable yet '
+    '(e.g. "let\'s plan a beach trip soon"). When unknown, you may omit `start` or set it to null.\n'
+    "- event_description: short natural-language description of what is being planned. REQUIRED when "
+    "date_certainty is \"unknown\"; optional otherwise (used as a hint to the user).\n"
+    "- confidence: 0.0–1.0. How certain are you this is a real scheduled event (with or without a specific date)?\n"
     "- is_update: true if this message reschedules or changes details of a previously-mentioned event\n"
     "- original_title_hint: your best guess at the existing event title, only when is_update is true\n"
     "- is_cancellation: true if this message explicitly cancels a scheduled event\n"
@@ -201,6 +209,11 @@ def _build_prompt(msg: RawMessage, calendar_context: str = "") -> str:
 _VALID_CATEGORIES = {"work", "personal", "social", "health", "travel", "other"}
 
 
+def _validate_category(raw_category) -> str:
+    cat = str(raw_category or "other").lower().strip()
+    return cat if cat in _VALID_CATEGORIES else "other"
+
+
 def _validate_event(raw: dict[str, Any]) -> CandidateEvent | None:
     """Validate and sanitize a single LLM-extracted event dict. Returns None if invalid."""
     try:
@@ -208,14 +221,44 @@ def _validate_event(raw: dict[str, Any]) -> CandidateEvent | None:
         if not title or _UNSAFE_TITLE_RE.search(title):
             return None
 
+        # date_certainty: specific|approximate|unknown. Default to specific so
+        # legacy LLM responses (without the field) keep the original behavior.
+        date_certainty = str(raw.get("date_certainty") or "specific").lower().strip()
+        if date_certainty not in {"specific", "approximate", "unknown"}:
+            date_certainty = "specific"
+
+        event_description_raw = raw.get("event_description")
+        event_description = (
+            str(event_description_raw).strip()[:500] if event_description_raw else None
+        )
+
         start_str = raw.get("start")
-        if not start_str:
-            return None
+        now = _utcnow()
+        if date_certainty == "unknown" or not start_str:
+            # No specific date — route to the fuzzy_event proposal flow.
+            # Use a placeholder start_dt so downstream code that expects a
+            # datetime still works; the dashboard renders these specially.
+            if not event_description:
+                # Without a description, we have nothing useful to show — drop.
+                return None
+            start_dt = now  # placeholder; caller treats date_certainty=unknown as fuzzy
+            return CandidateEvent(
+                title=title,
+                start_dt=start_dt,
+                end_dt=None,
+                location=None,
+                confidence=max(0.0, min(1.0, float(raw.get("confidence", 0.0)))),
+                source="",
+                source_id="",
+                date_certainty="unknown",
+                event_description=event_description,
+                category=_validate_category(raw.get("category")),
+            )
+
         start_dt = datetime.fromisoformat(str(start_str))
         if start_dt.tzinfo is None:
             start_dt = start_dt.replace(tzinfo=timezone.utc)
 
-        now = _utcnow()
         if not (now <= start_dt <= now + _years(_FUTURE_YEARS)):
             return None
 
@@ -286,6 +329,8 @@ def _validate_event(raw: dict[str, Any]) -> CandidateEvent | None:
             recurrence_hint=recurrence_hint,
             suggested_attendees=attendees,
             category=category,
+            date_certainty=date_certainty,
+            event_description=event_description,
         )
     except (ValueError, TypeError, KeyError):
         return None

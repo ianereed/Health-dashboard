@@ -158,6 +158,24 @@ def _candidate_to_proposal_item(candidate: CandidateEvent, num: int, conflicts: 
     }
 
 
+def _candidate_to_fuzzy_proposal_item(candidate: CandidateEvent, num: int) -> dict:
+    """Build a `kind:"fuzzy_event"` proposal — no specific date determinable yet.
+    User responds via the dashboard to either skip or run `cli add-event` with
+    an explicit date."""
+    return {
+        "num": num,
+        "status": "pending",
+        "kind": "fuzzy_event",
+        "title": candidate.title,
+        "event_description": candidate.event_description or candidate.title,
+        "confidence": candidate.confidence,
+        "category": candidate.category,
+        "source": candidate.source,
+        "source_id": candidate.source_id,
+        "source_url": candidate.source_url,
+    }
+
+
 def _candidate_to_merge_proposal_item(
     candidate: CandidateEvent,
     num: int,
@@ -269,6 +287,17 @@ def _propose_events(
                     "Recurring notice added: %r (hint=%r)",
                     candidate.title, candidate.recurrence_hint,
                 )
+            continue
+
+        # Date-uncertainty: candidate has no specific date — emit a fuzzy_event
+        # proposal so the user can either provide a date manually (cli add-event)
+        # or skip. Fuzzy events bypass the past-event filter and the cross-
+        # calendar dedup since they have no real start_dt to compare against.
+        if candidate.date_certainty == "unknown":
+            num = state.next_proposal_num()
+            fuzzy_item = _candidate_to_fuzzy_proposal_item(candidate, num)
+            batch_items.append(fuzzy_item)
+            counts["proposed"] += 1
             continue
 
         # Skip past events

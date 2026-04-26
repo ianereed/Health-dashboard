@@ -222,6 +222,14 @@ def _do_approve(state, nums: list[int]) -> int:
             errors.append(f"#{num}: not pending")
             continue
 
+        # Fuzzy events: there's no calendar entry to write — approval just
+        # marks the item resolved (the user typically used `cli add-event`
+        # already, or decided not to). The proposal status is already set
+        # to "approved" by state.approve_proposal.
+        if item.get("kind") == "fuzzy_event":
+            approved += 1
+            continue
+
         # Merge proposals (additive patches to primary) take a different path
         if item.get("kind") == "merge":
             target_cal = item.get("target_calendar_id") or config.GCAL_PRIMARY_CALENDAR_ID
