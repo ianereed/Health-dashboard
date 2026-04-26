@@ -451,7 +451,7 @@ def build_dashboard_blocks(items: list[dict], today_str: str) -> list[dict]:
 
     blocks.append({
         "type": "context",
-        "elements": [{"type": "mrkdwn", "text": f"_{len(pending)} pending · updated {updated_str}_"}],
+        "elements": [{"type": "mrkdwn", "text": f"_{len(pending)} pending · last run {updated_str}_"}],
     })
 
     return blocks
@@ -482,7 +482,8 @@ def _build_pending_blocks(item: dict) -> list[dict]:
         main_text = f":pencil2: *{original}* → *{title}*\n{start_str} _(update)_"
     else:
         conf_note = "  _[?]_" if confidence_band == "medium" else ""
-        main_text = f":calendar: *{title}*{conf_note}\n{start_str} · {category} | {source}"
+        source_display = f"<{item['source_url']}|{source}>" if item.get("source_url") else source
+        main_text = f":calendar: *{title}*{conf_note}\n{start_str} · from {source_display}"
 
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": main_text}})
 
@@ -516,14 +517,14 @@ def _build_pending_blocks(item: dict) -> list[dict]:
         "elements": [
             {
                 "type": "button",
-                "text": {"type": "plain_text", "text": "Approve ✓", "emoji": True},
+                "text": {"type": "plain_text", "text": "Add to calendar", "emoji": False},
                 "style": "primary",
                 "action_id": "ea_approve",
                 "value": str(num),
             },
             {
                 "type": "button",
-                "text": {"type": "plain_text", "text": "Reject ✗", "emoji": True},
+                "text": {"type": "plain_text", "text": "Skip", "emoji": False},
                 "style": "danger",
                 "action_id": "ea_reject",
                 "value": str(num),
