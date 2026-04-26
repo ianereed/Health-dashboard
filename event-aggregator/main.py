@@ -996,17 +996,67 @@ def _diff_calendar(
 
 
 _SUBCOMMANDS = {
-    "classify", "ingest-image", "approve", "reject",
+    "classify", "ingest-image", "enqueue-image",
+    "approve", "reject",
     "add-event", "status", "query",
-    "config", "undo-last", "changes",
+    "config", "undo-last", "changes", "forget", "swap",
 }
 
 
+def fetch_only() -> int:
+    """
+    Fetch-only mode (Tier 2.4): poll connectors, enqueue messages into
+    state.text_queue, advance last_run watermarks. No LLM calls.
+
+    Designed to run on a cron / launchd timer. The worker (`main.py worker`)
+    consumes the queue separately.
+    """
+    state = state_module.load()
+    sources = list(_CONNECTOR_REGISTRY.keys())
+    config.validate_for_sources([s for s in sources if s in {"gmail", "gcal", "slack"}])
+
+    enqueued = 0
+    run_start = datetime.now(timezone.utc)
+    for source in sources:
+        cls = _CONNECTOR_REGISTRY[source]
+        connector = cls() if source not in {"messenger", "instagram"} else cls(source_name=source)
+        since = state.last_run(source)
+        try:
+            msgs = connector.fetch(since=since, mock=False)
+        except Exception as exc:
+            logger.warning("fetch-only: %s connector failed: %s", source, exc)
+            continue
+        for msg in msgs:
+            if state.is_seen(msg.source, msg.id):
+                continue
+            state.enqueue_text_job(
+                source=msg.source,
+                msg_id=msg.id,
+                body_text=msg.body_text,
+                metadata=msg.metadata,
+                timestamp_iso=msg.timestamp.isoformat(),
+            )
+            enqueued += 1
+        state.set_last_run(source, run_start)
+
+    state.prune()
+    state_module.save(state)
+    logger.info("fetch-only: enqueued %d new message(s); text_queue depth=%d",
+                enqueued, state.text_queue_depth())
+    return 0
+
+
 if __name__ == "__main__":
-    # Route to the CLI module when the first argv is a known subcommand.
-    # Everything else (flags, or no args) falls through to the existing
-    # full-run pipeline — preserves backward compat with the LaunchAgent.
-    if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:
-        import cli
-        sys.exit(cli.main())
+    # Route to subcommands first; everything else falls through to the
+    # existing full-run pipeline (backwards-compat with the legacy LaunchAgent).
+    if len(sys.argv) > 1:
+        first = sys.argv[1]
+        if first == "fetch-only":
+            sys.exit(fetch_only())
+        if first == "worker":
+            import worker
+            sys.exit(worker.run_worker())
+        if first in _SUBCOMMANDS:
+            import cli
+            sys.exit(cli.main())
     sys.exit(main())

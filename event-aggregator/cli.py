@@ -31,7 +31,10 @@ def main() -> int:
     p = sub.add_parser("classify", help="Classify a file locally; emit JSON to stdout")
     p.add_argument("--file", required=True)
 
-    p = sub.add_parser("ingest-image", help="Full event-extraction pipeline on a local file")
+    p = sub.add_parser("ingest-image", help="Full event-extraction pipeline on a local file (inline; used by worker)")
+    p.add_argument("--file", required=True)
+
+    p = sub.add_parser("enqueue-image", help="Enqueue a file path into the OCR queue for the worker to process")
     p.add_argument("--file", required=True)
 
     p = sub.add_parser("approve", help="Approve pending proposals")
@@ -66,6 +69,10 @@ def main() -> int:
     p.add_argument("--fp", default="", help="Specific fingerprint to forget; omit to list rejected fps")
     p.add_argument("--title", default="", help="Substring match against rejected event title")
 
+    p = sub.add_parser("swap", help="Resolve a pending OCR swap-decision (used by Slack [Wait]/[Interrupt] buttons)")
+    p.add_argument("--decision-id", required=True)
+    p.add_argument("--decision", choices=["wait", "interrupt"], required=True)
+
     args = parser.parse_args()
 
     # Quiet default logging when emitting JSON on stdout; the dispatcher parses it.
@@ -82,6 +89,8 @@ def main() -> int:
         return _cmd_classify(Path(args.file))
     if args.cmd == "ingest-image":
         return _cmd_ingest_image(Path(args.file))
+    if args.cmd == "enqueue-image":
+        return _cmd_enqueue_image(Path(args.file))
     if args.cmd == "approve":
         return _cmd_approve_or_reject(args.nums, approve=True)
     if args.cmd == "reject":
@@ -100,6 +109,8 @@ def main() -> int:
         return _cmd_changes(since=args.since)
     if args.cmd == "forget":
         return _cmd_forget(fp=args.fp, title=args.title)
+    if args.cmd == "swap":
+        return _cmd_swap(decision_id=args.decision_id, decision=args.decision)
     return 1
 
 
@@ -169,6 +180,21 @@ def _cmd_ingest_image(file: Path) -> int:
 
     state_module.save(state)
     print(summary)
+    return 0
+
+
+def _cmd_enqueue_image(file: Path) -> int:
+    """Enqueue a file path for the worker. Used by the dispatcher when an
+    image lands in #ian-image-intake — keeps the dispatcher's path quick
+    and lets the worker handle the heavy lifting."""
+    if not file.exists():
+        print(f"file not found: {file}", file=sys.stderr)
+        return 2
+    import state as state_module
+    state = state_module.load()
+    state.enqueue_ocr_job(str(file.resolve()))
+    state_module.save(state)
+    print(f":inbox_tray: enqueued {file.name} (ocr_queue depth: {state.ocr_queue_depth()})")
     return 0
 
 
@@ -742,6 +768,18 @@ def _cmd_changes(since: str) -> int:
 
     print("\n".join(lines))
     return 0
+
+
+def _cmd_swap(decision_id: str, decision: str) -> int:
+    """Resolve a pending OCR swap-decision."""
+    import state as state_module
+    state = state_module.load()
+    if state.resolve_swap_decision(decision_id, decision):
+        state_module.save(state)
+        print(f":white_check_mark: swap decision `{decision_id[:8]}…` → {decision}")
+        return 0
+    print(f":x: swap decision `{decision_id[:8]}…` not found")
+    return 1
 
 
 def _cmd_forget(fp: str, title: str) -> int:

@@ -409,6 +409,7 @@ def build_dashboard_blocks(
     today_str: str,
     ollama_health: dict | None = None,
     recurring_notices: list[dict] | None = None,
+    worker_status: dict | None = None,
 ) -> list[dict]:
     """
     Build Slack Block Kit blocks for the live proposal dashboard.
@@ -497,9 +498,18 @@ def build_dashboard_blocks(
         now_local = datetime.now()
     updated_str = now_local.strftime("%-I:%M%p").lower()
 
+    footer_parts = [f"{len(pending)} pending", f"last run {updated_str}"]
+    if worker_status:
+        text_q = worker_status.get("text_queue", 0)
+        ocr_q = worker_status.get("ocr_queue", 0)
+        if text_q or ocr_q:
+            queue_str = f"queue: {text_q} text"
+            if ocr_q:
+                queue_str += f" · {ocr_q} ocr"
+            footer_parts.append(queue_str)
     blocks.append({
         "type": "context",
-        "elements": [{"type": "mrkdwn", "text": f"_{len(pending)} pending · last run {updated_str}_"}],
+        "elements": [{"type": "mrkdwn", "text": "_" + " · ".join(footer_parts) + "_"}],
     })
 
     return blocks
@@ -679,6 +689,7 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
         today,
         ollama_health=state.ollama_health(),
         recurring_notices=state.recurring_notices(),
+        worker_status=state.worker_status(),
     )
     pending_count = sum(1 for i in items if i["status"] == "pending")
     fallback_text = f"Event proposals: {pending_count} pending"

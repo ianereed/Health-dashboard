@@ -83,6 +83,95 @@ class State:
         if fp not in fps:
             fps.append(fp)
 
+    # ── Job queues (text extraction + OCR) ──────────────────────────────────
+
+    def enqueue_text_job(
+        self, source: str, msg_id: str, body_text: str,
+        metadata: dict, timestamp_iso: str,
+    ) -> None:
+        """
+        Enqueue a RawMessage for text extraction. Persists body_text + metadata
+        so the worker can run independently of the fetch loop. Privacy: state.json
+        is gitignored and chmod 600 — body_text never leaves disk.
+        """
+        # Dedup against in-flight queue: don't add if same source+id already queued.
+        queue = self._data.setdefault("text_queue", [])
+        for existing in queue:
+            if existing.get("source") == source and existing.get("id") == msg_id:
+                return
+        queue.append({
+            "source": source,
+            "id": msg_id,
+            "body_text": body_text,
+            "metadata": metadata or {},
+            "timestamp": timestamp_iso,
+            "queued_at": _utcnow().isoformat(),
+        })
+
+    def pop_text_job(self) -> dict | None:
+        queue = self._data.get("text_queue", [])
+        return queue.pop(0) if queue else None
+
+    def text_queue_depth(self) -> int:
+        return len(self._data.get("text_queue", []))
+
+    def enqueue_ocr_job(self, file_path: str, metadata: dict | None = None) -> None:
+        queue = self._data.setdefault("ocr_queue", [])
+        for existing in queue:
+            if existing.get("file_path") == file_path:
+                return
+        queue.append({
+            "file_path": file_path,
+            "metadata": metadata or {},
+            "queued_at": _utcnow().isoformat(),
+        })
+
+    def pop_ocr_job(self) -> dict | None:
+        queue = self._data.get("ocr_queue", [])
+        return queue.pop(0) if queue else None
+
+    def ocr_queue_depth(self) -> int:
+        return len(self._data.get("ocr_queue", []))
+
+    def peek_ocr_job(self) -> dict | None:
+        queue = self._data.get("ocr_queue", [])
+        return queue[0] if queue else None
+
+    def worker_status(self) -> dict:
+        return self._data.get("worker_status", {})
+
+    def update_worker_status(self, **kwargs) -> None:
+        bucket = self._data.setdefault("worker_status", {})
+        bucket.update(kwargs)
+        bucket["updated_at"] = _utcnow().isoformat()
+
+    # ── Swap decisions (Slack [Wait]/[Interrupt] interactive proposals) ──────
+
+    def add_swap_decision(self, ocr_path: str, text_queue_depth: int) -> str:
+        """Record a pending OCR-swap decision. Returns a unique decision_id."""
+        import secrets
+        bucket = self._data.setdefault("swap_decisions", {})
+        decision_id = secrets.token_hex(8)
+        bucket[decision_id] = {
+            "ocr_path": ocr_path,
+            "text_queue_depth_at_request": text_queue_depth,
+            "decision": "pending",  # "pending" | "wait" | "interrupt"
+            "created_at": _utcnow().isoformat(),
+        }
+        return decision_id
+
+    def resolve_swap_decision(self, decision_id: str, decision: str) -> bool:
+        """Set decision to 'wait' or 'interrupt'. Returns True if found."""
+        bucket = self._data.get("swap_decisions", {})
+        if decision_id not in bucket:
+            return False
+        bucket[decision_id]["decision"] = decision
+        bucket[decision_id]["resolved_at"] = _utcnow().isoformat()
+        return True
+
+    def get_swap_decision(self, decision_id: str) -> dict | None:
+        return self._data.get("swap_decisions", {}).get(decision_id)
+
     # ── Recurring-event notices (surfaced to the dashboard for 24h) ─────────
 
     def add_recurring_notice(

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.home-tools.event-aggregator.fetch</string>
+
+  <!-- Tier 2.4: cron-style fetch-only run that drops new messages into the
+       text_queue. The worker (separate plist) consumes the queue. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/homeserver/Home-Tools/event-aggregator/.venv/bin/python3</string>
+    <string>/Users/homeserver/Home-Tools/event-aggregator/main.py</string>
+    <string>fetch-only</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/homeserver/Home-Tools/event-aggregator</string>
+
+  <!-- Run every 10 minutes — same cadence as the legacy plist -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/home-tools-event-aggregator-fetch.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/home-tools-event-aggregator-fetch-error.log</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+  <key>KeepAlive</key>
+  <false/>
+</dict>
+</plist>
