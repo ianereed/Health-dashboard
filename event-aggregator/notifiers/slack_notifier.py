@@ -404,12 +404,18 @@ def post_run_summary(
         return False
 
 
-def build_dashboard_blocks(items: list[dict], today_str: str) -> list[dict]:
+def build_dashboard_blocks(
+    items: list[dict],
+    today_str: str,
+    ollama_health: dict | None = None,
+) -> list[dict]:
     """
     Build Slack Block Kit blocks for the live proposal dashboard.
 
     items: proposal item dicts (any status — pending, approved, rejected, expired)
     today_str: YYYY-MM-DD date string for the header
+    ollama_health: optional dict from `state.ollama_health()`. When `down_since`
+                   is set, an Errors block is added near the top of the dashboard.
     """
     blocks: list[dict] = []
 
@@ -423,6 +429,30 @@ def build_dashboard_blocks(items: list[dict], today_str: str) -> list[dict]:
         "type": "header",
         "text": {"type": "plain_text", "text": f"Event proposals · {day_display}", "emoji": True},
     })
+
+    # Errors block (shown above proposals when something is wrong)
+    if ollama_health and ollama_health.get("down_since"):
+        down_since_local = ollama_health["down_since"]
+        try:
+            from zoneinfo import ZoneInfo
+            ds = datetime.fromisoformat(down_since_local)
+            ds_local = ds.astimezone(ZoneInfo(config.USER_TIMEZONE))
+            down_since_local = ds_local.strftime("%-I:%M%p").lower()
+        except Exception:
+            pass
+        skipped = ollama_health.get("skipped_count", 0)
+        skip_part = f" · {skipped} message(s) skipped" if skipped else ""
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f":rotating_light: *Ollama unreachable* (since {down_since_local})"
+                    f"{skip_part}\nExtraction is paused until it comes back."
+                ),
+            },
+        })
+        blocks.append({"type": "divider"})
 
     pending = [i for i in items if i["status"] == "pending"]
     actioned = [i for i in items if i["status"] in ("approved", "rejected", "expired")]
@@ -575,7 +605,7 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
 
     import state as _state_mod
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-    blocks = build_dashboard_blocks(items, today)
+    blocks = build_dashboard_blocks(items, today, ollama_health=state.ollama_health())
     pending_count = sum(1 for i in items if i["status"] == "pending")
     fallback_text = f"Event proposals: {pending_count} pending"
 

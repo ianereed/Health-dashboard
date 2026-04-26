@@ -299,8 +299,9 @@ def _call_ollama(prompt: str) -> dict[str, Any]:
         "prompt": prompt,
         "stream": False,
         "format": "json",
-        "keep_alive": "10s",
+        "keep_alive": config.OLLAMA_KEEP_ALIVE_TEXT,
         "think": False,  # disable qwen3 chain-of-thought; safe no-op on other models
+        "options": {"num_ctx": config.OLLAMA_NUM_CTX_TEXT},
     }
     resp = requests.post(
         f"{config.OLLAMA_BASE_URL}/api/generate",

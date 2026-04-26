@@ -10,7 +10,7 @@ Reuses the same gcal_token / gmail_oauth.json credentials as the GCal writer.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from googleapiclient.discovery import build
 
@@ -41,11 +41,17 @@ class GoogleCalendarConnector(BaseConnector):
             )
             service = build("calendar", "v3", credentials=creds)
 
-            # Query upcoming events only — no point processing past instances.
             # timeMin = start of today so today's events are included.
-            # `since` is intentionally not used here: we want all future pending
-            # invites regardless of when they were created or last updated.
-            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+            # updatedMin = since (capped at 30d) — fetch only invites whose
+            # state changed since last poll. The 30-day floor keeps the query
+            # bounded even if last_run is missing or far in the past.
+            # Layer 1 (seen-IDs) is the dedup backstop.
+            now_utc = datetime.now(timezone.utc)
+            now_str = now_utc.strftime("%Y-%m-%dT00:00:00Z")
+            effective_since = max(since, now_utc - timedelta(days=30))
+            updated_min = effective_since.astimezone(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
 
             # Paginate in case there are >250 upcoming events.
             all_items: list[dict] = []
@@ -54,6 +60,7 @@ class GoogleCalendarConnector(BaseConnector):
                 kwargs: dict = {
                     "calendarId": "primary",
                     "timeMin": now_str,
+                    "updatedMin": updated_min,
                     "singleEvents": True,
                     "orderBy": "startTime",
                     "maxResults": 250,

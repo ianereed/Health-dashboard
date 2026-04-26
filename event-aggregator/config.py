@@ -35,13 +35,14 @@ OLLAMA_BASE_URL: str = _get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL: str = _get("OLLAMA_MODEL", "qwen3:14b")
 LOCAL_VISION_MODEL: str = _get("LOCAL_VISION_MODEL", "qwen2.5vl:7b")
 
-# ── Heavy-phase time window (local time, USER_TIMEZONE) ────────────────────
-# Ollama extraction and image analysis only run when the local hour is in
-# [OLLAMA_ACTIVE_HOUR_START, OLLAMA_ACTIVE_HOUR_END). Default: midnight–6am,
-# so the 14GB vision model never competes with the user's active session.
-# Wrap-around windows are supported (e.g. 22 → 6 = 10pm–6am).
-OLLAMA_ACTIVE_HOUR_START: int = int(_get("OLLAMA_ACTIVE_HOUR_START", "0"))
-OLLAMA_ACTIVE_HOUR_END: int = int(_get("OLLAMA_ACTIVE_HOUR_END", "24"))
+# Context ceilings (tokens). 16k for both — see plan B.6.2 for memory math.
+OLLAMA_NUM_CTX_TEXT: int = int(_get("OLLAMA_NUM_CTX_TEXT", "16384"))
+OLLAMA_NUM_CTX_VISION: int = int(_get("OLLAMA_NUM_CTX_VISION", "16384"))
+
+# keep_alive: "-1" keeps the primary model resident; vision unloads quickly
+# after a swap-in finishes so the primary can come back hot.
+OLLAMA_KEEP_ALIVE_TEXT: str = _get("OLLAMA_KEEP_ALIVE_TEXT", "-1")
+OLLAMA_KEEP_ALIVE_VISION: str = _get("OLLAMA_KEEP_ALIVE_VISION", "30s")
 
 # ── Google (Gmail + GCal) ───────────────────────────────────────────────────
 GMAIL_CREDENTIALS_JSON: str = _get(

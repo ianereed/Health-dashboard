@@ -62,6 +62,10 @@ def main() -> int:
     p = sub.add_parser("changes", help="Show calendar changes from event_log.jsonl")
     p.add_argument("--since", default="1d", help="ISO date/datetime, or relative like 1d/12h/30m")
 
+    p = sub.add_parser("forget", help="Wipe a previously-rejected fingerprint so the event can be re-proposed")
+    p.add_argument("--fp", default="", help="Specific fingerprint to forget; omit to list rejected fps")
+    p.add_argument("--title", default="", help="Substring match against rejected event title")
+
     args = parser.parse_args()
 
     # Quiet default logging when emitting JSON on stdout; the dispatcher parses it.
@@ -94,6 +98,8 @@ def main() -> int:
         return _cmd_undo_last()
     if args.cmd == "changes":
         return _cmd_changes(since=args.since)
+    if args.cmd == "forget":
+        return _cmd_forget(fp=args.fp, title=args.title)
     return 1
 
 
@@ -287,7 +293,15 @@ def _do_reject(state, nums: list[int]) -> int:
             continue
         fp = item.get("fingerprint")
         if fp:
+            # Move the fingerprint from "written" to "rejected" so the same
+            # event re-detected from another source stays suppressed (90-day
+            # window). User can `cli forget <fp>` if they change their mind.
             state.remove_proposal_fingerprint(fp)
+            state.add_rejected_fingerprint(
+                fp,
+                title=item.get("title", ""),
+                source=item.get("source", ""),
+            )
         rejected += 1
 
     state_module.save(state)
@@ -688,6 +702,56 @@ def _cmd_changes(since: str) -> int:
             lines.append(f"  …and {len(cancelled) - 20} more")
 
     print("\n".join(lines))
+    return 0
+
+
+def _cmd_forget(fp: str, title: str) -> int:
+    """List or wipe a rejected fingerprint so the matching event can be re-proposed."""
+    import state as state_module
+
+    state = state_module.load()
+    bucket = state._data.get("rejected_fingerprints", {})
+
+    if not fp and not title:
+        if not bucket:
+            print(":white_check_mark: no rejected fingerprints recorded.")
+            return 0
+        lines = [":no_entry_sign: rejected fingerprints (newest first):"]
+        for f, info in sorted(
+            bucket.items(),
+            key=lambda kv: kv[1].get("rejected_at", ""),
+            reverse=True,
+        ):
+            t = info.get("title", "(untitled)")
+            src = info.get("source", "")
+            lines.append(f"  • `{f[:12]}…` — {t} _({src})_")
+        print("\n".join(lines))
+        return 0
+
+    if fp:
+        if state.forget_rejected_fingerprint(fp):
+            state_module.save(state)
+            print(f":white_check_mark: forgot `{fp[:12]}…` — can be re-proposed if re-detected.")
+            return 0
+        print(f":x: fingerprint `{fp[:12]}…` not found in rejected list.")
+        return 1
+
+    matches = [
+        (f, info) for f, info in bucket.items()
+        if title.lower() in info.get("title", "").lower()
+    ]
+    if not matches:
+        print(f":x: no rejected fingerprints match title containing {title!r}.")
+        return 1
+    if len(matches) > 1:
+        print(f":warning: {len(matches)} matches — pass --fp to disambiguate:")
+        for f, info in matches:
+            print(f"  • `{f[:12]}…` — {info.get('title', '(untitled)')}")
+        return 1
+    f, info = matches[0]
+    state.forget_rejected_fingerprint(f)
+    state_module.save(state)
+    print(f":white_check_mark: forgot `{f[:12]}…` — {info.get('title', '(untitled)')}")
     return 0
 
 

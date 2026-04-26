@@ -69,12 +69,62 @@ class State:
     # ── fingerprints ─────────────────────────────────────────────────────────
 
     def has_fingerprint(self, fp: str) -> bool:
-        return fp in self._data.get("written_fingerprints", [])
+        """True if the fp matches a previously-written event OR a previously-
+        rejected proposal. Rejected fingerprints stay alive so the same event
+        re-detected from a different source doesn't get re-proposed."""
+        if fp in self._data.get("written_fingerprints", []):
+            return True
+        if fp in self._data.get("rejected_fingerprints", {}):
+            return True
+        return False
 
     def add_fingerprint(self, fp: str) -> None:
         fps = self._data.setdefault("written_fingerprints", [])
         if fp not in fps:
             fps.append(fp)
+
+    # ── Ollama health (surfaced to the Slack dashboard) ─────────────────────
+
+    def mark_ollama_down(self, skipped: int = 0) -> None:
+        """Record that an Ollama call is failing. Adds to running skipped count."""
+        bucket = self._data.setdefault("ollama_health", {})
+        if not bucket.get("down_since"):
+            bucket["down_since"] = _utcnow().isoformat()
+        bucket["skipped_count"] = int(bucket.get("skipped_count", 0)) + skipped
+
+    def mark_ollama_up(self) -> bool:
+        """Clear the down state. Returns True if a down state was actually cleared."""
+        bucket = self._data.get("ollama_health", {})
+        if bucket.get("down_since"):
+            self._data["ollama_health"] = {}
+            return True
+        return False
+
+    def ollama_health(self) -> dict:
+        return self._data.get("ollama_health", {})
+
+    # ── rejected fingerprints (stay alive to suppress cross-source repeats) ──
+
+    def add_rejected_fingerprint(
+        self, fp: str, title: str, source: str
+    ) -> None:
+        bucket = self._data.setdefault("rejected_fingerprints", {})
+        bucket[fp] = {
+            "rejected_at": _utcnow().isoformat(),
+            "title": title,
+            "source": source,
+        }
+
+    def forget_rejected_fingerprint(self, fp: str) -> bool:
+        """Remove a fingerprint from the rejected list. Returns True if removed."""
+        bucket = self._data.get("rejected_fingerprints", {})
+        if fp in bucket:
+            del bucket[fp]
+            return True
+        return False
+
+    def is_rejected(self, fp: str) -> bool:
+        return fp in self._data.get("rejected_fingerprints", {})
 
     # ── digest schedule tracking ─────────────────────────────────────────────
 
@@ -153,6 +203,7 @@ class State:
                 "end": e.end_dt.isoformat(),
                 "location": e.location,
                 "source_description": e.source_description,
+                "is_all_day": getattr(e, "is_all_day", False),
             }
             for e in events
         }
@@ -359,6 +410,17 @@ class State:
             )
             psf = {k: psf[k] for k in sorted_ids[:500]}
         self._data["processed_slack_files"] = psf
+
+        # Prune rejected_fingerprints: 90-day window so a deliberate "no" lapses
+        # eventually rather than blocking forever. User can wipe early via
+        # `cli forget --fp <hash>` or `cli forget --title <substr>`.
+        rejected = self._data.get("rejected_fingerprints", {})
+        rej_cutoff = (_utcnow() - timedelta(days=90)).isoformat()
+        self._data["rejected_fingerprints"] = {
+            fp: info
+            for fp, info in rejected.items()
+            if info.get("rejected_at", "") >= rej_cutoff
+        }
 
         # Prune proposal_dashboard: keep last 7 days of dashboard message ts entries.
         cutoff_dash = (_utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")

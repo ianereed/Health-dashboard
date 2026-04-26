@@ -16,7 +16,6 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-import requests
 
 from googleapiclient.discovery import build
 from thefuzz import fuzz
@@ -34,7 +33,7 @@ from connectors.imessage import IMessageConnector
 from connectors.notifications import NotificationCenterConnector
 from connectors.slack import SlackConnector
 from connectors.whatsapp import WhatsAppConnector
-from dedup import fingerprint, is_duplicate, todo_fingerprint
+from dedup import fingerprint, is_duplicate, persisted_events, todo_fingerprint
 from logs.event_log import record as log_event, record_cancellation
 from models import CandidateEvent, CandidateTodo
 from notifiers import digest as digest_module
@@ -77,7 +76,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", default="", help="Comma-separated sources to run (default: all)")
     parser.add_argument("--digest-only", action="store_true", help="Send digests, skip extraction")
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")
-    parser.add_argument("--force", action="store_true", help="Run all phases regardless of idle state")
     return parser.parse_args()
 
 
@@ -107,22 +105,6 @@ def _resolve_gcal_id(title_hint: str, state: state_module.State) -> str | None:
     return None
 
 
-def _unload_ollama_models() -> None:
-    """Explicitly unload all Ollama models to free RAM immediately."""
-    for model in [config.OLLAMA_MODEL, config.LOCAL_VISION_MODEL]:
-        if not model:
-            continue
-        try:
-            requests.post(
-                f"{config.OLLAMA_BASE_URL}/api/generate",
-                json={"model": model, "keep_alive": 0},
-                timeout=10,
-            )
-            logger.debug("Unloaded Ollama model: %s", model)
-        except Exception:
-            pass  # best-effort — model may not be loaded
-
-
 def _format_calendar_context(events: list[CalendarEvent]) -> str:
     """
     Build a compact calendar context string for injection into the Ollama prompt.
@@ -130,12 +112,7 @@ def _format_calendar_context(events: list[CalendarEvent]) -> str:
     """
     lines = []
     for e in events:
-        # Skip all-day events (start_dt is midnight UTC with no time significance)
-        try:
-            if e.start_dt.hour == 0 and e.start_dt.minute == 0 and e.start_dt.second == 0:
-                # Heuristic: all-day events stored as UTC midnight
-                continue
-        except AttributeError:
+        if getattr(e, "is_all_day", False):
             continue
         start_str = e.start_dt.strftime("%b %-d %-I:%M%p").lower()
         end_str = e.end_dt.strftime("%-I:%M%p").lower() if e.end_dt else ""
@@ -233,6 +210,9 @@ def _propose_events(
         except Exception:
             pass
 
+    # Cross-run dedup: events we've already written or proposed in the last 30 days.
+    known_events = persisted_events(state, days=30)
+
     for candidate in all_candidates:
         if candidate.is_recurring:
             counts["skipped_recurring"] += 1
@@ -248,6 +228,10 @@ def _propose_events(
         if state.has_fingerprint(fp):
             counts["skipped_duplicate"] += 1
             logger.debug("Skip duplicate proposal: %r (fingerprint match)", candidate.title)
+            continue
+        if is_duplicate(candidate, known_events):
+            counts["skipped_duplicate"] += 1
+            logger.debug("Skip duplicate proposal: %r (fuzzy + window)", candidate.title)
             continue
 
         # Get conflict info upfront so it shows in the proposal
@@ -311,6 +295,7 @@ def _auto_create_events(
         "skipped_duplicate": 0,
     }
     pending_actions: list[dict] = []
+    known_events = persisted_events(state, days=30)
 
     for candidate in all_candidates:
 
@@ -379,6 +364,10 @@ def _auto_create_events(
         if state.has_fingerprint(fp):
             counts["skipped_duplicate"] += 1
             logger.debug("skip duplicate: %r (fingerprint match)", candidate.title)
+            continue
+        if is_duplicate(candidate, known_events):
+            counts["skipped_duplicate"] += 1
+            logger.debug("skip duplicate: %r (fuzzy + window)", candidate.title)
             continue
 
         written, conflicts = gcal_writer.write_event(candidate, dry_run=dry_run, snapshot=snapshot)
@@ -519,33 +508,16 @@ def main() -> int:
         logger.info("  → %d message(s)", len(msgs))
         all_messages.extend(msgs)
 
-    # ── Time-window check: only run heavy phases overnight ───────────────────
-    from zoneinfo import ZoneInfo
-    extraction_ran = False
-    if args.mock or args.force:
-        heavy_phases_allowed = True
-    else:
-        local_hour = datetime.now(ZoneInfo(config.USER_TIMEZONE)).hour
-        start = config.OLLAMA_ACTIVE_HOUR_START
-        end = config.OLLAMA_ACTIVE_HOUR_END
-        if start <= end:
-            heavy_phases_allowed = start <= local_hour < end
-        else:  # wrap-around window (e.g. 22 → 6)
-            heavy_phases_allowed = local_hour >= start or local_hour < end
-        if not heavy_phases_allowed:
-            logger.info(
-                "Outside Ollama active window (hour=%d, window=%d-%d) — "
-                "deferring extraction and image analysis until next overnight run",
-                local_hour, start, end,
-            )
-
     # ── Phase 3: Extract candidate events and todos ──────────────────────────
     all_candidates: list[CandidateEvent] = []
     all_todos: list[CandidateTodo] = []
-    if not heavy_phases_allowed:
-        logger.debug("Skipping extraction — outside Ollama active window")
-    elif extractor.check_ollama_available() or args.mock:
+    extraction_ran = False
+    ollama_state_changed = False
+    if extractor.check_ollama_available() or args.mock:
         extraction_ran = True
+        if not args.mock and state.mark_ollama_up():
+            logger.info("Ollama is reachable again — clearing down state")
+            ollama_state_changed = True
         for msg in all_messages:
             if state.is_seen(msg.source, msg.id):
                 continue
@@ -555,6 +527,27 @@ def main() -> int:
             state.mark_seen(msg.source, msg.id)
     else:
         logger.warning("Skipping extraction — Ollama unavailable")
+        # Surface to the dashboard. Count how many fresh messages we couldn't process
+        # so the user knows what's piling up.
+        unseen = sum(
+            1 for msg in all_messages if not state.is_seen(msg.source, msg.id)
+        )
+        was_down = bool(state.ollama_health().get("down_since"))
+        state.mark_ollama_down(skipped=unseen)
+        if not was_down:
+            ollama_state_changed = True
+
+    # If Ollama health flipped this run, force a dashboard render so the user
+    # sees the alert (or its clearance) immediately — even if no proposals fire.
+    if (
+        ollama_state_changed
+        and config.EVENT_APPROVAL_MODE == "propose"
+        and not args.dry_run
+        and not args.mock
+    ):
+        today_str = run_start.strftime("%Y-%m-%d")
+        all_items = state.get_all_proposal_items_for_dashboard(today_str)
+        slack_notifier.post_or_update_dashboard(all_items, state)
 
     logger.info("Extraction complete: %d candidate event(s) total", len(all_candidates))
 
@@ -655,7 +648,7 @@ def main() -> int:
     # Mode) which invokes `main.py ingest-image --file <path>` for events.
     # Legacy staging is still flushed to NAS opportunistically here.
     files_processed = 0
-    if heavy_phases_allowed and not args.dry_run and not args.mock:
+    if not args.dry_run and not args.mock:
         try:
             from writers import file_writer
             flushed = file_writer.flush_pending_staged(dry_run=False)
@@ -663,10 +656,6 @@ def main() -> int:
                 logger.info("Flushed %d previously staged file(s) to NAS", len(flushed))
         except Exception as exc:
             logger.warning("Error flushing staged files: %s", exc)
-
-    # ── Unload models after heavy phases ───────────────────────────────────
-    if heavy_phases_allowed and not args.mock:
-        _unload_ollama_models()
 
     # ── Phase 8: Post run summary ────────────────────────────────────────────
     if not args.dry_run and not args.mock:
@@ -716,7 +705,7 @@ def main() -> int:
         for source in sources:
             state.set_last_run(source, run_start)
     else:
-        logger.debug("Skipping last_run update — extraction was deferred")
+        logger.debug("Skipping last_run update — Ollama was unavailable")
 
     state_module.save(state)
 

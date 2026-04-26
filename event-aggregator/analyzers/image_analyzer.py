@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -131,35 +132,51 @@ def _analyze_page_local(file_bytes: bytes, filename: str, mimetype: str) -> dict
         categories=_build_categories_text(),
         today=today,
     )
-
-    try:
-        resp = requests.post(
-            f"{config.OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": config.LOCAL_VISION_MODEL,
-                "prompt": prompt,
-                "images": [b64_data],
-                "stream": False,
-                "format": "json",
-                "keep_alive": "10s",
-                "think": False,
-                "options": {"temperature": 0.1},
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        text = resp.json().get("response", "")
-        parsed = _extract_json_from_text(text) or json.loads(text)
-        if not parsed or "extraction" not in parsed:
-            logger.debug("Local vision: unexpected response structure for %s", filename)
+    payload = {
+        "model": config.LOCAL_VISION_MODEL,
+        "prompt": prompt,
+        "images": [b64_data],
+        "stream": False,
+        "format": "json",
+        "keep_alive": config.OLLAMA_KEEP_ALIVE_VISION,
+        "think": False,
+        "options": {
+            "temperature": 0.1,
+            "num_ctx": config.OLLAMA_NUM_CTX_VISION,
+        },
+    }
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                f"{config.OLLAMA_BASE_URL}/api/generate",
+                json=payload,
+                timeout=120,
+            )
+            resp.raise_for_status()
+            text = resp.json().get("response", "")
+            parsed = _extract_json_from_text(text) or json.loads(text)
+            if not parsed or "extraction" not in parsed:
+                logger.debug("Local vision: unexpected response structure for %s", filename)
+                return None
+            return parsed
+        except (requests.RequestException, json.JSONDecodeError) as exc:
+            if attempt < 2:
+                delay = 2 ** attempt  # 1s, 2s
+                logger.warning(
+                    "Local vision: attempt %d failed for %s: %s — retrying in %ds",
+                    attempt + 1, filename, type(exc).__name__, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.warning(
+                    "Local vision: skipping %s after 3 failures: %s",
+                    filename, type(exc).__name__,
+                )
+                return None
+        except Exception as exc:
+            logger.debug("Local vision: unexpected error analyzing %s: %s", filename, exc)
             return None
-        return parsed
-    except requests.exceptions.ConnectionError:
-        logger.debug("Local vision: Ollama not reachable for %s", filename)
-        return None
-    except Exception as exc:
-        logger.debug("Local vision: error analyzing %s: %s", filename, exc)
-        return None
+    return None
 
 
 def _detect_calendar_items_local(structured_text: str) -> list[CandidateEvent]:
@@ -170,27 +187,44 @@ def _detect_calendar_items_local(structured_text: str) -> list[CandidateEvent]:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     text_snippet = structured_text[:4000]
     prompt = _CALENDAR_DETECT_PROMPT.format(today=today, text=text_snippet)
-
-    try:
-        resp = requests.post(
-            f"{config.OLLAMA_BASE_URL}/api/generate",
-            json={
-                "model": config.OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "keep_alive": "10s",
-                "think": False,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        text = resp.json().get("response", "")
-        parsed = json.loads(text)
-        return _parse_calendar_items(parsed.get("calendar_items", []))
-    except Exception as exc:
-        logger.debug("Calendar detection: text model error: %s", exc)
-        return []
+    payload = {
+        "model": config.OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "keep_alive": config.OLLAMA_KEEP_ALIVE_TEXT,
+        "think": False,
+        "options": {"num_ctx": config.OLLAMA_NUM_CTX_TEXT},
+    }
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                f"{config.OLLAMA_BASE_URL}/api/generate",
+                json=payload,
+                timeout=120,
+            )
+            resp.raise_for_status()
+            text = resp.json().get("response", "")
+            parsed = json.loads(text)
+            return _parse_calendar_items(parsed.get("calendar_items", []))
+        except (requests.RequestException, json.JSONDecodeError) as exc:
+            if attempt < 2:
+                delay = 2 ** attempt
+                logger.warning(
+                    "Calendar detection: attempt %d failed: %s — retrying in %ds",
+                    attempt + 1, type(exc).__name__, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.warning(
+                    "Calendar detection: giving up after 3 failures: %s",
+                    type(exc).__name__,
+                )
+                return []
+        except Exception as exc:
+            logger.debug("Calendar detection: unexpected error: %s", exc)
+            return []
+    return []
 
 
 def _parse_calendar_items(raw_items: list[dict]) -> list[CandidateEvent]:

@@ -31,6 +31,7 @@ class CalendarEvent:
     end_dt: datetime
     location: str | None
     source_description: str  # the "[via event-aggregator | source: X]" description or ""
+    is_all_day: bool = False  # True when GCal returned start.date (not start.dateTime)
 
 
 @dataclass
@@ -198,6 +199,8 @@ def fetch_upcoming(service, weeks: int = 4) -> list[CalendarEvent]:
 
 
 def _gcal_item_to_event(item: dict) -> CalendarEvent:
+    # All-day events use `start.date` (YYYY-MM-DD); timed events use `start.dateTime`.
+    is_all_day = "dateTime" not in item["start"]
     start_raw = item["start"].get("dateTime") or item["start"].get("date")
     end_raw = item["end"].get("dateTime") or item["end"].get("date")
     start_dt = _parse_gcal_dt(start_raw)
@@ -209,6 +212,7 @@ def _gcal_item_to_event(item: dict) -> CalendarEvent:
         end_dt=end_dt,
         location=item.get("location"),
         source_description=item.get("description", ""),
+        is_all_day=is_all_day,
     )
 
 
