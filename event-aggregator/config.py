@@ -41,8 +41,19 @@ OLLAMA_NUM_CTX_VISION: int = int(_get("OLLAMA_NUM_CTX_VISION", "16384"))
 
 # keep_alive: "-1" keeps the primary model resident; vision unloads quickly
 # after a swap-in finishes so the primary can come back hot.
-OLLAMA_KEEP_ALIVE_TEXT: str = _get("OLLAMA_KEEP_ALIVE_TEXT", "-1")
-OLLAMA_KEEP_ALIVE_VISION: str = _get("OLLAMA_KEEP_ALIVE_VISION", "30s")
+def _parse_keep_alive(raw: str):
+    """Ollama accepts an integer (seconds; -1 = infinite, 0 = unload now)
+    OR a duration string ("10m", "1h", "30s"). Send the right type so the
+    Ollama API doesn't reject the payload."""
+    raw = (raw or "").strip()
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return raw  # leave as string; let Ollama parse the duration
+
+
+OLLAMA_KEEP_ALIVE_TEXT = _parse_keep_alive(_get("OLLAMA_KEEP_ALIVE_TEXT", "-1"))
+OLLAMA_KEEP_ALIVE_VISION = _parse_keep_alive(_get("OLLAMA_KEEP_ALIVE_VISION", "30s"))
 
 # Pre-classifier: a cheap qwen3:14b call (small ctx, tight prompt) that
 # decides yes/no/maybe before the full extraction. "no" → skip. Saves
