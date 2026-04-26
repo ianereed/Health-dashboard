@@ -178,7 +178,7 @@ def _cmd_ingest_image(file: Path) -> int:
     try:
         summary = ingest_local_file(file, state, dry_run=False, mock=False)
     except Exception as exc:
-        logger.exception("ingest-image: failed")
+        logger.warning("ingest-image: failed: %s: %s", type(exc).__name__, exc)
         print(f"ingest failed: {exc}", file=sys.stderr)
         return 2
 
@@ -195,9 +195,10 @@ def _cmd_enqueue_image(file: Path) -> int:
         print(f"file not found: {file}", file=sys.stderr)
         return 2
     import state as state_module
-    state = state_module.load()
-    state.enqueue_ocr_job(str(file.resolve()))
-    state_module.save(state)
+    with state_module.locked():
+        state = state_module.load()
+        state.enqueue_ocr_job(str(file.resolve()))
+        state_module.save(state)
     print(f":inbox_tray: enqueued {file.name} (ocr_queue depth: {state.ocr_queue_depth()})")
     return 0
 
@@ -232,7 +233,7 @@ def _do_approve(state, nums: list[int]) -> int:
     import config
     from connectors import google_auth
     from dedup import fingerprint as _fingerprint
-    from logs.event_log import record as log_event, record_cancellation
+    from logs.event_log import record as log_event, record_cancellation, record_decision
     from notifiers import slack_notifier
     import state as state_module
     from writers import google_calendar as gcal_writer
@@ -257,6 +258,7 @@ def _do_approve(state, nums: list[int]) -> int:
         # already, or decided not to). The proposal status is already set
         # to "approved" by state.approve_proposal.
         if item.get("kind") == "fuzzy_event":
+            record_decision("approved", item)
             approved += 1
             continue
 
@@ -282,6 +284,7 @@ def _do_approve(state, nums: list[int]) -> int:
             if todoist_writer.create_task(
                 config.TODOIST_API_TOKEN, project_id=None, todo=todo, dry_run=False
             ):
+                record_decision("approved", item)
                 approved += 1
             else:
                 errors.append(f"#{num}: Todoist create_task failed")
@@ -297,6 +300,7 @@ def _do_approve(state, nums: list[int]) -> int:
                 continue
             candidate = _proposal_item_to_candidate(item)
             if gcal_writer.merge_event(target_cal, gcal_event_id, candidate, additions, dry_run=False):
+                record_decision("approved", item)
                 approved += 1
             else:
                 errors.append(f"#{num}: merge patch failed")
@@ -356,6 +360,7 @@ def _do_approve(state, nums: list[int]) -> int:
                 )
 
         if action:
+            record_decision("approved", item)
             approved += 1
 
     state_module.save(state)
@@ -373,6 +378,7 @@ def _do_approve(state, nums: list[int]) -> int:
 
 
 def _do_reject(state, nums: list[int]) -> int:
+    from logs.event_log import record_decision
     from notifiers import slack_notifier
     import state as state_module
 
@@ -396,6 +402,7 @@ def _do_reject(state, nums: list[int]) -> int:
                 title=item.get("title", ""),
                 source=item.get("source", ""),
             )
+        record_decision("rejected", item)
         rejected += 1
 
     state_module.save(state)

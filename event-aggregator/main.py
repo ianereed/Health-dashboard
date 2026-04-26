@@ -34,7 +34,7 @@ from connectors.notifications import NotificationCenterConnector
 from connectors.slack import SlackConnector
 from connectors.whatsapp import WhatsAppConnector
 from dedup import fingerprint, is_duplicate, persisted_events, todo_fingerprint
-from logs.event_log import record as log_event, record_cancellation
+from logs.event_log import record as log_event, record_cancellation, record_decision
 from models import CandidateEvent, CandidateTodo
 from notifiers import digest as digest_module
 from notifiers import slack_notifier
@@ -362,6 +362,12 @@ def _propose_events(
                             f"Merged into '{matched_title}': +{keys}",
                             candidate.source,
                         )
+                        record_decision("merged_silent", {
+                            "kind": "merge",
+                            "title": matched_title,
+                            "source": candidate.source,
+                            "fingerprint": fp,
+                        })
                 state.add_fingerprint(fp)
                 counts["skipped_duplicate"] += 1  # bookkeeping: not a new proposal
                 continue
@@ -655,6 +661,7 @@ def main() -> int:
             fp = item.get("fingerprint")
             if fp:
                 state.remove_proposal_fingerprint(fp)
+            record_decision("expired", item)
         if expired_items:
             logger.info("%d proposal(s) expired", len(expired_items))
 

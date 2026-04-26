@@ -23,9 +23,9 @@
   <integer>600</integer>
 
   <key>StandardOutPath</key>
-  <string>/tmp/home-tools-event-aggregator-fetch.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools/event-aggregator-fetch.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/home-tools-event-aggregator-fetch-error.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools/event-aggregator-fetch.log</string>
 
   <key>RunAtLoad</key>
   <false/>

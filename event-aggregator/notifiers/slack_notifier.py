@@ -594,6 +594,21 @@ def build_dashboard_blocks(
             if ocr_q:
                 queue_str += f" · {ocr_q} ocr"
             footer_parts.append(queue_str)
+        job = worker_status.get("job_in_flight")
+        if job:
+            kind = job.get("kind", "")
+            label = job.get("source", job.get("file", "")) if kind == "text" else job.get("file", "")
+            started = job.get("started_at", "")
+            age_str = ""
+            if started:
+                try:
+                    from datetime import timezone as _tz
+                    delta = datetime.now(tz=_tz.utc) - datetime.fromisoformat(started)
+                    mins = int(delta.total_seconds() // 60)
+                    age_str = f" {mins}m" if mins else ""
+                except Exception:
+                    pass
+            footer_parts.append(f"working: {kind} {label}{age_str}")
     blocks.append({
         "type": "context",
         "elements": [{"type": "mrkdwn", "text": "_" + " · ".join(footer_parts) + "_"}],

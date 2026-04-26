@@ -69,7 +69,7 @@ def _ollama_unload(model: str) -> None:
         )
         logger.info("worker: unloaded model %s", model)
     except Exception as exc:
-        logger.debug("worker: unload of %s failed (best effort): %s", model, exc)
+        logger.warning("worker: unload of %s failed (best effort): %s", model, exc)
 
 
 def _ollama_warmup(model: str, num_ctx: int, keep_alive: str = "-1") -> None:
@@ -88,7 +88,7 @@ def _ollama_warmup(model: str, num_ctx: int, keep_alive: str = "-1") -> None:
         )
         logger.info("worker: warmed model %s (ctx=%d)", model, num_ctx)
     except Exception as exc:
-        logger.debug("worker: warmup of %s failed (best effort): %s", model, exc)
+        logger.warning("worker: warmup of %s failed (best effort): %s", model, exc)
 
 
 # ── Job runners ───────────────────────────────────────────────────────────────
@@ -103,6 +103,7 @@ def _run_text_job(state, job: dict) -> None:
 
     source = job["source"]
     msg_id = job["id"]
+    logger.info("worker: starting text job source=%s id=%s", source, msg_id)
 
     # Skip if extraction already happened (re-running over a partially-drained queue)
     if state.is_seen(source, msg_id):
@@ -127,10 +128,7 @@ def _run_text_job(state, job: dict) -> None:
     # Pre-classifier: skip the 16k-ctx call on obvious non-event noise.
     # "maybe" falls through; "no" short-circuits.
     verdict, reason = extractor.pre_classify(msg)
-    logger.info(
-        "worker: pre-classify %s/%s → %s (%s)",
-        source, msg_id, verdict, reason,
-    )
+    logger.info("worker: pre-classify %s/%s → %s", source, msg_id, verdict)
     if verdict == "no":
         state.mark_seen(source, msg_id)
         return
@@ -139,6 +137,7 @@ def _run_text_job(state, job: dict) -> None:
     # changed between when we enqueued and when we extract.
     calendar_context = ""
     try:
+        import concurrent.futures
         creds = google_auth.get_credentials(
             scopes=["https://www.googleapis.com/auth/calendar.events"],
             token_path=config.GCAL_TOKEN_JSON,
@@ -146,7 +145,9 @@ def _run_text_job(state, job: dict) -> None:
             keyring_key="gcal_token",
         )
         svc = build("calendar", "v3", credentials=creds)
-        upcoming = calendar_analyzer.fetch_upcoming(svc, weeks=config.CALENDAR_CONTEXT_WEEKS)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+            _fut = _ex.submit(calendar_analyzer.fetch_upcoming, svc, weeks=config.CALENDAR_CONTEXT_WEEKS)
+            upcoming = _fut.result(timeout=15)
         # Lightweight inline format — same shape as main._format_calendar_context
         lines = []
         for e in upcoming:
@@ -155,8 +156,10 @@ def _run_text_job(state, job: dict) -> None:
             start = e.start_dt.strftime("%b %-d %-I:%M%p").lower()
             lines.append(f"- {start}: {e.title}")
         calendar_context = "\n".join(lines)
+    except concurrent.futures.TimeoutError:
+        logger.warning("worker: calendar context fetch timed out (15s) — proceeding without context")
     except Exception as exc:
-        logger.debug("worker: calendar context fetch failed: %s", exc)
+        logger.warning("worker: calendar context fetch failed: %s", exc)
 
     events, todos = extractor.extract(msg, calendar_context=calendar_context)
     logger.info(
@@ -216,6 +219,7 @@ def _run_ocr_job(state, job: dict) -> None:
     """Run OCR / image analysis on a queued file path."""
     from pathlib import Path
     import cli  # reuse the existing single-file pipeline
+    logger.info("worker: starting OCR job file=%s", job.get("file_path", ""))
     file_path = Path(job["file_path"])
     if not file_path.exists():
         logger.warning("worker: OCR file not found, dropping: %s", file_path)
@@ -356,10 +360,20 @@ def run_worker() -> int:
                 _ollama_unload(config.OLLAMA_MODEL)
                 state.update_worker_status(current_model=config.LOCAL_VISION_MODEL)
                 state_module.save(state)
-                job = state.pop_ocr_job()
-                state_module.save(state)
+                with state_module.locked():
+                    state = state_module.load()
+                    job = state.pop_ocr_job()
+                    state_module.save(state)
                 if job:
+                    state.update_worker_status(job_in_flight={
+                        "kind": "ocr",
+                        "file": job.get("file_path", ""),
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    state_module.save(state)
                     _run_ocr_job(state, job)
+                    state.update_worker_status(job_in_flight=None)
+                    state_module.save(state)
                 # Reload primary so next text job is hot.
                 _ollama_unload(config.LOCAL_VISION_MODEL)
                 _ollama_warmup(
@@ -370,12 +384,24 @@ def run_worker() -> int:
                 state.update_worker_status(current_model=config.OLLAMA_MODEL)
                 state_module.save(state)
             elif run_text:
-                job = state.pop_text_job()
-                state_module.save(state)
+                with state_module.locked():
+                    state = state_module.load()
+                    job = state.pop_text_job()
+                    state_module.save(state)
                 if job:
+                    state.update_worker_status(job_in_flight={
+                        "kind": "text",
+                        "source": job.get("source", ""),
+                        "id": job.get("id", ""),
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    state_module.save(state)
                     _run_text_job(state, job)
+                    state.update_worker_status(job_in_flight=None)
+                    state_module.save(state)
         except Exception as exc:
-            logger.exception("worker: job failed: %s", exc)
+            state.update_worker_status(job_in_flight=None)
+            logger.warning("worker: job failed: %s: %s", type(exc).__name__, exc)
 
         state_module.save(state)
         time.sleep(_TICK_SLEEP_SECONDS)

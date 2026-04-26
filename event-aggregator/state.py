@@ -8,6 +8,8 @@ state.json (gitignored) tracks:
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -17,6 +19,23 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 STATE_PATH = Path(__file__).parent / "state.json"
+_LOCK_PATH = STATE_PATH.parent / ".state.lock"
+
+
+@contextlib.contextmanager
+def locked():
+    """Acquire an exclusive write lock on state.json for the block's duration.
+
+    Use this to wrap any load() + mutate + save() sequence that must not
+    interleave with another process (e.g. the worker popping a job while
+    the dispatcher CLI is approving a proposal).
+    """
+    with _LOCK_PATH.open("a") as _lf:
+        fcntl.flock(_lf.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            pass  # flock released when _lf closes
 
 _DEFAULT_LOOKBACK_DAYS = 7  # first-run default when no last_run is recorded
 
@@ -418,10 +437,19 @@ class State:
                 return
 
     def approve_proposal(self, num: int) -> dict | None:
-        """Mark a proposal item as approved. Returns the item dict or None if not found."""
+        """Mark a proposal item as approved. Returns the item dict or None if not found.
+
+        Sets claimed_at before flipping status so a concurrent second call within
+        30 seconds sees the claim and returns None (double-click idempotency).
+        """
+        now = _utcnow()
         for batch in self._data.get("pending_proposals", []):
             for item in batch.get("items", []):
                 if item["num"] == num and item["status"] == "pending":
+                    claimed = _parse_dt(item.get("claimed_at"))
+                    if claimed and (now - claimed).total_seconds() < 30:
+                        return None  # concurrent second click — skip
+                    item["claimed_at"] = now.isoformat()
                     item["status"] = "approved"
                     return item
         return None

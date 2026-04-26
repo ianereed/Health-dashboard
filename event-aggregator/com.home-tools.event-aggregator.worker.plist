@@ -30,8 +30,8 @@
   <integer>10</integer>
 
   <key>StandardOutPath</key>
-  <string>/tmp/home-tools-event-aggregator-worker.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools/event-aggregator-worker.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/home-tools-event-aggregator-worker-error.log</string>
+  <string>/Users/homeserver/Library/Logs/home-tools/event-aggregator-worker.log</string>
 </dict>
 </plist>

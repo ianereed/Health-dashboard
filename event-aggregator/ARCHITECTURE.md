@@ -280,6 +280,12 @@ Production runtime is **fetch-only timer + worker daemon** (Tier 2.4):
 - `com.home-tools.event-aggregator.worker.plist` — `KeepAlive=true`,
   `RunAtLoad=true`, `ThrottleInterval=10`. Runs `main.py worker`.
 
+Log files land in `~/Library/Logs/home-tools/` (persistent across reboots):
+- `event-aggregator-worker.log` — worker stdout + stderr (combined)
+- `event-aggregator-fetch.log` — fetch stdout + stderr (combined)
+
+To tail live: `tail -f ~/Library/Logs/home-tools/event-aggregator-worker.log`
+
 Legacy single-plist mode (`main.py` no-args, full inline run) still
 works for backward compat and is what the original
 `com.home-tools.event-aggregator.plist` invokes.

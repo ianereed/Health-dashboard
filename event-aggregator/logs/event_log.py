@@ -71,6 +71,24 @@ def record_cancellation(gcal_id: str, title: str, source: str) -> None:
     _append_to_log(entry)
 
 
+def record_decision(action: str, item: dict) -> None:
+    """Append a proposal-lifecycle entry: approved/rejected/expired/merged_silent.
+
+    Deliberately omits body_text and any LLM-generated free-text fields so
+    the audit log remains safe to retain long-term.
+    """
+    entry: dict[str, Any] = {
+        "ts": datetime.now(tz=timezone.utc).isoformat(),
+        "action": action,
+        "kind": item.get("kind", "event"),
+        "num": item.get("num"),
+        "title": item.get("title"),
+        "source": item.get("source"),
+        "fingerprint": item.get("fingerprint"),
+    }
+    _append_to_log(entry)
+
+
 def _append_to_log(entry: dict) -> None:
     try:
         with LOG_PATH.open("a") as f:
