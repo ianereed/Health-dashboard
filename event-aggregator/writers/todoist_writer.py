@@ -78,21 +78,24 @@ def get_or_create_project(
 
 def create_task(
     token: str,
-    project_id: str,
+    project_id: str | None,
     todo: "CandidateTodo",
     dry_run: bool = False,
 ) -> bool:
     """
     Create a Todoist task from a CandidateTodo.
 
-    The task description includes the context sentence plus source attribution
-    so the provenance is always visible in Todoist.
+    project_id=None routes the task to the user's inbox (Todoist default
+    when project_id is omitted from the payload). Pass an explicit project_id
+    to target a specific project; the caller is responsible for resolving
+    sub-project routing (or omitting it to land in the parent project).
+
     Returns True on success (or in dry-run mode).
     """
     if dry_run:
         logger.info(
-            "DRY RUN — would create todo: %r (source=%s, priority=%s, due=%s)",
-            todo.title, todo.source, todo.priority, todo.due_date,
+            "DRY RUN — would create todo: %r (source=%s, priority=%s, due=%s, project=%s)",
+            todo.title, todo.source, todo.priority, todo.due_date, project_id or "inbox",
         )
         return True
 
@@ -105,11 +108,12 @@ def create_task(
 
     payload: dict = {
         "content": todo.title,
-        "project_id": project_id,
         "description": "\n".join(description_parts),
         "priority": _PRIORITY_MAP.get(todo.priority, 2),
         "labels": ["event-aggregator"],
     }
+    if project_id:
+        payload["project_id"] = project_id
     if todo.due_date:
         payload["due_date"] = todo.due_date
 

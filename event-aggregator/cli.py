@@ -260,6 +260,33 @@ def _do_approve(state, nums: list[int]) -> int:
             approved += 1
             continue
 
+        # Todo proposals: create the Todoist task on approve. v1 routes to
+        # inbox (project_id=None). Tier 4.1 follow-up will add per-project
+        # picking via Slack interactive selects.
+        if item.get("kind") == "todo":
+            from models import CandidateTodo
+            from writers import todoist_writer
+            if not config.TODOIST_API_TOKEN:
+                errors.append(f"#{num}: TODOIST_API_TOKEN not configured")
+                continue
+            todo = CandidateTodo(
+                title=item.get("title", ""),
+                source=item.get("source", ""),
+                source_id=item.get("source_id", ""),
+                source_url=item.get("source_url"),
+                confidence=item.get("confidence", 0.5),
+                context=item.get("context"),
+                due_date=item.get("due_date"),
+                priority=item.get("priority", "normal"),
+            )
+            if todoist_writer.create_task(
+                config.TODOIST_API_TOKEN, project_id=None, todo=todo, dry_run=False
+            ):
+                approved += 1
+            else:
+                errors.append(f"#{num}: Todoist create_task failed")
+            continue
+
         # Merge proposals (additive patches to primary) take a different path
         if item.get("kind") == "merge":
             target_cal = item.get("target_calendar_id") or config.GCAL_PRIMARY_CALENDAR_ID

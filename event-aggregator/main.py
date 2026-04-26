@@ -158,6 +158,26 @@ def _candidate_to_proposal_item(candidate: CandidateEvent, num: int, conflicts: 
     }
 
 
+def _candidate_to_todo_proposal_item(todo: CandidateTodo, num: int, fp: str) -> dict:
+    """Build a `kind:"todo"` proposal so the user approves before the task
+    lands in Todoist. On approve, create_task runs with project_id=None
+    (Todoist inbox) — see Tier 4.1 for project routing roadmap."""
+    return {
+        "num": num,
+        "status": "pending",
+        "kind": "todo",
+        "title": todo.title,
+        "context": todo.context,
+        "due_date": todo.due_date,
+        "priority": todo.priority,
+        "confidence": todo.confidence,
+        "source": todo.source,
+        "source_id": todo.source_id,
+        "source_url": todo.source_url,
+        "fingerprint": fp,
+    }
+
+
 def _candidate_to_fuzzy_proposal_item(candidate: CandidateEvent, num: int) -> dict:
     """Build a `kind:"fuzzy_event"` proposal — no specific date determinable yet.
     User responds via the dashboard to either skip or run `cli add-event` with
@@ -774,40 +794,61 @@ def main() -> int:
     # ── Phase 6: Process todo items ──────────────────────────────────────────
     todos_created = 0
     if config.TODOIST_API_TOKEN and all_todos:
-        project_id = todoist_writer.get_or_create_project(
-            config.TODOIST_API_TOKEN, config.TODOIST_PROJECT_NAME, state
-        )
-        if project_id:
+        if config.EVENT_APPROVAL_MODE == "propose":
+            # Tier 4.1: route todos through the proposal flow rather than
+            # auto-creating. Each pending todo becomes a kind:"todo" item on
+            # the dashboard with [Add to Todoist] / [Skip] buttons.
+            todo_batch_items: list[dict] = []
             for todo in all_todos:
                 fp = todo_fingerprint(todo)
                 if state.has_todo_fingerprint(fp):
-                    logger.debug("skip duplicate todo: %r", todo.title)
+                    logger.debug("skip duplicate todo (fingerprint match): %r", todo.title)
                     continue
-                ok = todoist_writer.create_task(
-                    config.TODOIST_API_TOKEN, project_id, todo, dry_run=args.dry_run
-                )
-                if ok:
-                    todos_created += 1
-                    state.add_todo_fingerprint(fp)
-                    logger.info(
-                        "%stodo: %r (source=%s, priority=%s, confidence=%.2f)",
-                        "DRY RUN " if args.dry_run else "",
-                        todo.title, todo.source, todo.priority, todo.confidence,
+                num = state.next_proposal_num()
+                todo_batch_items.append(_candidate_to_todo_proposal_item(todo, num, fp))
+                # Reserve the fingerprint so the same todo doesn't re-propose
+                # if the worker re-extracts the same source message later.
+                state.add_todo_fingerprint(fp)
+            if todo_batch_items:
+                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H:%M")
+                state.add_proposal_batch({
+                    "batch_id": now_str + "_todos",
+                    "slack_ts": None,
+                    "created_at": now_str,
+                    "items": todo_batch_items,
+                })
+        else:
+            project_id = todoist_writer.get_or_create_project(
+                config.TODOIST_API_TOKEN, config.TODOIST_PROJECT_NAME, state
+            )
+            if project_id:
+                for todo in all_todos:
+                    fp = todo_fingerprint(todo)
+                    if state.has_todo_fingerprint(fp):
+                        logger.debug("skip duplicate todo: %r", todo.title)
+                        continue
+                    ok = todoist_writer.create_task(
+                        config.TODOIST_API_TOKEN, project_id, todo, dry_run=args.dry_run
                     )
-                    if not args.dry_run and not args.mock:
-                        if config.EVENT_APPROVAL_MODE == "propose":
-                            t = state.get_proposal_dashboard_ts(today_str)
-                        else:
+                    if ok:
+                        todos_created += 1
+                        state.add_todo_fingerprint(fp)
+                        logger.info(
+                            "%stodo: %r (source=%s, priority=%s, confidence=%.2f)",
+                            "DRY RUN " if args.dry_run else "",
+                            todo.title, todo.source, todo.priority, todo.confidence,
+                        )
+                        if not args.dry_run and not args.mock:
                             t = _get_thread()
-                        if t:
-                            slack_notifier.post_todo_action(
-                                thread_ts=t,
-                                title=todo.title,
-                                source=todo.source,
-                                context=todo.context,
-                                due_date=todo.due_date,
-                                priority=todo.priority,
-                            )
+                            if t:
+                                slack_notifier.post_todo_action(
+                                    thread_ts=t,
+                                    title=todo.title,
+                                    source=todo.source,
+                                    context=todo.context,
+                                    due_date=todo.due_date,
+                                    priority=todo.priority,
+                                )
     elif all_todos and not config.TODOIST_API_TOKEN:
         logger.debug("todoist: %d todo(s) extracted but TODOIST_API_TOKEN not set — skipping", len(all_todos))
 

@@ -621,7 +621,23 @@ def _build_pending_blocks(item: dict) -> list[dict]:
     except (KeyError, ValueError, TypeError):
         pass
 
-    if kind == "fuzzy_event":
+    if kind == "todo":
+        priority = item.get("priority", "normal")
+        priority_icon = {
+            "urgent": ":rotating_light:",
+            "high": ":exclamation:",
+            "normal": ":memo:",
+            "low": ":small_blue_diamond:",
+        }.get(priority, ":memo:")
+        due = item.get("due_date")
+        due_part = f" · due {due}" if due else ""
+        source_display = f"<{item['source_url']}|{source}>" if item.get("source_url") else source
+        main_text = (
+            f"{priority_icon} *{title}*{due_part}\n"
+            f"_{item.get('context') or 'no context'}_\n"
+            f"from {source_display}"
+        )
+    elif kind == "fuzzy_event":
         # No specific date determinable — ask user for one (or skip).
         description = item.get("event_description", title)
         source_display = f"<{item['source_url']}|{source}>" if item.get("source_url") else source
@@ -706,6 +722,8 @@ def _build_pending_blocks(item: dict) -> list[dict]:
         primary_label = "Already handled"  # marks the fuzzy item as resolved without writing
     elif kind == "merge":
         primary_label = "Merge"
+    elif kind == "todo":
+        primary_label = "Add to Todoist"
     else:
         primary_label = "Add to calendar"
     blocks.append({
