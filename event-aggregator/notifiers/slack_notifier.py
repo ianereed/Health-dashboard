@@ -408,6 +408,7 @@ def build_dashboard_blocks(
     items: list[dict],
     today_str: str,
     ollama_health: dict | None = None,
+    recurring_notices: list[dict] | None = None,
 ) -> list[dict]:
     """
     Build Slack Block Kit blocks for the live proposal dashboard.
@@ -416,6 +417,9 @@ def build_dashboard_blocks(
     today_str: YYYY-MM-DD date string for the header
     ollama_health: optional dict from `state.ollama_health()`. When `down_since`
                    is set, an Errors block is added near the top of the dashboard.
+    recurring_notices: optional list from `state.recurring_notices()`. Rendered
+                       as a low-key "Notices" block — recurring events the LLM
+                       saw but the tool intentionally won't auto-create.
     """
     blocks: list[dict] = []
 
@@ -451,6 +455,20 @@ def build_dashboard_blocks(
                     f"{skip_part}\nExtraction is paused until it comes back."
                 ),
             },
+        })
+        blocks.append({"type": "divider"})
+
+    # Notices (low-key — recurring events the tool saw but won't auto-create)
+    if recurring_notices:
+        notice_lines = [":arrows_counterclockwise: *Possibly recurring (handle manually if needed):*"]
+        for n in recurring_notices[:5]:  # cap to keep dashboard tight
+            hint = f" — _{n['recurrence_hint']}_" if n.get("recurrence_hint") else ""
+            notice_lines.append(f"  • {n.get('title', '(untitled)')} _(via {n.get('source', '')})_{hint}")
+        if len(recurring_notices) > 5:
+            notice_lines.append(f"  …and {len(recurring_notices) - 5} more")
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(notice_lines)},
         })
         blocks.append({"type": "divider"})
 
@@ -497,6 +515,7 @@ def _build_pending_blocks(item: dict) -> list[dict]:
     source = item.get("source", "")
     is_update = item.get("is_update", False)
     is_cancellation = item.get("is_cancellation", False)
+    kind = item.get("kind", "event")
 
     start_str = "unknown time"
     try:
@@ -505,7 +524,17 @@ def _build_pending_blocks(item: dict) -> list[dict]:
     except (KeyError, ValueError, TypeError):
         pass
 
-    if is_cancellation:
+    if kind == "merge":
+        # Additive merge proposal — patch a primary-calendar event with new info.
+        matched_title = item.get("matched_title", "(matched event)")
+        additions = item.get("additions") or {}
+        addition_keys = ", ".join(additions.keys()) or "no fields"
+        source_display = f"<{item['source_url']}|{source}>" if item.get("source_url") else source
+        main_text = (
+            f":heavy_plus_sign: *Merge into '{matched_title}'*\n"
+            f"Add: {addition_keys} · from {source_display}"
+        )
+    elif is_cancellation:
         main_text = f":wastebasket: *{title}* _(cancel)_"
     elif is_update:
         original = item.get("original_title_hint") or title
@@ -516,6 +545,29 @@ def _build_pending_blocks(item: dict) -> list[dict]:
         main_text = f":calendar: *{title}*{conf_note}\n{start_str} · from {source_display}"
 
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": main_text}})
+
+    # For merge proposals, surface the actual fields being added so the
+    # user can decide without clicking through to the email/source.
+    if kind == "merge":
+        diff_lines = []
+        additions = item.get("additions") or {}
+        if additions.get("location"):
+            diff_lines.append(f":pushpin: location: _{additions['location']}_")
+        if additions.get("attendees"):
+            atts = additions["attendees"][:4]
+            att_parts = []
+            for a in atts:
+                name = a.get("name", "")
+                email = a.get("email", "")
+                att_parts.append(f"{name} <{email}>" if name and email else name or email or "")
+            att_str = ", ".join(p for p in att_parts if p)
+            if att_str:
+                diff_lines.append(f":busts_in_silhouette: attendees: _+{att_str}_")
+        if diff_lines:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": p} for p in diff_lines],
+            })
 
     context_parts: list[str] = []
     for c in (item.get("conflicts") or [])[:3]:
@@ -542,12 +594,13 @@ def _build_pending_blocks(item: dict) -> list[dict]:
             "elements": [{"type": "mrkdwn", "text": p} for p in context_parts],
         })
 
+    primary_label = "Merge" if kind == "merge" else "Add to calendar"
     blocks.append({
         "type": "actions",
         "elements": [
             {
                 "type": "button",
-                "text": {"type": "plain_text", "text": "Add to calendar", "emoji": False},
+                "text": {"type": "plain_text", "text": primary_label, "emoji": False},
                 "style": "primary",
                 "action_id": "ea_approve",
                 "value": str(num),
@@ -605,7 +658,12 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
 
     import state as _state_mod
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
-    blocks = build_dashboard_blocks(items, today, ollama_health=state.ollama_health())
+    blocks = build_dashboard_blocks(
+        items,
+        today,
+        ollama_health=state.ollama_health(),
+        recurring_notices=state.recurring_notices(),
+    )
     pending_count = sum(1 for i in items if i["status"] == "pending")
     fallback_text = f"Event proposals: {pending_count} pending"
 

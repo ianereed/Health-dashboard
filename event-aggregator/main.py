@@ -79,10 +79,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _resolve_gcal_id(title_hint: str, state: state_module.State) -> str | None:
+def _resolve_gcal_id(
+    title_hint: str, state: state_module.State
+) -> tuple[str, str] | None:
     """
     Fuzzy-search written_events and calendar_snapshot for an event matching title_hint.
-    Returns the gcal_event_id if found, else None.
+    Returns (gcal_event_id, target_calendar_id) if found, else None.
     """
     if not title_hint:
         return None
@@ -93,14 +95,20 @@ def _resolve_gcal_id(title_hint: str, state: state_module.State) -> str | None:
         existing = info.get("title", "")
         if fuzz.ratio(hint_lower, existing.lower()) > _UPDATE_FUZZY_THRESHOLD:
             logger.debug("update lookup: matched written_event %r for hint %r", existing, title_hint)
-            return gcal_id
+            return (
+                gcal_id,
+                info.get("calendar_id") or config.GCAL_WEEKEND_CALENDAR_ID,
+            )
 
-    # 2. Fall back to calendar snapshot (all calendars)
+    # 2. Fall back to calendar snapshot (both calendars)
     for gcal_id, info in state.calendar_snapshot().items():
         existing = info.get("title", "")
         if fuzz.ratio(hint_lower, existing.lower()) > _UPDATE_FUZZY_THRESHOLD:
             logger.debug("update lookup: matched snapshot event %r for hint %r", existing, title_hint)
-            return gcal_id
+            return (
+                gcal_id,
+                info.get("calendar_id") or config.GCAL_PRIMARY_CALENDAR_ID,
+            )
 
     return None
 
@@ -141,10 +149,46 @@ def _candidate_to_proposal_item(candidate: CandidateEvent, num: int, conflicts: 
         "is_cancellation": candidate.is_cancellation,
         "original_title_hint": candidate.original_title_hint,
         "gcal_event_id_to_update": candidate.gcal_event_id_to_update,
+        "gcal_calendar_id_to_update": candidate.gcal_calendar_id_to_update,
         "is_recurring": candidate.is_recurring,
         "recurrence_hint": candidate.recurrence_hint,
         "suggested_attendees": candidate.suggested_attendees or [],
         "conflicts": conflicts,
+        "kind": "event",  # vs "merge" — see _candidate_to_merge_proposal_item
+    }
+
+
+def _candidate_to_merge_proposal_item(
+    candidate: CandidateEvent,
+    num: int,
+    matched_gcal_id: str,
+    matched_calendar_id: str,
+    matched_title: str,
+    matched_start_iso: str,
+    additions: dict,
+) -> dict:
+    """Build a `kind:"merge"` proposal item for primary-calendar additive merges."""
+    return {
+        "num": num,
+        "status": "pending",
+        "kind": "merge",
+        "title": candidate.title,
+        "matched_title": matched_title,
+        "matched_start_dt": matched_start_iso,
+        "target_calendar_id": matched_calendar_id,
+        "gcal_event_id": matched_gcal_id,
+        "additions": additions,
+        "start_dt": candidate.start_dt.isoformat(),
+        "end_dt": candidate.end_dt.isoformat() if candidate.end_dt else None,
+        "location": candidate.location,
+        "confidence": candidate.confidence,
+        "confidence_band": candidate.confidence_band,
+        "category": candidate.category,
+        "source": candidate.source,
+        "source_id": candidate.source_id,
+        "source_url": candidate.source_url,
+        "fingerprint": fingerprint(candidate),
+        "suggested_attendees": candidate.suggested_attendees or [],
     }
 
 
@@ -172,6 +216,7 @@ def _proposal_item_to_candidate(item: dict) -> CandidateEvent:
         is_update=item.get("is_update", False),
         original_title_hint=item.get("original_title_hint"),
         gcal_event_id_to_update=item.get("gcal_event_id_to_update"),
+        gcal_calendar_id_to_update=item.get("gcal_calendar_id_to_update"),
         is_cancellation=item.get("is_cancellation", False),
         is_recurring=item.get("is_recurring", False),
         recurrence_hint=item.get("recurrence_hint"),
@@ -217,6 +262,13 @@ def _propose_events(
         if candidate.is_recurring:
             counts["skipped_recurring"] += 1
             logger.info("RECURRING skipped (propose mode): %r", candidate.title)
+            if state.add_recurring_notice(
+                candidate.title, candidate.source, candidate.recurrence_hint
+            ):
+                logger.info(
+                    "Recurring notice added: %r (hint=%r)",
+                    candidate.title, candidate.recurrence_hint,
+                )
             continue
 
         # Skip past events
@@ -232,6 +284,52 @@ def _propose_events(
         if is_duplicate(candidate, known_events):
             counts["skipped_duplicate"] += 1
             logger.debug("Skip duplicate proposal: %r (fuzzy + window)", candidate.title)
+            continue
+
+        # Cross-calendar match: branch into merge proposal (primary), silent
+        # patch (weekend), or pure-duplicate skip.
+        match = gcal_writer._find_cross_calendar_match(candidate, snapshot) if snapshot else None
+        if match:
+            matched_gcal_id, matched_info = match
+            matched_calendar = matched_info.get("calendar_id", "") or config.GCAL_PRIMARY_CALENDAR_ID
+            additions = gcal_writer._compute_merge_additions(candidate, matched_info)
+            matched_title = matched_info.get("title", "")
+            if not additions:
+                counts["skipped_duplicate"] += 1
+                logger.debug(
+                    "Skip duplicate (cross-calendar, no new info): %r ↔ %r",
+                    candidate.title, matched_title,
+                )
+                state.add_fingerprint(fp)
+                continue
+            if matched_calendar == config.GCAL_WEEKEND_CALENDAR_ID:
+                # Silent patch + dashboard notice — no approval needed.
+                if not dry_run and not mock:
+                    if gcal_writer.merge_event(
+                        matched_calendar, matched_gcal_id, candidate, additions
+                    ):
+                        keys = ", ".join(additions.keys())
+                        state.add_recurring_notice(
+                            f"Merged into '{matched_title}': +{keys}",
+                            candidate.source,
+                        )
+                state.add_fingerprint(fp)
+                counts["skipped_duplicate"] += 1  # bookkeeping: not a new proposal
+                continue
+            # Primary match → emit a merge proposal for approval
+            num = state.next_proposal_num()
+            merge_item = _candidate_to_merge_proposal_item(
+                candidate,
+                num,
+                matched_gcal_id=matched_gcal_id,
+                matched_calendar_id=matched_calendar,
+                matched_title=matched_title,
+                matched_start_iso=matched_info.get("start", ""),
+                additions=additions,
+            )
+            batch_items.append(merge_item)
+            state.add_fingerprint(fp)
+            counts["proposed"] += 1
             continue
 
         # Get conflict info upfront so it shows in the proposal
@@ -303,6 +401,9 @@ def _auto_create_events(
             counts["skipped_recurring"] += 1
             logger.info("RECURRING skipped: %r hint=%r (source=%s)", candidate.title, candidate.recurrence_hint, candidate.source)
             if not dry_run and not mock:
+                state.add_recurring_notice(
+                    candidate.title, candidate.source, candidate.recurrence_hint
+                )
                 pending_actions.append({
                     "action": "skipped_recurring",
                     "title": candidate.title,
@@ -313,7 +414,16 @@ def _auto_create_events(
             continue
 
         if candidate.is_cancellation and candidate.gcal_event_id_to_update:
-            deleted = gcal_writer.delete_event(candidate.gcal_event_id_to_update, dry_run=dry_run)
+            target_cal = candidate.gcal_calendar_id_to_update or config.GCAL_WEEKEND_CALENDAR_ID
+            # Auto mode never deletes from PRIMARY without approval — that's
+            # a destructive write to a calendar we treat as read-mostly.
+            if target_cal != config.GCAL_WEEKEND_CALENDAR_ID:
+                logger.info(
+                    "Skipping auto-cancel for %r: matched event lives on %s, not weekend",
+                    candidate.original_title_hint or candidate.title, target_cal,
+                )
+                continue
+            deleted = gcal_writer.delete_event(target_cal, candidate.gcal_event_id_to_update, dry_run=dry_run)
             if deleted:
                 counts["cancelled"] += 1
                 record_cancellation(
@@ -332,7 +442,14 @@ def _auto_create_events(
             continue
 
         if candidate.gcal_event_id_to_update:
-            written, conflicts = gcal_writer.update_event(candidate.gcal_event_id_to_update, candidate, dry_run=dry_run)
+            target_cal = candidate.gcal_calendar_id_to_update or config.GCAL_WEEKEND_CALENDAR_ID
+            if target_cal != config.GCAL_WEEKEND_CALENDAR_ID:
+                logger.info(
+                    "Skipping auto-update for %r: matched event lives on %s, not weekend",
+                    candidate.title, target_cal,
+                )
+                continue
+            written, conflicts = gcal_writer.update_event(target_cal, candidate.gcal_event_id_to_update, candidate, dry_run=dry_run)
             if written:
                 counts["updated"] += 1
                 log_event(written, action="updated", conflicts=conflicts)
@@ -342,6 +459,7 @@ def _auto_create_events(
                     start_iso=candidate.start_dt.isoformat(),
                     fingerprint=written.fingerprint,
                     is_tentative=(candidate.confidence_band == "medium"),
+                    calendar_id=target_cal,
                 )
                 logger.info("%supdated: %r on %s (confidence=%.2f, source=%s)", "DRY RUN " if dry_run else "", candidate.title, candidate.start_dt.date(), candidate.confidence, candidate.source)
                 if not dry_run and not mock:
@@ -370,8 +488,9 @@ def _auto_create_events(
             logger.debug("skip duplicate: %r (fuzzy + window)", candidate.title)
             continue
 
-        written, conflicts = gcal_writer.write_event(candidate, dry_run=dry_run, snapshot=snapshot)
-        if written:
+        outcome = gcal_writer.write_event(candidate, dry_run=dry_run, snapshot=snapshot)
+        if isinstance(outcome, gcal_writer.Inserted):
+            written, conflicts = outcome.written, outcome.conflicts
             counts["created"] += 1
             state.add_fingerprint(fp)
             log_event(written, action="created", conflicts=conflicts)
@@ -381,6 +500,7 @@ def _auto_create_events(
                 start_iso=candidate.start_dt.isoformat(),
                 fingerprint=written.fingerprint,
                 is_tentative=(candidate.confidence_band == "medium"),
+                calendar_id=config.GCAL_WEEKEND_CALENDAR_ID,
             )
             logger.info("%screated: %r on %s (confidence=%.2f, band=%s, source=%s)", "DRY RUN " if dry_run else "", candidate.title, candidate.start_dt.date(), candidate.confidence, candidate.confidence_band, candidate.source)
             if not dry_run and not mock:
@@ -394,10 +514,30 @@ def _auto_create_events(
                     "suggested_attendees": candidate.suggested_attendees or None,
                     "conflicts": conflicts or None,
                 })
-        elif dry_run:
-            logger.info("DRY RUN: %r on %s (confidence=%.2f, band=%s, source=%s)", candidate.title, candidate.start_dt.date(), candidate.confidence, candidate.confidence_band, candidate.source)
-        else:
-            counts["skipped_duplicate"] += 1
+        elif isinstance(outcome, gcal_writer.Merged):
+            # Silent merge into weekend — surface as a notice.
+            counts["created"] += 0  # not a creation; bookkeeping stays accurate
+            keys = ", ".join(outcome.additions.keys())
+            logger.info(
+                "merged into %r on weekend (gcal_id=%s): added %s",
+                outcome.matched_title, outcome.gcal_event_id, keys,
+            )
+            state.add_recurring_notice(
+                f"Merged into '{outcome.matched_title}': +{keys}",
+                candidate.source,
+            )
+        elif isinstance(outcome, gcal_writer.MergeRequired):
+            # Auto mode skips merge-into-primary because primary patches
+            # require approval. Log so the user can see it in run logs.
+            logger.info(
+                "Auto-mode skip: %r matches primary event %r (would propose if in propose mode)",
+                candidate.title, outcome.matched_title,
+            )
+        elif isinstance(outcome, gcal_writer.Skipped):
+            if dry_run and outcome.reason == "dry_run":
+                logger.info("DRY RUN: %r on %s (confidence=%.2f, band=%s, source=%s)", candidate.title, candidate.start_dt.date(), candidate.confidence, candidate.confidence_band, candidate.source)
+            else:
+                counts["skipped_duplicate"] += 1
 
     if pending_actions and not dry_run and not mock:
         t = get_thread()
@@ -555,9 +695,9 @@ def main() -> int:
     for candidate in all_candidates:
         if (candidate.is_update or candidate.is_cancellation) and candidate.original_title_hint:
             if candidate.confidence >= _UPDATE_CANCEL_MIN_CONFIDENCE:
-                gcal_id = _resolve_gcal_id(candidate.original_title_hint, state)
-                if gcal_id:
-                    candidate.gcal_event_id_to_update = gcal_id
+                resolved = _resolve_gcal_id(candidate.original_title_hint, state)
+                if resolved:
+                    candidate.gcal_event_id_to_update, candidate.gcal_calendar_id_to_update = resolved
                 else:
                     logger.debug(
                         "update/cancel: no match found for hint %r — treating as new event",

@@ -1,18 +1,35 @@
 """
-Google Calendar writer.
+Google Calendar writer — two-calendar model.
 
-Writes CandidateEvents to Google Calendar, and supports update and delete.
-- Pre-write dedup: checks existing events ±1 day by title similarity, plus cross-calendar
-  snapshot check to avoid duplicating events already on other calendars
-- Source attribution: writes "[via event-aggregator | source: {source_type}]" to description
-- Conflict detection: reports if another event exists within ±30 minutes at the same time
-- Category color: applies GCal colorId based on event.category
-- Timezone: uses config.USER_TIMEZONE for start/end objects
-- OAuth2 token stored via keyring (macOS Keychain) with JSON file as fallback
+- Reads from PRIMARY + WEEKEND for context and dedup.
+- Writes new events ONLY to WEEKEND.
+- Update / cancel can target either calendar (chosen by where the matched
+  event lives). Spontaneous patches to PRIMARY are blocked here; they go
+  through the proposal flow as a "merge" proposal and the caller invokes
+  `merge_event(target_calendar_id=PRIMARY, ...)` after approval.
+- Additive merges to WEEKEND happen silently (caller posts a notice).
+
+Pre-write decision tree (write_event):
+  1. exact fingerprint or fuzzy+window match in `state.written_events`/
+     `pending_proposals` (Layer 2/3) — caller already filtered.
+  2. cross-calendar snapshot match:
+       a. matched on PRIMARY + candidate adds new fields → return
+          `MergeRequired` with the additions diff (caller emits proposal).
+       b. matched on PRIMARY + nothing new → skip silently.
+       c. matched on WEEKEND + candidate adds new fields → silent patch
+          on weekend, return `Merged` with the additions diff.
+       d. matched on WEEKEND + nothing new → skip silently.
+  3. live ±1d scan of WEEKEND only (catches drift the snapshot missed) —
+     same logic, restricted to weekend.
+  4. otherwise → insert new event on WEEKEND.
+
+Source attribution (description):
+  "[<action> via event-aggregator | source: <source>{ | <url>}]"
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from googleapiclient.discovery import build
@@ -30,6 +47,47 @@ _FUZZY_DEDUP_THRESHOLD = 85
 _CROSS_CALENDAR_THRESHOLD = 80
 _CONFLICT_WINDOW_MINUTES = 30
 
+
+# ── Outcomes returned by write_event ──────────────────────────────────────────
+
+@dataclass
+class Inserted:
+    """A new event was inserted on weekend."""
+    written: WrittenEvent
+    conflicts: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Merged:
+    """An existing weekend event was silently patched with additive fields."""
+    target_calendar_id: str
+    gcal_event_id: str
+    matched_title: str
+    additions: dict  # {"location": "...", "attendees": [...], "description": "..."}
+
+
+@dataclass
+class MergeRequired:
+    """A primary-calendar event matched; a proposal is required for any patch."""
+    target_calendar_id: str
+    gcal_event_id: str
+    matched_title: str
+    matched_start_dt: datetime
+    additions: dict
+
+
+@dataclass
+class Skipped:
+    """Match found but candidate brought no new info — nothing to do."""
+    reason: str
+    matched_title: str | None = None
+    target_calendar_id: str | None = None
+
+
+WriteOutcome = Inserted | Merged | MergeRequired | Skipped
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def _get_service():
     creds = google_auth.get_credentials(
@@ -80,8 +138,9 @@ def _display_title(candidate: CandidateEvent) -> str:
 
 def _check_conflicts(service, candidate: CandidateEvent) -> list[str]:
     """
-    Query the target calendar for events within ±CONFLICT_WINDOW_MINUTES of start_dt.
-    Returns list of conflicting event titles (may be empty).
+    Query the WEEKEND calendar for events within ±CONFLICT_WINDOW_MINUTES of start_dt.
+    Returns list of conflicting event titles. (Conflicts are informational; the
+    primary calendar is checked separately via the snapshot in the proposal flow.)
     """
     window = timedelta(minutes=_CONFLICT_WINDOW_MINUTES)
     time_min = (candidate.start_dt - window).isoformat()
@@ -90,7 +149,7 @@ def _check_conflicts(service, candidate: CandidateEvent) -> list[str]:
         result = (
             service.events()
             .list(
-                calendarId=config.GCAL_TARGET_CALENDAR_ID,
+                calendarId=config.GCAL_WEEKEND_CALENDAR_ID,
                 timeMin=time_min,
                 timeMax=time_max,
                 singleEvents=True,
@@ -100,7 +159,6 @@ def _check_conflicts(service, candidate: CandidateEvent) -> list[str]:
         return [
             item.get("summary", "")
             for item in result.get("items", [])
-            # Skip all-day events (start.date present instead of start.dateTime)
             if item.get("summary") and not item.get("start", {}).get("date")
         ]
     except Exception as exc:
@@ -108,12 +166,97 @@ def _check_conflicts(service, candidate: CandidateEvent) -> list[str]:
         return []
 
 
-def _is_cross_calendar_duplicate(candidate: CandidateEvent, snapshot: dict) -> bool:
+def _compute_merge_additions(candidate: CandidateEvent, existing: dict) -> dict:
     """
-    Check the calendar snapshot (all calendars) for a near-duplicate of this candidate.
-    Returns True if a matching event is found — caller should skip creation.
+    Given a candidate and a snapshot dict for an existing event, return the
+    additive fields the candidate would contribute. Empty dict = nothing new.
+
+    We add fields conservatively — never replace, only fill in:
+      - location: only if existing has no location and candidate has one
+      - attendees: only emails the existing event doesn't already list
+      - description: append a "[merged from <source> on <date>] <new info>"
+        line if the candidate brought location/attendees we don't have
     """
+    additions: dict = {}
+
+    existing_location = (existing.get("location") or "").strip()
+    if candidate.location and not existing_location:
+        additions["location"] = candidate.location
+
+    existing_attendees = existing.get("attendees") or []
+    existing_emails = {
+        (a.get("email") or "").lower()
+        for a in existing_attendees
+        if a.get("email")
+    }
+    new_attendees = []
+    for a in candidate.suggested_attendees or []:
+        email = (a.get("email") or "").lower()
+        if email and email not in existing_emails:
+            new_attendees.append({"name": a.get("name", ""), "email": a.get("email", "")})
+    if new_attendees:
+        additions["attendees"] = new_attendees
+
+    return additions
+
+
+def _patch_with_additions(
+    service, calendar_id: str, gcal_event_id: str, additions: dict, candidate: CandidateEvent
+) -> bool:
+    """Apply additive fields to an existing event via events().patch."""
+    if not additions:
+        return False
+    body: dict = {}
+    if "location" in additions:
+        body["location"] = additions["location"]
+    if "attendees" in additions:
+        # GCal patch replaces attendees — fetch existing and merge.
+        try:
+            existing = service.events().get(
+                calendarId=calendar_id, eventId=gcal_event_id
+            ).execute()
+            merged_attendees = list(existing.get("attendees") or [])
+            existing_emails = {(a.get("email") or "").lower() for a in merged_attendees}
+            for a in additions["attendees"]:
+                if a.get("email", "").lower() not in existing_emails:
+                    merged_attendees.append(a)
+            body["attendees"] = merged_attendees
+        except Exception as exc:
+            logger.warning("merge: couldn't fetch existing attendees, skipping merge: %s", exc)
+            body.pop("attendees", None)
+
+    note = (
+        f"\n\n[merged via event-aggregator on "
+        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')} | source: {candidate.source}]"
+    )
+    try:
+        existing = service.events().get(
+            calendarId=calendar_id, eventId=gcal_event_id
+        ).execute()
+        body["description"] = (existing.get("description") or "") + note
+    except Exception:
+        body["description"] = note.lstrip()
+
+    try:
+        service.events().patch(
+            calendarId=calendar_id, eventId=gcal_event_id, body=body
+        ).execute()
+        logger.info(
+            "merged %s into gcal event %s on %s: keys=%s",
+            list(additions.keys()), gcal_event_id, calendar_id, list(body.keys()),
+        )
+        return True
+    except Exception as exc:
+        logger.warning("merge patch failed for %s: %s", gcal_event_id, exc)
+        return False
+
+
+def _find_cross_calendar_match(
+    candidate: CandidateEvent, snapshot: dict
+) -> tuple[str, dict] | None:
+    """Scan the snapshot for a same-date fuzzy match. Returns (gcal_id, info) or None."""
     cand_date = candidate.start_dt.date()
+    cand_lower = candidate.title.lower()
     for gcal_id, info in snapshot.items():
         existing_title = info.get("title", "")
         existing_start = info.get("start", "")
@@ -125,54 +268,104 @@ def _is_cross_calendar_duplicate(candidate: CandidateEvent, snapshot: dict) -> b
                 continue
         except (ValueError, TypeError):
             continue
-        if fuzz.ratio(candidate.title.lower(), existing_title.lower()) > _CROSS_CALENDAR_THRESHOLD:
-            logger.debug(
-                "cross-calendar dedup: %r matches snapshot event %r — skipping",
-                candidate.title, existing_title,
-            )
-            return True
-    return False
+        if fuzz.ratio(cand_lower, existing_title.lower()) > _CROSS_CALENDAR_THRESHOLD:
+            return gcal_id, info
+    return None
 
+
+# ── public surface ───────────────────────────────────────────────────────────
 
 def write_event(
     candidate: CandidateEvent,
     dry_run: bool = False,
     snapshot: dict | None = None,
-) -> tuple[WrittenEvent | None, list[str]]:
+) -> WriteOutcome:
     """
-    Write a CandidateEvent to Google Calendar.
+    Decide what to do with a CandidateEvent against the two-calendar model.
 
-    Returns (WrittenEvent | None, conflict_titles).
-    WrittenEvent is None on failure, dry-run, or if deduped.
-    conflict_titles is a list of event titles that overlap within ±30 minutes.
+    Returns one of:
+      Inserted        — event was created on weekend
+      Merged          — silent additive patch applied to weekend
+      MergeRequired   — primary calendar matched; caller must propose
+      Skipped         — duplicate / nothing to do
     """
     fp = dedup.fingerprint(candidate)
 
     if dry_run:
         logger.info(
-            "DRY RUN — would create: %r on %s (confidence=%.2f, band=%s, source=%s)",
+            "DRY RUN — would create on weekend: %r on %s (confidence=%.2f, band=%s, source=%s)",
             candidate.title,
             candidate.start_dt.date(),
             candidate.confidence,
             candidate.confidence_band,
             candidate.source,
         )
-        return None, []
+        return Skipped(reason="dry_run")
 
     try:
         service = _get_service()
 
-        # Cross-calendar dedup via snapshot
-        if snapshot and _is_cross_calendar_duplicate(candidate, snapshot):
-            return None, []
+        # Cross-calendar dedup via snapshot — branches by which calendar matched.
+        if snapshot:
+            match = _find_cross_calendar_match(candidate, snapshot)
+            if match:
+                matched_gcal_id, matched_info = match
+                matched_calendar = matched_info.get("calendar_id", "") or config.GCAL_PRIMARY_CALENDAR_ID
+                additions = _compute_merge_additions(candidate, matched_info)
+                matched_title = matched_info.get("title", "")
+                if matched_calendar == config.GCAL_WEEKEND_CALENDAR_ID:
+                    if not additions:
+                        logger.debug(
+                            "weekend dup — nothing new to merge: %r ↔ %r",
+                            candidate.title, matched_title,
+                        )
+                        return Skipped(
+                            reason="weekend_duplicate",
+                            matched_title=matched_title,
+                            target_calendar_id=matched_calendar,
+                        )
+                    if _patch_with_additions(
+                        service, matched_calendar, matched_gcal_id, additions, candidate
+                    ):
+                        return Merged(
+                            target_calendar_id=matched_calendar,
+                            gcal_event_id=matched_gcal_id,
+                            matched_title=matched_title,
+                            additions=additions,
+                        )
+                    return Skipped(reason="merge_failed", matched_title=matched_title)
+                # primary (or any non-weekend calendar): merges require approval
+                if not additions:
+                    logger.debug(
+                        "primary dup — nothing new to propose: %r ↔ %r",
+                        candidate.title, matched_title,
+                    )
+                    return Skipped(
+                        reason="primary_duplicate",
+                        matched_title=matched_title,
+                        target_calendar_id=matched_calendar,
+                    )
+                try:
+                    matched_start_dt = datetime.fromisoformat(matched_info.get("start", ""))
+                    if matched_start_dt.tzinfo is None:
+                        matched_start_dt = matched_start_dt.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    matched_start_dt = candidate.start_dt
+                return MergeRequired(
+                    target_calendar_id=matched_calendar,
+                    gcal_event_id=matched_gcal_id,
+                    matched_title=matched_title,
+                    matched_start_dt=matched_start_dt,
+                    additions=additions,
+                )
 
-        # Pre-write dedup: scan target calendar ±1 day for title matches
+        # Pre-write live scan against WEEKEND ±1 day for drift the snapshot missed.
         window_start = (candidate.start_dt - timedelta(days=1)).isoformat()
         window_end = (candidate.start_dt + timedelta(days=1)).isoformat()
         existing = (
             service.events()
             .list(
-                calendarId=config.GCAL_TARGET_CALENDAR_ID,
+                calendarId=config.GCAL_WEEKEND_CALENDAR_ID,
                 timeMin=window_start,
                 timeMax=window_end,
                 singleEvents=True,
@@ -181,11 +374,8 @@ def write_event(
         )
         for item in existing.get("items", []):
             existing_title = item.get("summary", "")
-            # Strip [?] prefix when comparing titles
             compare_title = candidate.title.lstrip("[?] ") if candidate.title.startswith("[?]") else candidate.title
             if fuzz.ratio(compare_title.lower(), existing_title.lstrip("[?] ").lower()) > _FUZZY_DEDUP_THRESHOLD:
-                # Also require time proximity (±30 min) to avoid false positives for
-                # same-name events at different times on the same day
                 existing_start_str = item.get("start", {}).get("dateTime", "")
                 if existing_start_str:
                     try:
@@ -195,12 +385,16 @@ def write_event(
                         if abs((candidate.start_dt - existing_dt).total_seconds()) > 1800:
                             continue
                     except (ValueError, TypeError):
-                        pass  # unparseable — treat as time match (conservative)
+                        pass
                 logger.debug(
-                    "pre-write dedup: %r matches existing %r — skipping",
+                    "pre-write dedup: %r matches existing weekend event %r — skipping",
                     candidate.title, existing_title,
                 )
-                return None, []
+                return Skipped(
+                    reason="weekend_live_duplicate",
+                    matched_title=existing_title,
+                    target_calendar_id=config.GCAL_WEEKEND_CALENDAR_ID,
+                )
 
         # Conflict detection (informational only — does not block write)
         conflicts = _check_conflicts(service, candidate)
@@ -210,34 +404,39 @@ def write_event(
 
         created = (
             service.events()
-            .insert(calendarId=config.GCAL_TARGET_CALENDAR_ID, body=event_body)
+            .insert(calendarId=config.GCAL_WEEKEND_CALENDAR_ID, body=event_body)
             .execute()
         )
         logger.info(
-            "gcal write: %r on %s → event id %s",
+            "gcal write (weekend): %r on %s → event id %s",
             candidate.title, candidate.start_dt.date(), created["id"],
         )
-        return WrittenEvent(
-            gcal_event_id=created["id"],
-            fingerprint=fp,
-            candidate=candidate,
-        ), conflicts
+        return Inserted(
+            written=WrittenEvent(
+                gcal_event_id=created["id"],
+                fingerprint=fp,
+                candidate=candidate,
+            ),
+            conflicts=conflicts,
+        )
 
     except FileNotFoundError as exc:
         logger.warning("gcal writer: credentials not set up — %s", exc)
-        return None, []
+        return Skipped(reason="creds_missing")
     except Exception as exc:
         logger.warning("gcal writer error: %s", exc)
-        return None, []
+        return Skipped(reason="error")
 
 
 def update_event(
+    target_calendar_id: str,
     gcal_event_id: str,
     candidate: CandidateEvent,
     dry_run: bool = False,
 ) -> tuple[WrittenEvent | None, list[str]]:
     """
-    Patch an existing GCal event with new title, time, location, and category.
+    Patch an existing GCal event (on the specified calendar) with new title,
+    time, location, and category.
 
     Returns (WrittenEvent | None, conflict_titles).
     """
@@ -245,8 +444,9 @@ def update_event(
 
     if dry_run:
         logger.info(
-            "DRY RUN — would update gcal_id=%s: %r on %s (source=%s)",
-            gcal_event_id, candidate.title, candidate.start_dt.date(), candidate.source,
+            "DRY RUN — would update gcal_id=%s on %s: %r on %s (source=%s)",
+            gcal_event_id, target_calendar_id, candidate.title,
+            candidate.start_dt.date(), candidate.source,
         )
         return None, []
 
@@ -259,15 +459,15 @@ def update_event(
         updated = (
             service.events()
             .patch(
-                calendarId=config.GCAL_TARGET_CALENDAR_ID,
+                calendarId=target_calendar_id,
                 eventId=gcal_event_id,
                 body=event_body,
             )
             .execute()
         )
         logger.info(
-            "gcal update: %r on %s → event id %s",
-            candidate.title, candidate.start_dt.date(), updated["id"],
+            "gcal update on %s: %r on %s → event id %s",
+            target_calendar_id, candidate.title, candidate.start_dt.date(), updated["id"],
         )
         return WrittenEvent(
             gcal_event_id=updated["id"],
@@ -279,31 +479,59 @@ def update_event(
         logger.warning("gcal writer: credentials not set up — %s", exc)
         return None, []
     except Exception as exc:
-        logger.warning("gcal update error for %s: %s", gcal_event_id, exc)
+        logger.warning("gcal update error for %s on %s: %s", gcal_event_id, target_calendar_id, exc)
         return None, []
 
 
-def delete_event(gcal_event_id: str, dry_run: bool = False) -> bool:
-    """
-    Delete a GCal event by ID.
-
-    Returns True on success (or in dry-run mode).
-    """
+def delete_event(
+    target_calendar_id: str,
+    gcal_event_id: str,
+    dry_run: bool = False,
+) -> bool:
+    """Delete a GCal event by ID on the specified calendar."""
     if dry_run:
-        logger.info("DRY RUN — would delete gcal_id=%s", gcal_event_id)
+        logger.info("DRY RUN — would delete gcal_id=%s on %s", gcal_event_id, target_calendar_id)
         return True
 
     try:
         service = _get_service()
         service.events().delete(
-            calendarId=config.GCAL_TARGET_CALENDAR_ID,
+            calendarId=target_calendar_id,
             eventId=gcal_event_id,
         ).execute()
-        logger.info("gcal delete: event id %s removed", gcal_event_id)
+        logger.info("gcal delete: event id %s removed from %s", gcal_event_id, target_calendar_id)
         return True
     except FileNotFoundError as exc:
         logger.warning("gcal writer: credentials not set up — %s", exc)
         return False
     except Exception as exc:
-        logger.warning("gcal delete error for %s: %s", gcal_event_id, exc)
+        logger.warning("gcal delete error for %s on %s: %s", gcal_event_id, target_calendar_id, exc)
+        return False
+
+
+def merge_event(
+    target_calendar_id: str,
+    gcal_event_id: str,
+    candidate: CandidateEvent,
+    additions: dict,
+    dry_run: bool = False,
+) -> bool:
+    """
+    Apply pre-computed additive fields to an existing event. Used by the
+    proposal-approval path for primary-calendar merges and (internally) for
+    silent weekend merges.
+    """
+    if dry_run:
+        logger.info(
+            "DRY RUN — would merge into gcal_id=%s on %s: keys=%s",
+            gcal_event_id, target_calendar_id, list(additions.keys()),
+        )
+        return True
+    try:
+        service = _get_service()
+        return _patch_with_additions(
+            service, target_calendar_id, gcal_event_id, additions, candidate
+        )
+    except Exception as exc:
+        logger.warning("merge_event failed: %s", exc)
         return False

@@ -39,6 +39,7 @@ class CandidateEvent:
     is_update: bool = False
     original_title_hint: str | None = None   # LLM's best guess at the existing event title
     gcal_event_id_to_update: str | None = None  # resolved by main.py from state/snapshot
+    gcal_calendar_id_to_update: str | None = None  # which calendar the matched event lives on
     is_cancellation: bool = False
 
     # Recurrence — flagged by LLM; write is skipped to prevent duplicate creation

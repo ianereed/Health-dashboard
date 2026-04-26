@@ -32,6 +32,8 @@ class CalendarEvent:
     location: str | None
     source_description: str  # the "[via event-aggregator | source: X]" description or ""
     is_all_day: bool = False  # True when GCal returned start.date (not start.dateTime)
+    calendar_id: str = ""  # which calendar this event lives on (primary vs weekend)
+    attendees: list[dict] = field(default_factory=list)  # [{name, email}]
 
 
 @dataclass
@@ -116,85 +118,82 @@ def _cluster_locations(events: list[CalendarEvent]) -> list[LocationCluster]:
     return clusters
 
 
-def fetch_year_ahead(service) -> list[CalendarEvent]:
-    """
-    Fetch all GCal events from today through +365 days.
-    `service` is a built googleapiclient.discovery resource.
-    Paginates automatically; returns at most 2500 × N events.
-    """
-    import config  # avoid circular import at module level
-
-    now = datetime.now(tz=timezone.utc)
-    year_out = now + timedelta(days=365)
-
+def _fetch_calendar(
+    service, calendar_id: str, time_min: datetime, time_max: datetime, max_results: int
+) -> list[CalendarEvent]:
+    """Pull all events on one calendar in [time_min, time_max], tagging each with calendar_id."""
     events: list[CalendarEvent] = []
     page_token: str | None = None
-
     while True:
         kwargs: dict = {
-            "calendarId": config.GCAL_TARGET_CALENDAR_ID,
-            "timeMin": now.isoformat(),
-            "timeMax": year_out.isoformat(),
+            "calendarId": calendar_id,
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
             "singleEvents": True,
             "orderBy": "startTime",
-            "maxResults": 2500,
+            "maxResults": max_results,
         }
         if page_token:
             kwargs["pageToken"] = page_token
-
         result = service.events().list(**kwargs).execute()
         for item in result.get("items", []):
             try:
-                events.append(_gcal_item_to_event(item))
+                ev = _gcal_item_to_event(item)
+                ev.calendar_id = calendar_id
+                events.append(ev)
             except Exception as exc:
                 logger.debug("skipping malformed event %s: %s", item.get("id"), exc)
-
         page_token = result.get("nextPageToken")
         if not page_token:
             break
+    return events
 
-    logger.debug("fetch_year_ahead: %d event(s) fetched", len(events))
+
+def _calendars_to_read() -> list[str]:
+    """Return the distinct calendars to read for context + dedup.
+
+    Always includes the primary; adds the weekend calendar if it's a separate
+    ID. Deduplicated to keep API calls minimal when both env vars resolve to
+    the same value.
+    """
+    import config
+    seen: list[str] = [config.GCAL_PRIMARY_CALENDAR_ID]
+    if config.GCAL_WEEKEND_CALENDAR_ID and config.GCAL_WEEKEND_CALENDAR_ID not in seen:
+        seen.append(config.GCAL_WEEKEND_CALENDAR_ID)
+    return seen
+
+
+def fetch_year_ahead(service) -> list[CalendarEvent]:
+    """
+    Fetch all GCal events from today through +365 days, across primary + weekend.
+    Each event is tagged with its `calendar_id`.
+    """
+    now = datetime.now(tz=timezone.utc)
+    year_out = now + timedelta(days=365)
+    events: list[CalendarEvent] = []
+    for cal_id in _calendars_to_read():
+        events.extend(_fetch_calendar(service, cal_id, now, year_out, 2500))
+    logger.debug(
+        "fetch_year_ahead: %d event(s) across %d calendar(s)",
+        len(events), len(_calendars_to_read()),
+    )
     return events
 
 
 def fetch_upcoming(service, weeks: int = 4) -> list[CalendarEvent]:
     """
-    Fetch GCal events for the next N weeks (lighter than fetch_year_ahead).
+    Fetch GCal events for the next N weeks across primary + weekend.
     Used for injecting calendar context into the Ollama extraction prompt.
-    `service` is a built googleapiclient.discovery resource.
     """
-    import config  # avoid circular import at module level
-
     now = datetime.now(tz=timezone.utc)
     horizon = now + timedelta(weeks=weeks)
-
     events: list[CalendarEvent] = []
-    page_token: str | None = None
-
-    while True:
-        kwargs: dict = {
-            "calendarId": config.GCAL_TARGET_CALENDAR_ID,
-            "timeMin": now.isoformat(),
-            "timeMax": horizon.isoformat(),
-            "singleEvents": True,
-            "orderBy": "startTime",
-            "maxResults": 250,
-        }
-        if page_token:
-            kwargs["pageToken"] = page_token
-
-        result = service.events().list(**kwargs).execute()
-        for item in result.get("items", []):
-            try:
-                events.append(_gcal_item_to_event(item))
-            except Exception as exc:
-                logger.debug("skipping malformed event %s: %s", item.get("id"), exc)
-
-        page_token = result.get("nextPageToken")
-        if not page_token:
-            break
-
-    logger.debug("fetch_upcoming: %d event(s) over next %d weeks", len(events), weeks)
+    for cal_id in _calendars_to_read():
+        events.extend(_fetch_calendar(service, cal_id, now, horizon, 250))
+    logger.debug(
+        "fetch_upcoming: %d event(s) across %d calendar(s) over next %d weeks",
+        len(events), len(_calendars_to_read()), weeks,
+    )
     return events
 
 
@@ -205,6 +204,14 @@ def _gcal_item_to_event(item: dict) -> CalendarEvent:
     end_raw = item["end"].get("dateTime") or item["end"].get("date")
     start_dt = _parse_gcal_dt(start_raw)
     end_dt = _parse_gcal_dt(end_raw)
+    attendees: list[dict] = []
+    for a in item.get("attendees") or []:
+        if a.get("self"):
+            continue  # the user themselves — not a useful merge field
+        name = a.get("displayName") or ""
+        email = a.get("email") or ""
+        if name or email:
+            attendees.append({"name": name, "email": email})
     return CalendarEvent(
         gcal_id=item["id"],
         title=item.get("summary", "(no title)"),
@@ -213,6 +220,7 @@ def _gcal_item_to_event(item: dict) -> CalendarEvent:
         location=item.get("location"),
         source_description=item.get("description", ""),
         is_all_day=is_all_day,
+        attendees=attendees,
     )
 
 

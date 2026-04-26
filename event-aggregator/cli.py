@@ -221,6 +221,22 @@ def _do_approve(state, nums: list[int]) -> int:
         if item is None:
             errors.append(f"#{num}: not pending")
             continue
+
+        # Merge proposals (additive patches to primary) take a different path
+        if item.get("kind") == "merge":
+            target_cal = item.get("target_calendar_id") or config.GCAL_PRIMARY_CALENDAR_ID
+            gcal_event_id = item.get("gcal_event_id")
+            additions = item.get("additions") or {}
+            if not gcal_event_id or not additions:
+                errors.append(f"#{num}: merge proposal missing gcal_event_id/additions")
+                continue
+            candidate = _proposal_item_to_candidate(item)
+            if gcal_writer.merge_event(target_cal, gcal_event_id, candidate, additions, dry_run=False):
+                approved += 1
+            else:
+                errors.append(f"#{num}: merge patch failed")
+            continue
+
         candidate = _proposal_item_to_candidate(item)
         if candidate.start_dt < now and not candidate.is_cancellation:
             errors.append(f"#{num}: event time has passed")
@@ -228,7 +244,8 @@ def _do_approve(state, nums: list[int]) -> int:
 
         action = None
         if candidate.is_cancellation and candidate.gcal_event_id_to_update:
-            if gcal_writer.delete_event(candidate.gcal_event_id_to_update, dry_run=False):
+            target_cal = candidate.gcal_calendar_id_to_update or config.GCAL_WEEKEND_CALENDAR_ID
+            if gcal_writer.delete_event(target_cal, candidate.gcal_event_id_to_update, dry_run=False):
                 record_cancellation(
                     gcal_id=candidate.gcal_event_id_to_update,
                     title=candidate.original_title_hint or candidate.title,
@@ -236,7 +253,8 @@ def _do_approve(state, nums: list[int]) -> int:
                 )
                 action = "cancelled"
         elif candidate.gcal_event_id_to_update:
-            written, _conflicts = gcal_writer.update_event(candidate.gcal_event_id_to_update, candidate, dry_run=False)
+            target_cal = candidate.gcal_calendar_id_to_update or config.GCAL_WEEKEND_CALENDAR_ID
+            written, _conflicts = gcal_writer.update_event(target_cal, candidate.gcal_event_id_to_update, candidate, dry_run=False)
             if written:
                 state.add_written_event(
                     gcal_id=written.gcal_event_id,
@@ -244,12 +262,14 @@ def _do_approve(state, nums: list[int]) -> int:
                     start_iso=candidate.start_dt.isoformat(),
                     fingerprint=written.fingerprint,
                     is_tentative=(candidate.confidence_band == "medium"),
+                    calendar_id=target_cal,
                 )
                 log_event(written, action="updated")
                 action = "updated"
         else:
-            written, _conflicts = gcal_writer.write_event(candidate, dry_run=False, snapshot=snapshot)
-            if written:
+            outcome = gcal_writer.write_event(candidate, dry_run=False, snapshot=snapshot)
+            if isinstance(outcome, gcal_writer.Inserted):
+                written = outcome.written
                 state.add_fingerprint(written.fingerprint)
                 state.add_written_event(
                     gcal_id=written.gcal_event_id,
@@ -257,9 +277,18 @@ def _do_approve(state, nums: list[int]) -> int:
                     start_iso=candidate.start_dt.isoformat(),
                     fingerprint=written.fingerprint,
                     is_tentative=(candidate.confidence_band == "medium"),
+                    calendar_id=config.GCAL_WEEKEND_CALENDAR_ID,
                 )
                 log_event(written, action="created")
                 action = "created"
+            elif isinstance(outcome, gcal_writer.Merged):
+                # Approval triggered a silent merge (rare — usually caught at propose time)
+                action = "merged"
+            elif isinstance(outcome, gcal_writer.MergeRequired):
+                errors.append(
+                    f"#{num}: matched primary event {outcome.matched_title!r}; "
+                    "this should have been a merge proposal — check state"
+                )
 
         if action:
             approved += 1
@@ -585,6 +614,7 @@ def _cmd_config(mute: str, watch: str, list_channels: bool) -> int:
 
 def _cmd_undo_last() -> int:
     """Delete the most-recently-written GCal event."""
+    import config
     import state as state_module
     from writers import google_calendar as gcal_writer
 
@@ -598,8 +628,9 @@ def _cmd_undo_last() -> int:
     title = info.get("title", "(no title)")
     start = info.get("start", "")
     created_at = info.get("created_at", "")
+    target_cal = info.get("calendar_id") or config.GCAL_WEEKEND_CALENDAR_ID
 
-    deleted = gcal_writer.delete_event(gcal_id, dry_run=False)
+    deleted = gcal_writer.delete_event(target_cal, gcal_id, dry_run=False)
     if not deleted:
         print(f":x: Could not delete `{gcal_id}` — `{title}` (may already be gone in GCal). State NOT modified.")
         return 1

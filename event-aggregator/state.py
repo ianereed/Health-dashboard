@@ -83,6 +83,40 @@ class State:
         if fp not in fps:
             fps.append(fp)
 
+    # ── Recurring-event notices (surfaced to the dashboard for 24h) ─────────
+
+    def add_recurring_notice(
+        self, title: str, source: str, recurrence_hint: str | None = None
+    ) -> bool:
+        """Add a "saw something recurring" notice. Returns True if newly added,
+        False if a matching notice was added in the last 24h (suppressed)."""
+        import hashlib
+        key = hashlib.sha256(
+            f"{title.lower().strip()}|{source}".encode()
+        ).hexdigest()[:16]
+        now = _utcnow()
+        cutoff = (now - timedelta(hours=24)).isoformat()
+        bucket = self._data.setdefault("recurring_notices", [])
+        for entry in bucket:
+            if entry.get("key") == key and entry.get("seen_at", "") >= cutoff:
+                return False
+        bucket.append({
+            "key": key,
+            "title": title,
+            "source": source,
+            "recurrence_hint": recurrence_hint or "",
+            "seen_at": now.isoformat(),
+        })
+        return True
+
+    def recurring_notices(self) -> list[dict]:
+        """Return notices from the last 24h."""
+        cutoff = (_utcnow() - timedelta(hours=24)).isoformat()
+        return [
+            n for n in self._data.get("recurring_notices", [])
+            if n.get("seen_at", "") >= cutoff
+        ]
+
     # ── Ollama health (surfaced to the Slack dashboard) ─────────────────────
 
     def mark_ollama_down(self, skipped: int = 0) -> None:
@@ -149,6 +183,7 @@ class State:
         start_iso: str,
         fingerprint: str,
         is_tentative: bool = False,
+        calendar_id: str = "",
     ) -> None:
         bucket = self._data.setdefault("written_events", {})
         bucket[gcal_id] = {
@@ -157,6 +192,7 @@ class State:
             "fingerprint": fingerprint,
             "created_at": _utcnow().isoformat(),
             "is_tentative": is_tentative,
+            "calendar_id": calendar_id,
         }
 
     def get_written_events(self) -> dict[str, dict]:
@@ -204,6 +240,8 @@ class State:
                 "location": e.location,
                 "source_description": e.source_description,
                 "is_all_day": getattr(e, "is_all_day", False),
+                "calendar_id": getattr(e, "calendar_id", ""),
+                "attendees": getattr(e, "attendees", []) or [],
             }
             for e in events
         }
@@ -410,6 +448,13 @@ class State:
             )
             psf = {k: psf[k] for k in sorted_ids[:500]}
         self._data["processed_slack_files"] = psf
+
+        # Prune recurring_notices: 24h window.
+        cutoff_24h = (_utcnow() - timedelta(hours=24)).isoformat()
+        self._data["recurring_notices"] = [
+            n for n in self._data.get("recurring_notices", [])
+            if n.get("seen_at", "") >= cutoff_24h
+        ]
 
         # Prune rejected_fingerprints: 90-day window so a deliberate "no" lapses
         # eventually rather than blocking forever. User can wipe early via

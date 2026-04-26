@@ -54,7 +54,21 @@ GMAIL_TOKEN_JSON: str = _get(
 GCAL_TOKEN_JSON: str = _get(
     "GCAL_TOKEN_JSON", "credentials/gcal_token.json"
 )
-GCAL_TARGET_CALENDAR_ID: str = _get("GCAL_TARGET_CALENDAR_ID", "primary")
+# Primary calendar — read for context and dedup; written ONLY via approved
+# merge proposals. Default "primary" resolves to the user's @gmail address.
+GCAL_PRIMARY_CALENDAR_ID: str = _get("GCAL_PRIMARY_CALENDAR_ID", "primary")
+
+# Weekend calendar — write target. Auto-creates events here, silent-patches
+# additive merges here. The legacy `GCAL_TARGET_CALENDAR_ID` env var is
+# accepted as a fallback so existing .env files keep working.
+GCAL_WEEKEND_CALENDAR_ID: str = _get(
+    "GCAL_WEEKEND_CALENDAR_ID",
+    _get("GCAL_TARGET_CALENDAR_ID", "primary"),
+)
+# Backwards-compat shim: many call sites still reference GCAL_TARGET_CALENDAR_ID.
+# Wire it to the weekend calendar so behavior is preserved until the rename
+# fully propagates.
+GCAL_TARGET_CALENDAR_ID: str = GCAL_WEEKEND_CALENDAR_ID
 
 # ── Slack ───────────────────────────────────────────────────────────────────
 SLACK_BOT_TOKEN: str = _get("SLACK_BOT_TOKEN")
