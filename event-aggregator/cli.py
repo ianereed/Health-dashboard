@@ -365,9 +365,10 @@ def _do_approve(state, nums: list[int]) -> int:
 
     state_module.save(state)
 
-    # Refresh the live dashboard to reflect the new approved status
+    # Refresh the live dashboard to reflect the new approved status.
+    # force_repost=True keeps the dashboard at the bottom of the channel.
     all_items = state.get_all_proposal_items_for_dashboard(today_str)
-    slack_notifier.post_or_update_dashboard(all_items, state)
+    slack_notifier.post_or_update_dashboard(all_items, state, force_repost=True)
     state_module.save(state)  # persist dashboard ts if it was newly created
 
     msg = f":white_check_mark: {approved} approved"
@@ -407,9 +408,10 @@ def _do_reject(state, nums: list[int]) -> int:
 
     state_module.save(state)
 
-    # Refresh the live dashboard to reflect the new rejected status
+    # Refresh the live dashboard to reflect the new rejected status.
+    # force_repost=True keeps the dashboard at the bottom of the channel.
     all_items = state.get_all_proposal_items_for_dashboard(today_str)
-    slack_notifier.post_or_update_dashboard(all_items, state)
+    slack_notifier.post_or_update_dashboard(all_items, state, force_repost=True)
     state_module.save(state)  # persist dashboard ts if it was newly created
 
     msg = f":x: {rejected} rejected"

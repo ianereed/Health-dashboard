@@ -762,12 +762,18 @@ def _build_actioned_block(item: dict) -> dict:
         ]}
 
 
-def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> str | None:
+def post_or_update_dashboard(
+    items: list[dict],
+    state: "state_module.State",
+    force_repost: bool = False,
+) -> str | None:
     """
     Post or update the live proposal dashboard for today.
 
     Creates a new top-level channel message on first call for the day.
     On subsequent calls, edits the existing message in-place.
+    Pass force_repost=True to always delete-and-repost (e.g. after an
+    approve/reject so the dashboard stays at the bottom of the channel).
     Returns the dashboard message ts, or None on failure.
     """
     if not config.SLACK_BOT_TOKEN:
@@ -790,7 +796,7 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
     dashboard_channel = state.get_proposal_dashboard_channel(today) or config.SLACK_NOTIFY_CHANNEL
     repost_threshold = getattr(config, "DASHBOARD_REPOST_AFTER_N", 20)
     buried = state.dashboard_buried_count(today)
-    should_repost = dashboard_ts is not None and buried >= repost_threshold
+    should_repost = force_repost or (dashboard_ts is not None and buried >= repost_threshold)
 
     try:
         client = _client()

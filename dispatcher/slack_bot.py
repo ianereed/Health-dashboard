@@ -149,7 +149,7 @@ def run() -> None:
                 except Exception as exc:
                     logger.debug("dispatcher: bump-dashboard failed: %s", exc)
             if not files:
-                _handle_interactive(text, say, event.get("ts"), client, channel)
+                _handle_interactive(text, say, event.get("ts"), client, channel, user)
                 return
 
         if channel == intake_id:
@@ -182,12 +182,12 @@ def run() -> None:
     handler.start()
 
 
-def _handle_interactive(text: str, say, msg_ts: str, client, channel: str) -> None:
+def _handle_interactive(text: str, say, msg_ts: str, client, channel: str, user: str) -> None:
     result = commands.handle(text)
     if result is None:
         # Not a command — silently ignore so we don't chatter on every message.
         return
-    say(text=result.text)
+    client.chat_postEphemeral(channel=channel, user=user, text=result.text)
 
 
 def _handle_intake_upload(event, client, channel: str) -> None:
