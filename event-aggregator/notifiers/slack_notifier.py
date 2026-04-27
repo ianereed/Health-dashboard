@@ -816,6 +816,7 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
     fallback_text = f"Event proposals: {pending_count} pending"
 
     dashboard_ts = state.get_proposal_dashboard_ts(today)
+    dashboard_channel = state.get_proposal_dashboard_channel(today) or config.SLACK_NOTIFY_CHANNEL
     repost_threshold = getattr(config, "DASHBOARD_REPOST_AFTER_N", 20)
     buried = state.dashboard_buried_count(today)
     should_repost = dashboard_ts is not None and buried >= repost_threshold
@@ -823,8 +824,9 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
     try:
         client = _client()
         if dashboard_ts and not should_repost:
+            # Use stored channel ID for updates — chat.update requires ID, not name.
             result = client.chat_update(
-                channel=config.SLACK_NOTIFY_CHANNEL,
+                channel=dashboard_channel,
                 ts=dashboard_ts,
                 blocks=blocks,
                 text=fallback_text,
@@ -846,11 +848,12 @@ def post_or_update_dashboard(items: list[dict], state: "state_module.State") -> 
                 logger.warning("slack notifier: dashboard post failed: %s", result.get("error"))
                 return None
             new_ts = result["ts"]
-            state.set_proposal_dashboard_ts(today, new_ts)
+            new_channel = result.get("channel")
+            state.set_proposal_dashboard_ts(today, new_ts, channel=new_channel)
             state.reset_dashboard_buried(today)
             if old_ts:
                 try:
-                    client.chat_delete(channel=config.SLACK_NOTIFY_CHANNEL, ts=old_ts)
+                    client.chat_delete(channel=dashboard_channel, ts=old_ts)
                     logger.info(
                         "dashboard: reposted (was buried by %d msgs); old ts %s deleted",
                         buried, old_ts,

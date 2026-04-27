@@ -486,25 +486,38 @@ class State:
 
     def get_proposal_dashboard_ts(self, date_str: str) -> str | None:
         """Return the Slack ts of today's live dashboard message, or None."""
-        return self._data.get("proposal_dashboard", {}).get(date_str)
+        entry = self._data.get("proposal_dashboard", {}).get(date_str)
+        if entry is None:
+            return None
+        return entry["ts"] if isinstance(entry, dict) else entry
 
-    def set_proposal_dashboard_ts(self, date_str: str, ts: str) -> None:
-        """Persist the Slack ts of the dashboard message for date_str."""
-        self._data.setdefault("proposal_dashboard", {})[date_str] = ts
+    def get_proposal_dashboard_channel(self, date_str: str) -> str | None:
+        """Return the channel ID used when this dashboard message was posted, or None."""
+        entry = self._data.get("proposal_dashboard", {}).get(date_str)
+        if isinstance(entry, dict):
+            return entry.get("channel")
+        return None
+
+    def set_proposal_dashboard_ts(self, date_str: str, ts: str, channel: str | None = None) -> None:
+        """Persist the Slack ts (and optional channel ID) of the dashboard message for date_str."""
+        entry: dict | str = {"ts": ts, "channel": channel} if channel else ts
+        self._data.setdefault("proposal_dashboard", {})[date_str] = entry
 
     def get_all_proposal_items_for_dashboard(self, today_str: str | None = None) -> list[dict]:
         """Return items to display on today's dashboard: all pending + today's actioned items."""
         if today_str is None:
             today_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
         result = []
-        seen_nums: set[int] = set()
+        seen_keys: set[tuple] = set()
         for batch in self._data.get("pending_proposals", []):
+            batch_id = batch.get("batch_id", "")
             created_date = (batch.get("created_at") or "")[:10]
             for item in batch.get("items", []):
                 num = item.get("num")
-                if num in seen_nums:
+                key = (batch_id, num)
+                if key in seen_keys:
                     continue
-                seen_nums.add(num)
+                seen_keys.add(key)
                 if item["status"] == "pending":
                     result.append(item)
                 elif created_date == today_str and item["status"] in ("approved", "rejected", "expired"):
