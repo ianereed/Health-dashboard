@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 from pathlib import Path
 
 import keyring
@@ -28,6 +30,23 @@ def _resolve(path_str: str) -> Path:
     """Resolve a path relative to event-aggregator/ if not absolute."""
     p = Path(path_str).expanduser()
     return p if p.is_absolute() else _HERE / p
+
+
+def _is_headless() -> bool:
+    """Detect contexts where a browser-based OAuth flow can't complete.
+
+    Under launchd (and most non-interactive contexts) stdin is not a tty.
+    `EVENT_AGG_OAUTH_INTERACTIVE=1` forces interactive even when no tty;
+    `EVENT_AGG_HEADLESS=1` forces headless even on a workstation.
+    """
+    if os.environ.get("EVENT_AGG_OAUTH_INTERACTIVE") == "1":
+        return False
+    if os.environ.get("EVENT_AGG_HEADLESS") == "1":
+        return True
+    try:
+        return not sys.stdin.isatty()
+    except (ValueError, AttributeError):
+        return True
 
 
 def get_credentials(
@@ -94,12 +113,21 @@ def get_credentials(
     if creds and creds.valid:
         return creds
 
-    # 4. Run the OAuth2 browser flow (first-time setup)
+    # 4. Run the OAuth2 browser flow (first-time setup or refresh failure)
     if not creds_file.exists():
         raise FileNotFoundError(
             f"Google client secrets file not found: {creds_file}\n"
             "Download it from Google Cloud Console (OAuth2 client credentials)\n"
             "and place it at that path."
+        )
+    if _is_headless():
+        # Source name for the user — gmail_token → gmail
+        source_name = keyring_key.split("_")[0]
+        raise RuntimeError(
+            f"Cannot start interactive Google OAuth flow for {keyring_key} in a "
+            f"headless context (no tty). Re-authenticate from a workstation, then "
+            f"copy credentials/{source_name}_token.json to the server. "
+            f"Set EVENT_AGG_OAUTH_INTERACTIVE=1 to override."
         )
     logger.info(
         "Running Google OAuth2 flow for %s — a browser window will open", keyring_key

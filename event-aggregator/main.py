@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 
 
@@ -1045,15 +1046,26 @@ def fetch_only() -> int:
     enqueued = 0
     run_start = datetime.now(timezone.utc)
     seen_connectors: set = set()
+    PER_SOURCE_TIMEOUT_SEC = 60
     for source in sources:
         cls = _CONNECTOR_REGISTRY.get(source)
         if cls is None or cls in seen_connectors:
             continue
         seen_connectors.add(cls)
-        connector = cls()
         since = state.last_run(source)
+
+        def _do_fetch(connector_cls=cls, _since=since):
+            return connector_cls().fetch(since=_since, mock=False)
+
         try:
-            msgs = connector.fetch(since=since, mock=False)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                msgs = ex.submit(_do_fetch).result(timeout=PER_SOURCE_TIMEOUT_SEC)
+        except FutureTimeout:
+            logger.warning(
+                "fetch-only: %s timed out after %ds — skipping",
+                source, PER_SOURCE_TIMEOUT_SEC,
+            )
+            continue
         except Exception as exc:
             logger.warning("fetch-only: %s connector failed: %s", source, exc)
             continue
