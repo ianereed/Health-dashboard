@@ -78,7 +78,8 @@ def _lane(header: str, items: list[str], shared: bool = False) -> str:
 
 
 def render_dataflow(status: dict, queues: dict, ollama: dict,
-                    hdb: dict | None = None, fdb: dict | None = None) -> str:
+                    hdb: dict | None = None, fdb: dict | None = None,
+                    memory: dict | None = None) -> str:
     """Build HTML swim-lane diagram with freshness timestamps.
 
     status: {service_id: {state, pid, last_exit}} from launchd collector
@@ -228,6 +229,41 @@ def render_dataflow(status: dict, queues: dict, ollama: dict,
     ollama_items.append(
         f'<span class="svc-mon-note">&nbsp; ← used by event-agg / dispatcher / finance-mon</span>'
     )
+
+    # RAM indicator — prepended to the Shared Infra lane (memory and
+    # Ollama are correlated; keep them visually adjacent).
+    mem_cur = (memory or {}).get("current") if memory else None
+    if mem_cur:
+        used_gb = mem_cur["used_bytes"] / (1024**3)
+        total_gb = mem_cur["total_bytes"] / (1024**3)
+        pct = mem_cur["percent_used"]
+        if pct >= 90:
+            mem_state = "err"
+        elif pct >= 70:
+            mem_state = "warn"
+        else:
+            mem_state = "ok"
+
+        # Stale-tracker override — if memory_history.json hasn't been
+        # touched in 5 min, the displayed values are wrong; tint warn
+        # so the user knows not to trust them. Mirrors the ollama-
+        # tracker freshness check above.
+        mem_age = None
+        mem_upd = (memory or {}).get("updated_at")
+        if mem_upd:
+            try:
+                mu = datetime.fromisoformat(mem_upd.replace("Z", "+00:00"))
+                mem_age = int((datetime.now(timezone.utc) - mu).total_seconds())
+            except Exception:
+                mem_age = None
+        if mem_age is None or mem_age > 300:
+            mem_state = "warn"
+
+        in_pressure = bool((memory or {}).get("in_pressure"))
+        suffix = " ⚠" if in_pressure else ""
+        ram_label = f"RAM {used_gb:.1f}/{total_gb:.0f}G  {pct:.0f}%{suffix}"
+        ollama_items.insert(0, _node(ram_label, mem_state))
+
     lanes.append(_lane("Shared Infra", ollama_items, shared=True))
 
     # Self

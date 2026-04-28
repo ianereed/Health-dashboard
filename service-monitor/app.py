@@ -13,6 +13,9 @@ from collectors.queues import get_queues
 from collectors.databases import get_health_db, get_finance_db
 from collectors.logs import tail_all
 from collectors.ollama import get_ollama
+from collectors.memory import get_memory
+
+import pandas as pd
 from services import SERVICES
 from flowchart import render_dataflow
 
@@ -69,6 +72,11 @@ try:
 except Exception as e:
     ollama = {"ok": False, "error": str(e)}
 
+try:
+    memory = get_memory()
+except Exception as e:
+    memory = {}
+
 # Global status indicator
 states = {s.get("state") for s in status.values()} if status else {"unknown"}
 if "err" in states:
@@ -88,12 +96,12 @@ st.markdown(
 )
 
 # Data-flow swim lanes
-st.markdown(render_dataflow(status, queues, ollama, hdb, fdb), unsafe_allow_html=True)
+st.markdown(render_dataflow(status, queues, ollama, hdb, fdb, memory), unsafe_allow_html=True)
 
 st.divider()
 
 # Quick metrics row
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("text_queue",    queues.get("text_queue_depth", "?") if queues.get("available") else "—")
 c2.metric("ocr_queue",     queues.get("ocr_queue_depth",  "?") if queues.get("available") else "—")
 c3.metric(
@@ -102,15 +110,34 @@ c3.metric(
         if ollama.get("ok") else "✗",
 )
 
+mem_cur = memory.get("current") or {}
+if mem_cur:
+    used_gb = mem_cur["used_bytes"] / (1024**3)
+    total_gb = mem_cur["total_bytes"] / (1024**3)
+    pct = mem_cur["percent_used"]
+    # Streamlit colours `delta` only when it parses a leading +/- sign.
+    # We keep it neutral here; the colour signal lives on the lane chip
+    # in flowchart.py, which already stages green/yellow/red by usage.
+    c4.metric(
+        "RAM",
+        f"{used_gb:.1f}/{total_gb:.0f} GB",
+        delta=f"{pct:.0f}% used",
+        delta_color="off",
+    )
+else:
+    c4.metric("RAM", "—")
+
 hdb_size = f"{hdb.get('size_bytes', 0) // (1024*1024)} MB" if hdb.get("available") else "—"
 fdb_size = f"{fdb.get('size_bytes', 0) // (1024*1024)} MB" if fdb.get("available") else "—"
-c4.metric("health.db",  hdb_size)
-c5.metric("finance.db", fdb_size)
+c5.metric("health.db",  hdb_size)
+c6.metric("finance.db", fdb_size)
 
 st.divider()
 
 # Tabs
-tab_services, tab_data, tab_logs, tab_help = st.tabs(["Services", "Queues & DBs", "Logs", "Help"])
+tab_services, tab_data, tab_memory, tab_logs, tab_help = st.tabs(
+    ["Services", "Queues & DBs", "Memory", "Logs", "Help"]
+)
 
 with tab_services:
     rows = []
@@ -187,6 +214,95 @@ with tab_data:
         })
     else:
         st.error(f"Ollama unreachable: {ollama.get('error')}")
+
+with tab_memory:
+    LOCAL_TZ = "America/Los_Angeles"  # render times in user's local zone
+    MIN_EVENT_DURATION_SEC = 60  # filter sub-60s flap events from the table
+
+    cur = memory.get("current") or {}
+    upd_iso = memory.get("updated_at")
+    tracker_age = None
+    if upd_iso:
+        try:
+            tracker_age = int(
+                (pd.Timestamp.utcnow() - pd.to_datetime(upd_iso)).total_seconds()
+            )
+        except Exception:
+            tracker_age = None
+
+    if not cur:
+        st.warning(
+            "memory-tracker has no data yet — wait ~60s after install, "
+            "or check `tail -20 ~/Library/Logs/home-tools/memory-tracker.log` on the mini."
+        )
+    else:
+        if tracker_age is not None and tracker_age > 300:
+            st.warning(f"memory-tracker is stale ({tracker_age // 60} min since last poll)")
+        used_gb = cur["used_bytes"] / (1024**3)
+        total_gb = cur["total_bytes"] / (1024**3)
+        avail_gb = cur["available_bytes"] / (1024**3)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Used",      f"{used_gb:.2f} GB")
+        m2.metric("Available", f"{avail_gb:.2f} GB")
+        m3.metric("% used",    f"{cur['percent_used']:.1f}%")
+        st.caption(
+            "Used = (active + wired + compressed) × page_size. Approximation of "
+            "Activity Monitor's *Memory Used* line; may differ by ~1 GB on "
+            "file-cache-heavy workloads."
+        )
+
+        # 24h sparkline
+        samples = memory.get("samples") or []
+        if samples:
+            try:
+                df = pd.DataFrame(samples)
+                df["t"] = pd.to_datetime(df["t"]).dt.tz_convert(LOCAL_TZ)
+                df = df.set_index("t")
+                st.line_chart(df["pct"], height=180)
+            except Exception as exc:
+                st.caption(f"chart unavailable: {type(exc).__name__}")
+
+    # Pressure events
+    events = memory.get("pressure_events") or []
+    in_pressure = bool(memory.get("in_pressure"))
+    st.subheader("Pressure events (>= 90% used)")
+    if in_pressure:
+        st.warning("⚠ currently in a pressure window")
+    if not events:
+        st.caption("No pressure events recorded yet.")
+    else:
+        def _fmt_local(iso: str) -> str:
+            try:
+                return pd.to_datetime(iso).tz_convert(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return iso[:19].replace("T", " ")
+
+        rows = []
+        for ev in reversed(events[-25:]):
+            dur = int(ev.get("duration_sec", 0))
+            # Drop sub-minute flap events from the visible table — they're
+            # noise from the simple state machine. Still recorded in the
+            # JSON for forensics.
+            if dur < MIN_EVENT_DURATION_SEC and not (
+                in_pressure and ev is events[-1]
+            ):
+                continue
+            ollama_at = ", ".join(ev.get("ollama_at_peak") or []) or "—"
+            dur_str = f"{dur // 60}m {dur % 60}s" if dur >= 60 else f"{dur}s"
+            rows.append({
+                "Started":  _fmt_local(ev["started_at"]),
+                "Ended":    _fmt_local(ev["ended_at"]),
+                "Duration": dur_str,
+                "Peak %":   f"{ev['peak_pct']:.1f}%",
+                "Peak GB":  f"{ev['peak_used_gb']:.2f}",
+                "Ollama at peak": ollama_at,
+            })
+        if rows:
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.caption(
+                f"No pressure events ≥ {MIN_EVENT_DURATION_SEC}s in the last 25 records."
+            )
 
 with tab_logs:
     try:
