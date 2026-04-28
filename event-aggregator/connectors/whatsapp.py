@@ -16,7 +16,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 import config
 from models import RawMessage
 
@@ -34,17 +34,18 @@ def _apple_ts_to_utc(ts: float) -> datetime:
 class WhatsAppConnector(BaseConnector):
     source_name = "whatsapp"
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import whatsapp_messages
-            return whatsapp_messages(since)
+            return whatsapp_messages(since), ConnectorStatus.ok()
 
         db_path = Path(config.WHATSAPP_DB_PATH).expanduser()
         if not db_path.exists():
-            logger.warning(
-                "WhatsApp DB not found at %s — check Full Disk Access permissions", db_path
+            logger.warning("WhatsApp DB not found at %s — FDA likely missing", db_path)
+            return [], ConnectorStatus(
+                ConnectorStatusCode.PERMISSION_DENIED,
+                "ChatStorage.sqlite unreadable — grant FDA",
             )
-            return []
 
         with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
             tmp_path = Path(tmp.name)
@@ -52,9 +53,13 @@ class WhatsAppConnector(BaseConnector):
         try:
             shutil.copy2(db_path, tmp_path)
             return self._query(tmp_path, since)
+        except PermissionError:
+            return [], ConnectorStatus(
+                ConnectorStatusCode.PERMISSION_DENIED, "ChatStorage copy denied",
+            )
         except Exception as exc:
             logger.warning("WhatsApp fetch failed: %s", exc)
-            return []
+            return [], ConnectorStatus(ConnectorStatusCode.UNKNOWN_ERROR, type(exc).__name__)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -72,14 +77,17 @@ class WhatsAppConnector(BaseConnector):
             return False
         return True
 
-    def _query(self, db_path: Path, since: datetime) -> list[RawMessage]:
+    def _query(self, db_path: Path, since: datetime) -> FetchResult:
         since_apple = (since - _APPLE_EPOCH_UTC).total_seconds()
         messages = []
 
         with sqlite3.connect(str(db_path)) as conn:
             conn.row_factory = sqlite3.Row
             if not self._validate_schema(conn):
-                return []
+                return [], ConnectorStatus(
+                    ConnectorStatusCode.SCHEMA_ERROR,
+                    "ZWAMESSAGE missing expected columns",
+                )
 
             rows = conn.execute(
                 """
@@ -107,4 +115,4 @@ class WhatsAppConnector(BaseConnector):
             )
 
         logger.debug("whatsapp: fetched %d messages since %s", len(messages), since.date())
-        return messages
+        return messages, ConnectorStatus.ok()

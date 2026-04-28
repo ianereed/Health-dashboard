@@ -15,7 +15,7 @@ import argparse
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 from googleapiclient.discovery import build
@@ -701,8 +701,8 @@ def main() -> int:
         connector = connector_cls()
         since = state.last_run(source)
         logger.info("Fetching %s since %s (mock=%s)", source, since.date(), args.mock)
-        msgs = connector.fetch(since=since, mock=args.mock)
-        logger.info("  → %d message(s)", len(msgs))
+        msgs, status = connector.fetch(since=since, mock=args.mock)
+        logger.info("  → %d message(s) [status=%s]", len(msgs), status.code.value)
         all_messages.extend(msgs)
 
     # ── Phase 3: Extract candidate events and todos ──────────────────────────
@@ -1034,10 +1034,22 @@ _SUBCOMMANDS = {
 def fetch_only() -> int:
     """
     Fetch-only mode (Tier 2.4): poll connectors, enqueue messages into
-    state.text_queue, advance last_run watermarks. No LLM calls.
+    state.text_queue, advance last_run watermarks, and record per-connector
+    health into state.connector_health (Tier 2 — Intake Audit). No LLM calls.
 
     Designed to run on a cron / launchd timer. The worker (`main.py worker`)
     consumes the queue separately.
+
+    Watermark advancement policy:
+      - ok: advance (happy path)
+      - unsupported_os / no_credentials: advance (terminal-by-design — no
+        catch-up is possible / meaningful, keep window bounded)
+      - all other non-OK codes (auth_error, permission_denied, network_error,
+        schema_error, unknown_error): do NOT advance — caller will catch up
+        on the missed window when the issue is resolved.
+
+    Floor: `since` is clamped to (now - 14 days) so a long-broken source
+    doesn't query an arbitrarily wide window after a fix.
     """
     state = state_module.load()
     sources = list(_CONNECTOR_REGISTRY.keys())
@@ -1047,28 +1059,43 @@ def fetch_only() -> int:
     run_start = datetime.now(timezone.utc)
     seen_connectors: set = set()
     PER_SOURCE_TIMEOUT_SEC = 60
+    SINCE_FLOOR = run_start - timedelta(days=14)
+    ADVANCE_ON_STATUS = {"ok", "unsupported_os", "no_credentials"}
+
     for source in sources:
         cls = _CONNECTOR_REGISTRY.get(source)
         if cls is None or cls in seen_connectors:
             continue
         seen_connectors.add(cls)
-        since = state.last_run(source)
+        since = max(state.last_run(source), SINCE_FLOOR)
 
         def _do_fetch(connector_cls=cls, _since=since):
             return connector_cls().fetch(since=_since, mock=False)
 
         try:
             with ThreadPoolExecutor(max_workers=1) as ex:
-                msgs = ex.submit(_do_fetch).result(timeout=PER_SOURCE_TIMEOUT_SEC)
+                msgs, status = ex.submit(_do_fetch).result(timeout=PER_SOURCE_TIMEOUT_SEC)
         except FutureTimeout:
             logger.warning(
                 "fetch-only: %s timed out after %ds — skipping",
                 source, PER_SOURCE_TIMEOUT_SEC,
             )
+            state.record_connector_status(source, "network_error", "fetch timeout", run_start)
             continue
         except Exception as exc:
-            logger.warning("fetch-only: %s connector failed: %s", source, exc)
+            # Connectors should never raise — but if one slips through, treat as unknown.
+            logger.warning(
+                "fetch-only: %s connector raised (should not happen): %s",
+                source, type(exc).__name__,
+            )
+            state.record_connector_status(
+                source, "unknown_error", type(exc).__name__, run_start,
+            )
             continue
+
+        # Record health for every outcome (even OK).
+        state.record_connector_status(source, status.code.value, status.message, run_start)
+
         for msg in msgs:
             # NotificationCenterConnector returns msg.source ∈ {"messenger",
             # "instagram"} — use msg.source for last_run / dedup, not the
@@ -1083,7 +1110,9 @@ def fetch_only() -> int:
                 timestamp_iso=msg.timestamp.isoformat(),
             )
             enqueued += 1
-        state.set_last_run(source, run_start)
+
+        if status.code.value in ADVANCE_ON_STATUS:
+            state.set_last_run(source, run_start)
 
     state.prune()
     state_module.save(state)

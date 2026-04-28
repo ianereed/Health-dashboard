@@ -19,7 +19,7 @@ from googleapiclient.discovery import build
 
 import config
 from connectors import google_auth
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 from models import RawMessage
 
 logger = logging.getLogger(__name__)
@@ -49,10 +49,10 @@ class GmailConnector(BaseConnector):
     def __init__(self) -> None:
         self._user_email: str = ""  # cached after first fetch; never changes
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import gmail_messages
-            return gmail_messages(since)
+            return gmail_messages(since), ConnectorStatus.ok()
 
         try:
             creds = google_auth.get_credentials(
@@ -100,14 +100,24 @@ class GmailConnector(BaseConnector):
                 raw = _parse_message(msg)
                 if raw:
                     messages.append(raw)
-            return messages
+            return messages, ConnectorStatus.ok()
 
         except FileNotFoundError as exc:
             logger.warning("gmail: credentials not set up — %s", exc)
-            return []
+            return [], ConnectorStatus(
+                ConnectorStatusCode.NO_CREDENTIALS, "client secrets file missing",
+            )
         except Exception as exc:
+            err_name = type(exc).__name__
+            err_str = str(exc).lower()
+            if "refresh" in err_name.lower() or "invalid_grant" in err_str or "401" in err_str or "403" in err_str:
+                logger.warning("gmail: auth error — %s", err_name)
+                return [], ConnectorStatus(ConnectorStatusCode.AUTH_ERROR, err_name)
+            if "timeout" in err_name.lower() or "timeout" in err_str or "connection" in err_str:
+                logger.warning("gmail: network error — %s", err_name)
+                return [], ConnectorStatus(ConnectorStatusCode.NETWORK_ERROR, err_name)
             logger.warning("gmail connector error: %s", exc)
-            return []
+            return [], ConnectorStatus(ConnectorStatusCode.UNKNOWN_ERROR, err_name)
 
 
 def _is_marketing(msg: dict) -> bool:

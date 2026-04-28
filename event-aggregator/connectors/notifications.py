@@ -20,7 +20,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 from models import RawMessage
 
 logger = logging.getLogger(__name__)
@@ -50,20 +50,30 @@ class NotificationCenterConnector(BaseConnector):
             "filtered strictly to Messenger/Instagram bundle IDs"
         )
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import notification_messages
-            return notification_messages(since)
+            return notification_messages(since), ConnectorStatus.ok()
 
         db_paths = glob.glob(_NC_DB_GLOB)
         if not db_paths:
-            logger.debug(
-                "Notification Center DB not found at %s — "
-                "Messenger/Instagram notifications unavailable (macOS Sequoia "
-                "removed this DB; or grant Full Disk Access to enable it)",
-                _NC_DB_GLOB,
+            # Distinguish Sequoia (parent dir gone) from FDA-missing (parent
+            # present but unreadable / glob denied).
+            parent = Path(
+                "~/Library/Application Support/NotificationCenter"
+            ).expanduser()
+            if not parent.exists():
+                logger.debug(
+                    "notifications: NotificationCenter dir absent — likely macOS Sequoia+",
+                )
+                return [], ConnectorStatus(
+                    ConnectorStatusCode.UNSUPPORTED_OS,
+                    "macOS Sequoia removed NotificationCenter DB",
+                )
+            return [], ConnectorStatus(
+                ConnectorStatusCode.PERMISSION_DENIED,
+                "NotificationCenter DB unreadable — grant FDA",
             )
-            return []
 
         messages = []
         for db_path_str in db_paths:
@@ -73,12 +83,15 @@ class NotificationCenterConnector(BaseConnector):
                 shutil.copy2(db_path_str, tmp_path)
                 messages.extend(self._query(tmp_path, since))
             except Exception as exc:
-                logger.warning("notifications: failed to read %s: %s", db_path_str, exc)
+                logger.warning(
+                    "notifications: failed to read %s: %s",
+                    db_path_str, type(exc).__name__,
+                )
             finally:
                 tmp_path.unlink(missing_ok=True)
 
         logger.debug("notifications: fetched %d messages since %s", len(messages), since.date())
-        return messages
+        return messages, ConnectorStatus.ok()
 
     def _query(self, db_path: Path, since: datetime) -> list[RawMessage]:
         since_apple = (since - _APPLE_EPOCH_UTC).total_seconds()

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 import config
 from models import RawMessage
 
@@ -50,26 +50,43 @@ class DiscordConnector(BaseConnector):
             })
         return self._session
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import discord_messages
-            return discord_messages(since)
+            return discord_messages(since), ConnectorStatus.ok()
 
         if not config.DISCORD_BOT_TOKEN:
-            logger.warning("DISCORD_BOT_TOKEN not set — skipping Discord")
-            return []
+            logger.debug("DISCORD_BOT_TOKEN not set — Discord deferred")
+            return [], ConnectorStatus(
+                ConnectorStatusCode.NO_CREDENTIALS,
+                "DISCORD_BOT_TOKEN not configured",
+            )
 
         messages = []
+        channel_errors = 0
         session = self._get_session()
 
         for channel_id in config.DISCORD_MONITOR_CHANNELS:
             try:
                 messages.extend(self._fetch_channel(session, channel_id, since))
             except Exception as exc:
-                logger.warning("discord: failed to fetch channel %s: %s", channel_id, exc)
+                logger.warning(
+                    "discord: failed to fetch channel %s: %s",
+                    channel_id, type(exc).__name__,
+                )
+                channel_errors += 1
 
+        if (
+            channel_errors
+            and not messages
+            and channel_errors == len(config.DISCORD_MONITOR_CHANNELS)
+        ):
+            return [], ConnectorStatus(
+                ConnectorStatusCode.UNKNOWN_ERROR,
+                f"all {channel_errors} channel(s) failed",
+            )
         logger.debug("discord: fetched %d messages since %s", len(messages), since.date())
-        return messages
+        return messages, ConnectorStatus.ok()
 
     def _fetch_channel(
         self, session: requests.Session, channel_id: str, since: datetime

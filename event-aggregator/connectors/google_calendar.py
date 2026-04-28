@@ -16,7 +16,7 @@ from googleapiclient.discovery import build
 
 import config
 from connectors import google_auth
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 from models import RawMessage
 
 logger = logging.getLogger(__name__)
@@ -27,10 +27,10 @@ _GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 class GoogleCalendarConnector(BaseConnector):
     source_name = "gcal"
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import gcal_messages
-            return gcal_messages(since)
+            return gcal_messages(since), ConnectorStatus.ok()
 
         try:
             creds = google_auth.get_credentials(
@@ -148,8 +148,18 @@ class GoogleCalendarConnector(BaseConnector):
             logger.debug(
                 "gcal: found %d pending invite(s) since %s", len(messages), since.date()
             )
-            return messages
+            return messages, ConnectorStatus.ok()
 
+        except FileNotFoundError:
+            return [], ConnectorStatus(
+                ConnectorStatusCode.NO_CREDENTIALS, "client secrets file missing",
+            )
         except Exception as exc:
+            err_name = type(exc).__name__
+            err_str = str(exc).lower()
+            if "refresh" in err_name.lower() or "invalid_grant" in err_str or "401" in err_str or "403" in err_str:
+                return [], ConnectorStatus(ConnectorStatusCode.AUTH_ERROR, err_name)
+            if "timeout" in err_name.lower() or "timeout" in err_str or "connection" in err_str:
+                return [], ConnectorStatus(ConnectorStatusCode.NETWORK_ERROR, err_name)
             logger.warning("gcal connector error: %s", exc)
-            return []
+            return [], ConnectorStatus(ConnectorStatusCode.UNKNOWN_ERROR, err_name)

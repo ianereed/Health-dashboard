@@ -21,7 +21,7 @@ import logging
 from datetime import datetime, timezone
 
 import config
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 from models import RawMessage
 
 logger = logging.getLogger(__name__)
@@ -39,18 +39,20 @@ class SlackConnector(BaseConnector):
         self._workspace_url: str = ""  # e.g. "https://myworkspace.slack.com"
         self._user_name_cache: dict[str, str] = {}  # user_id → display_name
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import slack_messages
-            return slack_messages(since)
+            return slack_messages(since), ConnectorStatus.ok()
 
         if not config.SLACK_BOT_TOKEN:
             logger.warning("SLACK_BOT_TOKEN not set — skipping Slack")
-            return []
+            return [], ConnectorStatus(
+                ConnectorStatusCode.NO_CREDENTIALS, "SLACK_BOT_TOKEN not set",
+            )
 
         if not config.SLACK_MONITOR_CHANNELS:
             logger.debug("SLACK_MONITOR_CHANNELS is empty — nothing to fetch")
-            return []
+            return [], ConnectorStatus.ok()  # no work configured = success
 
         try:
             from slack_sdk import WebClient
@@ -65,18 +67,35 @@ class SlackConnector(BaseConnector):
                     pass
 
             messages: list[RawMessage] = []
+            channel_errors = 0
             for channel_name in config.SLACK_MONITOR_CHANNELS:
                 try:
                     messages.extend(self._fetch_channel(client, channel_name, since))
                 except Exception as exc:
-                    logger.warning("slack: failed to fetch channel %s: %s", channel_name, exc)
+                    logger.warning(
+                        "slack: failed to fetch channel %s: %s",
+                        channel_name, type(exc).__name__,
+                    )
+                    channel_errors += 1
 
             logger.debug("slack: fetched %d message(s) since %s", len(messages), since.date())
-            return messages
+            # Treat as failure only if every channel failed (and we have some configured).
+            if (
+                channel_errors
+                and not messages
+                and channel_errors == len(config.SLACK_MONITOR_CHANNELS)
+            ):
+                return [], ConnectorStatus(
+                    ConnectorStatusCode.UNKNOWN_ERROR,
+                    f"all {channel_errors} channel(s) failed",
+                )
+            return messages, ConnectorStatus.ok()
 
         except Exception as exc:
-            logger.warning("slack connector error: %s", exc)
-            return []
+            err_str = str(exc).lower()
+            if "not_authed" in err_str or "invalid_auth" in err_str or "401" in err_str:
+                return [], ConnectorStatus(ConnectorStatusCode.AUTH_ERROR, type(exc).__name__)
+            return [], ConnectorStatus(ConnectorStatusCode.UNKNOWN_ERROR, type(exc).__name__)
 
     def _resolve_channel_id(self, client, channel_name: str) -> str | None:
         """

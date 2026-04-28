@@ -524,6 +524,43 @@ class State:
         bucket = self._data.setdefault("processed_slack_files", {})
         bucket[file_id] = {**info, "processed_at": _utcnow().isoformat()}
 
+    # ── connector health (Tier 2 — Intake Audit surfacing) ──────────────────
+
+    def record_connector_status(
+        self, source: str, status_code: str, message: str, ts: datetime | None = None,
+    ) -> None:
+        """Record the outcome of a connector fetch.
+
+        - On non-OK: increments consecutive_errors.
+        - On OK: resets consecutive_errors to 0 and updates last_ok_at.
+        - Always updates last_status_code, last_status_message, last_status_at.
+
+        connector_health is bounded by the number of connectors (~8) — no
+        pruning needed.
+        """
+        ts = ts or _utcnow()
+        bucket = self._data.setdefault("connector_health", {}).setdefault(
+            source,
+            {
+                "consecutive_errors": 0,
+                "last_ok_at": None,
+                "last_status_code": "ok",
+                "last_status_message": "",
+                "last_status_at": None,
+            },
+        )
+        bucket["last_status_code"] = status_code
+        bucket["last_status_message"] = message
+        bucket["last_status_at"] = ts.isoformat()
+        if status_code == "ok":
+            bucket["consecutive_errors"] = 0
+            bucket["last_ok_at"] = ts.isoformat()
+        else:
+            bucket["consecutive_errors"] = int(bucket.get("consecutive_errors", 0)) + 1
+
+    def connector_health(self) -> dict[str, dict]:
+        return self._data.get("connector_health", {})
+
     # ── pruning ───────────────────────────────────────────────────────────────
 
     def prune(self) -> None:

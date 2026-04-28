@@ -59,4 +59,5 @@ def get_queues() -> dict:
                 default=None,
             ) if written_events else None
         ),
+        "connector_health": data.get("connector_health", {}),
     }

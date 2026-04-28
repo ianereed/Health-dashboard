@@ -16,7 +16,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from connectors.base import BaseConnector
+from connectors.base import BaseConnector, ConnectorStatus, ConnectorStatusCode, FetchResult
 import config
 from models import RawMessage
 
@@ -37,17 +37,21 @@ def _apple_ts_to_utc(ts: int | float) -> datetime:
 class IMessageConnector(BaseConnector):
     source_name = "imessage"
 
-    def fetch(self, since: datetime, mock: bool = False) -> list[RawMessage]:
+    def fetch(self, since: datetime, mock: bool = False) -> FetchResult:
         if mock:
             from tests.mock_data import imessage_messages
-            return imessage_messages(since)
+            return imessage_messages(since), ConnectorStatus.ok()
 
         db_path = Path(config.IMESSAGE_DB_PATH).expanduser()
         if not db_path.exists():
             logger.warning(
-                "iMessage DB not found at %s — check Full Disk Access permissions", db_path
+                "iMessage DB not found at %s — Full Disk Access likely missing for launchd",
+                db_path,
             )
-            return []
+            return [], ConnectorStatus(
+                ConnectorStatusCode.PERMISSION_DENIED,
+                "chat.db unreadable — grant FDA to launchd python",
+            )
 
         # Copy to temp file to avoid locking Messages.app
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
@@ -55,10 +59,19 @@ class IMessageConnector(BaseConnector):
 
         try:
             shutil.copy2(db_path, tmp_path)
-            return self._query(tmp_path, since)
+            return self._query(tmp_path, since), ConnectorStatus.ok()
+        except PermissionError:
+            return [], ConnectorStatus(
+                ConnectorStatusCode.PERMISSION_DENIED, "chat.db copy denied",
+            )
+        except sqlite3.OperationalError as exc:
+            err = str(exc).lower()
+            if "no such" in err or "column" in err:
+                return [], ConnectorStatus(ConnectorStatusCode.SCHEMA_ERROR, type(exc).__name__)
+            return [], ConnectorStatus(ConnectorStatusCode.UNKNOWN_ERROR, type(exc).__name__)
         except Exception as exc:
             logger.warning("iMessage fetch failed: %s", exc)
-            return []
+            return [], ConnectorStatus(ConnectorStatusCode.UNKNOWN_ERROR, type(exc).__name__)
         finally:
             tmp_path.unlink(missing_ok=True)
 

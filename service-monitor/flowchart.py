@@ -104,8 +104,27 @@ def render_dataflow(status: dict, queues: dict, ollama: dict,
     w_age = queues.get("worker_updated_age_sec") if queues.get("available") else None
     state_mtime = queues.get("mtime_age_sec") if queues.get("available") else None
 
+    health = (queues.get("connector_health") or {}) if queues.get("available") else {}
+    _BAD_CODES = {
+        "auth_error", "no_credentials", "unsupported_os",
+        "permission_denied", "schema_error",
+    }
+
     def _src(name: str, key: str, aging: int = FETCH_AGING, stale: int = FETCH_STALE) -> str:
         age = ages.get(key)
+        h = health.get(key, {})
+        code = h.get("last_status_code", "ok")
+        # OK → grey "ext" node (matches existing visual). Terminal-bad → red.
+        # Sustained transient errors (≥6 consecutive) → yellow warn.
+        if code == "ok":
+            return _ext(name, _age_str(age), _ts_cls(age, aging, stale))
+        if code in _BAD_CODES:
+            return _node(f"{name} [{code}]", "err",
+                         _age_str(age), _ts_cls(age, aging, stale))
+        if int(h.get("consecutive_errors", 0)) >= 6:
+            return _node(f"{name} [{code}]", "warn",
+                         _age_str(age), _ts_cls(age, aging, stale))
+        # Single-cycle transient — keep the existing grey visual
         return _ext(name, _age_str(age), _ts_cls(age, aging, stale))
 
     hdb_age = hdb.get("mtime_age_sec") if (hdb and hdb.get("available")) else None
