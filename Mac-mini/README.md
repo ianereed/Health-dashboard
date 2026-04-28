@@ -30,6 +30,7 @@ Tailscale.
 | 3 | Core tools (`git`, `python@3.12`, `uv`, `gh`, `ollama`) | ✅ 2026-04-22 |
 | 4 | Ollama configuration + model pulls | ✅ 2026-04-22 |
 | 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated (event-aggregator staging moved to `~/Home-Tools/event-aggregator/staging/` out of TCC-protected path; laptop instance disabled, mini is sole writer). Medical-records + meal-planner intentionally stay on laptop. |
+| 5c | Service monitor dashboard | ✅ 2026-04-27 — Streamlit at port 8502, shows all 11 LaunchAgents + queues + DBs + Ollama + log tails. `http://homeserver:8502/` |
 | 6 | Minimal monitoring (launchd logs + Pushover) | ⏳ Pending |
 | 7 | Backup (Time Machine + off-site) | ⏳ Pending |
 | 8 | Finance automation scripts (YNAB, Amazon reconciliation) | 🟢 Phase 1 + 2 LIVE 2026-04-24 — Slack bot + read-only YNAB API sync running on the mini; Amazon reconciliation deferred |
@@ -85,6 +86,11 @@ Tailscale.
   - `nomic-embed-text` (F16, ~275MB) — embeddings for future RAG
 - **event-aggregator schedule**: every 10 min (upgraded from 15 min 2026-04-22); heavy
   phases (Ollama extraction + vision) run 24/7 — no time-window gate on the mini
+- **service-monitor** at `~/Home-Tools/service-monitor` — Streamlit dashboard at
+  `http://homeserver:8502/`. 1 LaunchAgent: `com.home-tools.service-monitor`
+  (KeepAlive, port 8502). Shows all 11 mini LaunchAgents with 🟢/🟡/🔴 status,
+  HTML swim-lane data-flow visual, queue depths (event-aggregator state.json),
+  DB sizes (health.db, finance.db), Ollama model list, and log tails.
 - **finance-monitor** at `~/Home-Tools/finance-monitor` with 2 LaunchAgents:
   `com.home-tools.finance-monitor` (Slack bot, KeepAlive — Socket Mode,
   DM-only, locked to `ALLOWED_SLACK_USER_IDS`, 60s/user rate limit) and

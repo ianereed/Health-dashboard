@@ -6,6 +6,14 @@ Living plan for the ongoing build. Update as phases advance. Pair this with
 
 ---
 
+## Quick status (as of 2026-04-27)
+
+Phase 5c (service monitor) is LIVE on the mini (2026-04-27): Streamlit dashboard
+at `http://homeserver:8502/` shows all 11 LaunchAgents with 🟢/🟡/🔴 status,
+HTML swim-lane data-flow visual, queue depths, DB row counts, Ollama models, and
+per-service log tails. 1 LaunchAgent: `com.home-tools.service-monitor` (KeepAlive,
+port 8502). Source at `~/Home-Tools/service-monitor/`.
+
 ## Quick status (as of 2026-04-24)
 
 Phases 0–5 complete. Event-aggregator + health-dashboard both running on the
@@ -49,6 +57,25 @@ ssh homeserver@homeserver '
 Expected: tailscale connected, Ollama + event-aggregator + 4 health-dashboard
 LaunchAgents registered with clean exit status, Ollama on `127.0.0.1:11434`,
 receiver on `*:8095`.
+
+---
+
+## Phase 5c — Service monitor dashboard (DONE 2026-04-27)
+
+**URL**: `http://homeserver:8502/` (Tailscale)  
+**LaunchAgent**: `com.home-tools.service-monitor` (KeepAlive, port 8502)  
+**Source**: `~/Home-Tools/service-monitor/`  
+
+Streamlit page (auto-refresh 30 s) with:
+- HTML/emoji swim-lane visual showing data flow per project with live 🟢/🟡/🔴 status on each service node
+- Service table for all 11 LaunchAgents (PID, last exit code, schedule)
+- Queue depths from event-aggregator state.json; health.db + finance.db row counts + mtime
+- Ollama model list + response latency
+- Per-service log tails (last 20 lines each)
+
+To deploy an update: `ssh homeserver@homeserver 'cd ~/Home-Tools && git pull && cd service-monitor && bash install.sh'`
+
+To add a new service: edit `services.py:SERVICES` (one line) + `flowchart.py:render_dataflow` (one node).
 
 ---
 
