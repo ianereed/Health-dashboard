@@ -8,8 +8,8 @@ and/or vision model. All fixtures are synthetic — no real user data.
 
 Usage:
     # A/B: incumbent vs candidate text model
-    python Mac-mini/benchmark_models.py --text-model qwen2.5:7b --out /tmp/bench-incumbent.json
-    python Mac-mini/benchmark_models.py --text-model qwen3:14b --out /tmp/bench-candidate.json
+    python Mac-mini/benchmark_models.py --text-model qwen3:14b --out /tmp/bench-current.json
+    python Mac-mini/benchmark_models.py --text-model <candidate> --out /tmp/bench-candidate.json
 
     # Full run (text + vision)
     python Mac-mini/benchmark_models.py --text-model qwen3:14b --vision-model qwen2.5vl:7b
@@ -447,8 +447,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Benchmark Ollama models for event-aggregator on the Mac mini."
     )
-    parser.add_argument("--text-model", default="qwen2.5:7b",
-                        help="Text extraction model to benchmark (default: incumbent)")
+    parser.add_argument("--text-model", default="qwen3:14b",
+                        help="Text extraction model to benchmark (default: production)")
     parser.add_argument("--vision-model", default="qwen2.5vl:7b",
                         help="Vision/OCR model to benchmark")
     parser.add_argument("--runs", type=int, default=20,

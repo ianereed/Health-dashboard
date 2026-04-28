@@ -78,12 +78,8 @@ Tailscale.
   they don't auto-load on login).
   - LaunchAgent logs: `/tmp/home-tools-<project>.log` (+ `-error.log`)
 - **Models pulled**:
-  - `qwen3:14b` (Q4_K_M, ~9GB) — event-aggregator text extraction (upgraded 2026-04-22)
-  - `qwen2.5vl:7b` (~6GB) — event-aggregator vision/image pipeline (unchanged)
-  - `qwen2.5:14b` (Q4_K_M, ~9GB) — workhorse for future finance-monitor work
-  - `qwen2.5:7b` (Q4_K_M, ~4.7GB) — previous extraction model; kept for rollback, can remove after 2026-04-29
-  - `llama3.2:3b` (Q4_K_M, ~2GB) — fast path for simple classification
-  - `nomic-embed-text` (F16, ~275MB) — embeddings for future RAG
+  - `qwen3:14b` (Q4_K_M, ~9GB) — event-aggregator text extraction
+  - `qwen2.5vl:7b` (~6GB) — event-aggregator vision/image pipeline
 - **event-aggregator schedule**: every 10 min (upgraded from 15 min 2026-04-22); heavy
   phases (Ollama extraction + vision) run 24/7 — no time-window gate on the mini
 - **service-monitor** at `~/Home-Tools/service-monitor` — Streamlit dashboard at
@@ -191,7 +187,7 @@ launchctl list | grep event-aggregator
 sudo lsof -iTCP:11434 -sTCP:LISTEN -n -P
 
 # Hot-path inference works
-time ollama run qwen2.5:14b "say only: ready"
+time ollama run qwen3:14b "say only: ready"
 
 # All models are present
 ollama list
