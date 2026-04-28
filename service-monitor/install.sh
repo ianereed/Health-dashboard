@@ -70,3 +70,27 @@ if [[ -f "$TRACKER_PLIST_SRC" ]]; then
   launchctl list 2>/dev/null | grep com.home-tools.ollama-tracker || \
     echo "    (not listed yet)"
 fi
+
+# ── Memory/RAM tracker ───────────────────────────────────────────────
+MEM_PLIST_SRC="$HERE/../Mac-mini/scripts/com.home-tools.memory-tracker.plist"
+MEM_PLIST_DST="$HOME/Library/LaunchAgents/com.home-tools.memory-tracker.plist"
+
+if [[ -f "$MEM_PLIST_SRC" ]]; then
+  echo
+  echo "== memory-tracker install =="
+  echo "  copying plist to $MEM_PLIST_DST"
+  cp "$MEM_PLIST_SRC" "$MEM_PLIST_DST"
+
+  if launchctl list 2>/dev/null | grep -q com.home-tools.memory-tracker; then
+    echo "  unloading previous LaunchAgent"
+    launchctl unload "$MEM_PLIST_DST" 2>/dev/null || true
+  fi
+
+  echo "  loading LaunchAgent"
+  launchctl load "$MEM_PLIST_DST"
+
+  sleep 2
+  echo "  status:"
+  launchctl list 2>/dev/null | grep com.home-tools.memory-tracker || \
+    echo "    (not listed yet)"
+fi
