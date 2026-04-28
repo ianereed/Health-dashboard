@@ -106,7 +106,7 @@ c5.metric("finance.db", fdb_size)
 st.divider()
 
 # Tabs
-tab_services, tab_data, tab_logs = st.tabs(["Services", "Queues & DBs", "Logs"])
+tab_services, tab_data, tab_logs, tab_help = st.tabs(["Services", "Queues & DBs", "Logs", "Help"])
 
 with tab_services:
     rows = []
@@ -200,3 +200,142 @@ with tab_logs:
             else:
                 st.caption(f"unavailable: {entry.get('reason', 'unknown')}")
             st.caption(f"path: `{svc.log_path}`")
+
+with tab_help:
+    st.markdown("""
+## How to read this dashboard
+
+### Status indicators
+
+| Indicator | Meaning |
+|---|---|
+| 🟢 | Running and healthy (last exit 0) |
+| 🟡 | Running but last exit was non-zero — check logs |
+| 🔴 | Not currently running |
+| ⚫ | External system (Gmail, YNAB, etc.) — no status to check |
+
+### Exit codes decoded
+
+| Exit | Meaning |
+|---|---|
+| `0` | Clean exit — normal for any service |
+| `-9` | SIGKILL — launchd killed it (memory pressure or manual). Will auto-restart. Normal. |
+| `-15` | SIGTERM — clean shutdown signal. Will auto-restart. Normal. |
+| `1` or other positive | Error exit — look at the log |
+
+---
+
+## Service types: what's normal
+
+There are two kinds of services, and 🔴 means different things for each.
+
+**KeepAlive** — always-on long-running processes. launchd restarts them if they exit.
+These should almost always be 🟢. A 🔴 here means launchd tried to restart it but
+something is repeatedly crashing.
+
+| Service | What it does |
+|---|---|
+| `event-agg / worker` | Drains the text + OCR queues, runs Ollama, writes to GCal |
+| `dispatcher` | Slack Socket Mode bot — routes image uploads to event-agg or finance |
+| `finance-monitor / bot` | Slack DM bot — answers finance questions via Ollama |
+| `hd / receiver :8095` | Receives Apple Health data from iPhone |
+| `hd / streamlit :8501` | Hosts the health dashboard web UI |
+| `service-monitor :8502` | This dashboard |
+
+**Scheduled** — runs on a timer, then stops. The PID is `—` between runs.
+🔴 with exit `0` is **completely normal** — it just ran cleanly and is waiting for
+the next interval. Only worry if the last exit is non-zero.
+
+| Service | Schedule | What it does |
+|---|---|---|
+| `event-agg / fetch` | every 10 min | Polls Gmail/Slack/Discord, enqueues messages |
+| `finance-monitor / watcher` | every 5 min | Syncs YNAB API, scans intake/ folder |
+| `hd / collect` | 7:00 + 7:20 AM | Pulls Garmin/Strava data |
+| `hd / intervals-poll` | every 5 min | Syncs Intervals.icu (Suunto) data |
+| `hd / staleness` | 7:00 AM + 9:00 PM | Alerts if health data is stale |
+
+---
+
+## When to open a Claude session
+
+### ✅ Wait — this is self-healing
+
+- Any **scheduled** service is 🔴 with last exit `0` — it ran fine, will run again on schedule
+- Worker or dispatcher shows exit `-9` or `-15` — normal signal-based restart cycle
+- Ollama shows ✗ for one refresh cycle — may be loading a model (~30–60s startup)
+- `text_queue` or `ocr_queue` is > 0 but small (1–5) — worker is processing, will drain
+
+### ⚠️ Watch for one or two more refresh cycles (1–2 min)
+
+- 🟡 on any service — running but had a non-zero exit. Usually resolves on its own.
+- Ollama still ✗ after 2 minutes — check if the process crashed
+- text_queue depth climbing above 10 — worker may be stuck
+
+### 🚨 Open a Claude session
+
+- **KeepAlive service 🔴 for 2+ refresh cycles (>1 min)** — launchd is restarting
+  it but it keeps crashing. Check the error log in the Logs tab first.
+- **text_queue > 20 and not shrinking** — worker stuck or Ollama down
+- **Repeated tracebacks in error log** — crash loop, needs a fix
+- **health.db or finance.db not updated in 24+ hours** — data pipeline broken
+- **finance-monitor bot 🔴** — you can't ask it finance questions until it's back
+
+---
+
+## Quick SSH reference
+
+Open Terminal and SSH into the mini to investigate:
+
+```bash
+ssh homeserver@homeserver
+```
+
+Then run any of these:
+
+```bash
+# List all home-tools services with PID + exit status
+launchctl list | grep -E "home-tools|health-dashboard"
+
+# Tail a specific service's error log
+tail -50 ~/Library/Logs/home-tools/event-aggregator-worker.log
+tail -50 ~/Library/Logs/home-tools-dispatcher.log
+tail -50 ~/Library/Logs/home-tools-dispatcher-error.log
+
+# Force-restart a crashed service
+launchctl unload ~/Library/LaunchAgents/com.home-tools.event-aggregator.worker.plist
+launchctl load   ~/Library/LaunchAgents/com.home-tools.event-aggregator.worker.plist
+
+# Check Ollama
+curl http://127.0.0.1:11434/api/tags
+ollama ps  # shows what's currently loaded
+
+# Check event-aggregator queue depths
+python3 -c "import json; d=json.load(open('Home-Tools/event-aggregator/state.json')); print('text:', len(d.get('text_queue',[])), 'ocr:', len(d.get('ocr_queue',[])))"
+```
+
+---
+
+## Data flow summary
+
+```
+External sources        Processors          State / Output
+──────────────────────────────────────────────────────────
+Gmail / iMsg / Slack → event-agg/fetch → state.json (queues)
+                                        → event-agg/worker → Google Calendar
+                                                           → Slack replies
+
+Slack #image-intake  → dispatcher → event-agg (events)
+                                  → finance-mon/intake/ (financial docs)
+
+iPhone Health        → hd/receiver  ┐
+Strava / Garmin      → hd/collect   ├─→ health.db → Streamlit :8501
+Intervals.icu        → hd/intervals ┘
+
+YNAB API + intake/   → fin/watcher → finance.db
+                                   → fin/bot → Slack DM responses
+
+Ollama :11434 ← shared by event-agg/worker, dispatcher, finance-monitor
+```
+""")
+
+    st.caption("Dashboard source: `~/Home-Tools/service-monitor/` · Port 8502 · Auto-refresh 30s")
