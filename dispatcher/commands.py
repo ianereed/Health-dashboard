@@ -68,7 +68,12 @@ def handle(raw_text: str) -> CommandResult | None:
     if first in ("help", "?"):
         return CommandResult(ok=True, text=HELP_TEXT)
 
-    if first in APPROVE_VERBS | REJECT_VERBS:
+    # Detect approve/reject attempts using the same tokenization as the
+    # parser so "a10 r11" (no space between letter and number) still gets
+    # routed here. A literal first-word match would miss it because
+    # `lower.split()[0]` returns "a10" — not in APPROVE_VERBS.
+    _decide_tokens = re.findall(r"[a-z]+|\d+", _SLACK_NOISE.sub(" ", lower))
+    if any(t in APPROVE_VERBS | REJECT_VERBS for t in _decide_tokens):
         parsed = _parse_decide(text)
         if parsed is None:
             return CommandResult(
