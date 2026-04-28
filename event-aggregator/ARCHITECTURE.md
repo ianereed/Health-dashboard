@@ -4,7 +4,7 @@ A precise, file-cited description of how the tool currently behaves.
 Use this as the entry point when picking up the project after a long
 gap or onboarding a new collaborator.
 
-Last verified against code: 2026-04-26 (Tier 1–4 overhaul).
+Last verified against code: 2026-04-28 (Tier 2 — Intake Audit + Status enum).
 
 ---
 
@@ -68,6 +68,40 @@ extraction prompt for update/dup detection.
   `state.recurring_notices` entry is added (24h) so the dashboard
   surfaces "Possibly recurring — handle manually" (Tier 2.1).
 - LLM verdict "no" from the pre-classifier (Tier 2.5).
+
+## 3.5 Connector contract (Tier 2 — Intake Audit, 2026-04-28)
+
+Every connector implements `BaseConnector` (`connectors/base.py`):
+- `source_name: str` — class constant matching `RawMessage.source`
+- `fetch(since: datetime, mock: bool = False) -> (list[RawMessage], ConnectorStatus)`
+
+`fetch()` MUST NEVER raise. Every exception path maps to a
+`ConnectorStatus`:
+
+| Code | Meaning | Watermark advances? | User action |
+|---|---|---|---|
+| `ok` | fetched (0+ messages) | yes | none |
+| `no_credentials` | token/key not configured | yes (deferred-by-design) | configure or accept deferred |
+| `auth_error` | 401/403/refresh failed | no (catch up after re-auth) | re-auth |
+| `permission_denied` | macOS FDA missing, file unreadable | no (catch up after grant) | grant FDA to launchd |
+| `unsupported_os` | platform incompatible (e.g. NC on Sequoia) | yes (terminal — no catch-up possible) | none — feature unavailable |
+| `network_error` | transient | no (retry next cycle) | none unless persistent |
+| `schema_error` | upstream API/DB shape changed | no (catch up after deploy) | code update |
+| `unknown_error` | catchall | no | investigate logs |
+
+`fetch_only()` (`main.py:fetch_only`) records the outcome via
+`state.record_connector_status(source, code, message, ts)` and applies
+the watermark policy above. A 14-day floor on `since` keeps recovery
+queries bounded after a long failure window.
+
+The Slack dashboard surfaces any source in a non-`ok` terminal state, plus
+any source with ≥6 consecutive transient errors (~1h at 10-min cadence).
+service-monitor (`http://homeserver:8502/`) renders red / yellow badges
+per source.
+
+**Privacy invariant:** `ConnectorStatus.message` MUST NOT contain message
+bodies, contact info, or location strings. Use error class names, HTTP
+codes, missing-config keys, count summaries.
 
 ## 4. What's pulled regularly to establish "current truth"
 
