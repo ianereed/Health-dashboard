@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
@@ -70,6 +71,19 @@ _ALL_SOURCES = [
 # Minimum confidence for acting on update/cancel signals (higher bar than creation)
 _UPDATE_CANCEL_MIN_CONFIDENCE = 0.75
 _UPDATE_FUZZY_THRESHOLD = 75
+
+# LLMs often emit cancellation titles like "Cancelled: Brunch at Plow" or
+# "Brunch at Plow cancellation". Strip these affixes before fuzzy-matching
+# so the lookup hits the original event title.
+_CANCEL_AFFIX_RE = re.compile(
+    r"(^cancel(?:l?ed|lation)?\s*[:\-]?\s*)|(\s*[\-:]?\s*cancel(?:l?ed|lation)?\s*$)",
+    re.IGNORECASE,
+)
+
+
+def _strip_cancellation_affixes(title: str) -> str:
+    cleaned = _CANCEL_AFFIX_RE.sub("", title or "").strip()
+    return cleaned or title
 
 
 def parse_args() -> argparse.Namespace:
@@ -358,15 +372,42 @@ def _try_resolve_pending_confirmation(
     pc: dict | None = None
     if candidate.gcal_event_id_to_update:
         pc = state.find_pending_confirmation_by_gcal_id(candidate.gcal_event_id_to_update)
-    # Fallback: thread_id match when LLM emits confirmed without is_update.
-    # The reply arrives with the same threadId as the original email, so we
-    # can correlate it back to the pending_confirmation even if gcal_id wasn't
-    # resolved (e.g. LLM said confirmed but didn't set is_update=true).
-    if pc is None and candidate.thread_id and candidate.confirmation_status == "confirmed":
-        pc = state.find_pending_confirmation_by_thread_id(candidate.thread_id)
+    # Fallback: thread_id match when the LLM emits a state-transitioning
+    # candidate without setting is_update=true (e.g. a confirmation reply
+    # extracted as a "new" confirmed event, or a cancellation reply that
+    # leaves confirmation_status=awaiting_me). The reply carries the same
+    # threadId as the original email, so we correlate via the pending entry.
+    if pc is None and candidate.thread_id and (
+        candidate.is_cancellation
+        or candidate.confirmation_status == "confirmed"
+    ):
+        matches = state.find_all_pending_confirmations_by_thread_id(candidate.thread_id)
+        if len(matches) == 1:
+            pc = matches[0]
+        elif len(matches) > 1:
+            # Disambiguate by fuzzy title match — cheap insurance for the
+            # rare case of multiple proposals in one thread.
+            cand_title = gcal_writer.strip_status_prefix(candidate.title).lower()
+            best = max(
+                matches,
+                key=lambda m: fuzz.ratio(cand_title, (m.get("original_title") or "").lower()),
+                default=None,
+            )
+            if best and fuzz.ratio(
+                cand_title, (best.get("original_title") or "").lower()
+            ) > _UPDATE_FUZZY_THRESHOLD:
+                pc = best
+            else:
+                logger.warning(
+                    "thread-id fallback: %d pending_confirmations share thread_id=%s; "
+                    "title %r matched none above threshold — skipping",
+                    len(matches), candidate.thread_id, candidate.title,
+                )
         if pc:
-            # Populate the gcal_id so the rest of the function works unchanged.
-            candidate.gcal_event_id_to_update = pc.get("gcal_event_id")
+            # gcal_event_id is required by add_pending_confirmation; missing
+            # key would indicate state corruption — fail loud instead of
+            # passing None to the GCal API.
+            candidate.gcal_event_id_to_update = pc["gcal_event_id"]
             candidate.gcal_calendar_id_to_update = pc.get("calendar_id")
     if not pc:
         return None
@@ -606,7 +647,7 @@ def _propose_events(
             and candidate.confidence >= _UPDATE_CANCEL_MIN_CONFIDENCE
         ):
             hint = candidate.original_title_hint or (
-                candidate.title if candidate.is_cancellation else None
+                _strip_cancellation_affixes(candidate.title) if candidate.is_cancellation else None
             )
             if hint:
                 resolved = _resolve_gcal_id(hint, state)

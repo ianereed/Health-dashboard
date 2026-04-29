@@ -577,6 +577,14 @@ class State:
                 return entry
         return None
 
+    def find_all_pending_confirmations_by_thread_id(self, thread_id: str) -> list[dict]:
+        if not thread_id:
+            return []
+        return [
+            e for e in self._data.get("pending_confirmations", [])
+            if e.get("thread_id") == thread_id
+        ]
+
     def find_pending_confirmation_by_num(self, num: int) -> dict | None:
         for entry in self._data.get("pending_confirmations", []):
             if entry.get("num") == num:

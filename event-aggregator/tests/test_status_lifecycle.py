@@ -604,6 +604,90 @@ class TestThreadConfirmation:
         action = _try_resolve_pending_confirmation(cand, s, dry_run=False, mock=False)
         assert action is None
 
+    def test_thread_id_fallback_confirms_without_is_update(self):
+        """Reply extracted as a confirmed new event (not is_update) — thread_id
+        fallback must still strip the tag."""
+        from main import _try_resolve_pending_confirmation
+        s = state_module.State({})
+        s.add_pending_confirmation(
+            gcal_event_id="evt_thread_only", calendar_id="weekend",
+            original_title="Coffee", current_tag="[awaiting]",
+            fingerprint="fp_t", start_iso=_utcnow().isoformat(), num=20,
+            thread_id="thr_match", source="gmail",
+        )
+        cand = _make_candidate(
+            title="Coffee", confirmation_status="confirmed",
+            thread_id="thr_match",
+        )
+        fake_written = MagicMock(
+            gcal_event_id="evt_thread_only", fingerprint="fp_t", candidate=cand,
+        )
+        with patch.object(gcal_writer, "update_event", return_value=(fake_written, [])):
+            action = _try_resolve_pending_confirmation(cand, s, dry_run=False, mock=False)
+        assert action == "confirmed"
+        assert s.find_pending_confirmation_by_gcal_id("evt_thread_only") is None
+
+    def test_thread_id_fallback_cancels_with_awaiting_status(self):
+        """Cancellation reply with default confirmation_status=awaiting_me —
+        thread_id fallback must still match and delete."""
+        from main import _try_resolve_pending_confirmation
+        s = state_module.State({})
+        s.add_pending_confirmation(
+            gcal_event_id="evt_cxl_thr", calendar_id="weekend",
+            original_title="Brunch", current_tag="[awaiting]",
+            fingerprint="fp_cxl", start_iso=_utcnow().isoformat(), num=21,
+            thread_id="thr_cxl", source="gmail",
+        )
+        cand = _make_candidate(
+            title="Brunch", confirmation_status="awaiting_me",
+            is_cancellation=True, thread_id="thr_cxl",
+        )
+        with patch.object(gcal_writer, "delete_event", return_value=True):
+            action = _try_resolve_pending_confirmation(cand, s, dry_run=False, mock=False)
+        assert action == "cancelled"
+        assert s.find_pending_confirmation_by_gcal_id("evt_cxl_thr") is None
+        assert s.is_rejected("fp_cxl")
+
+    def test_thread_id_fallback_disambiguates_by_title(self):
+        """Two pending_confirmations sharing a thread_id — fuzzy title match
+        on candidate.title picks the right one."""
+        from main import _try_resolve_pending_confirmation
+        s = state_module.State({})
+        s.add_pending_confirmation(
+            gcal_event_id="evt_a", calendar_id="weekend",
+            original_title="Coffee Tuesday", current_tag="[proposed by you]",
+            fingerprint="fp_a", start_iso=_utcnow().isoformat(), num=30,
+            thread_id="thr_dual", source="gmail",
+        )
+        s.add_pending_confirmation(
+            gcal_event_id="evt_b", calendar_id="weekend",
+            original_title="Lunch Wednesday", current_tag="[proposed by you]",
+            fingerprint="fp_b", start_iso=_utcnow().isoformat(), num=31,
+            thread_id="thr_dual", source="gmail",
+        )
+        cand = _make_candidate(
+            title="Lunch Wednesday", confirmation_status="confirmed",
+            thread_id="thr_dual",
+        )
+        fake_written = MagicMock(
+            gcal_event_id="evt_b", fingerprint="fp_b", candidate=cand,
+        )
+        with patch.object(gcal_writer, "update_event", return_value=(fake_written, [])):
+            action = _try_resolve_pending_confirmation(cand, s, dry_run=False, mock=False)
+        assert action == "confirmed"
+        assert s.find_pending_confirmation_by_gcal_id("evt_a") is not None
+        assert s.find_pending_confirmation_by_gcal_id("evt_b") is None
+
+
+class TestCancellationAffixStripper:
+    def test_strip_cancellation_prefix_and_suffix(self):
+        from main import _strip_cancellation_affixes
+        assert _strip_cancellation_affixes("Cancelled: Brunch at Plow") == "Brunch at Plow"
+        assert _strip_cancellation_affixes("Brunch at Plow cancellation") == "Brunch at Plow"
+        assert _strip_cancellation_affixes("Cancel Coffee") == "Coffee"
+        assert _strip_cancellation_affixes("Coffee") == "Coffee"
+        assert _strip_cancellation_affixes("") == ""
+
 
 # ── dashboard rendering ──────────────────────────────────────────────────────
 
