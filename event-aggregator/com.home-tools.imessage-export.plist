@@ -9,12 +9,19 @@
   <!-- Laptop-side LaunchAgent: every 10 min, dumps recent iMessages to a
        JSONL file and ships it to the mini's event-aggregator cache via
        Tailscale SSH. The mini's IMessageConnector reads that JSONL when
-       IMESSAGE_EXPORT_FILE is set. -->
+       IMESSAGE_EXPORT_FILE is set.
+
+       NOTE: ProgramArguments points at ~/bin/imessage-export.sh, NOT
+       the canonical copy under ~/Documents/GitHub/Home-Tools/. macOS TCC
+       blocks launchd-context zsh from reading scripts in ~/Documents/
+       even when the script is owned by the user — the binary doing the
+       open() doesn't have FDA. The repo's tools/imessage_export.sh is
+       the source of truth; install it to ~/bin/ via the README's
+       install step. The python child it invokes IS allowed to read its
+       own .py file in ~/Documents/ because python3.14 itself has FDA. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/zsh</string>
-    <string>-c</string>
-    <string>/Users/ianreed/Documents/GitHub/Home-Tools/event-aggregator/tools/imessage_export.sh</string>
+    <string>/Users/ianreed/bin/imessage-export.sh</string>
   </array>
 
   <!-- Match the mini's fetch cadence (com.home-tools.event-aggregator.fetch

@@ -43,7 +43,18 @@ returned so old-but-unseen rows can land in the pipeline.
      -c 'import pathlib; p=pathlib.Path("~/Library/Messages/chat.db").expanduser(); print(p.stat().st_size)'
    ```
    Must print a non-zero file size. If `Operation not permitted`, see the **FDA fallback** at the end of this README.
-5. Install + load the LaunchAgent:
+5. Install the shell wrapper to a non-TCC-protected path. macOS TCC blocks
+   launchd-context zsh from opening scripts under `~/Documents/`, so the
+   wrapper must live at `~/bin/`. (The python child invoked by the wrapper
+   IS allowed to read its own `.py` inside `~/Documents/` because
+   `python3.14` has FDA — only the wrapper's launch path matters.)
+   ```sh
+   mkdir -p ~/bin
+   cp event-aggregator/tools/imessage_export.sh ~/bin/imessage-export.sh
+   chmod 755 ~/bin/imessage-export.sh
+   ```
+   Re-run this copy step whenever you change the wrapper.
+6. Install + load the LaunchAgent:
    ```sh
    mkdir -p ~/Library/LaunchAgents ~/Library/Logs/home-tools ~/imessage-export
    chmod 700 ~/imessage-export
@@ -51,13 +62,24 @@ returned so old-but-unseen rows can land in the pipeline.
    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.home-tools.imessage-export.plist
    launchctl kickstart -k gui/$UID/com.home-tools.imessage-export
    ```
-6. On the mini, set the env var so the connector reads the JSONL:
+7. On the mini, pull the latest repo and set the env var so the connector
+   reads the JSONL. Use the python idiom rather than `echo >>` — macOS
+   `.env` files can lack a trailing newline, which causes a bare append to
+   silently concatenate onto the previous line.
    ```sh
-   ssh homeserver@homeserver "
+   ssh homeserver@homeserver '
+     cd ~/Home-Tools && git pull origin main
      mkdir -p ~/Home-Tools/event-aggregator/cache && chmod 700 ~/Home-Tools/event-aggregator/cache
-     grep -q '^IMESSAGE_EXPORT_FILE=' ~/Home-Tools/event-aggregator/.env || \
-       echo 'IMESSAGE_EXPORT_FILE=/Users/homeserver/Home-Tools/event-aggregator/cache/imessage.jsonl' >> ~/Home-Tools/event-aggregator/.env
-   "
+     python3 - <<EOF
+import pathlib
+p = pathlib.Path.home() / "Home-Tools/event-aggregator/.env"
+text = p.read_text()
+target = "IMESSAGE_EXPORT_FILE=/Users/homeserver/Home-Tools/event-aggregator/cache/imessage.jsonl"
+if target not in text:
+    if not text.endswith("\n"): text += "\n"
+    p.write_text(text + target + "\n")
+EOF
+   '
    ssh homeserver@homeserver 'launchctl kickstart -k gui/$(id -u)/com.home-tools.event-aggregator.worker'
    ```
 
