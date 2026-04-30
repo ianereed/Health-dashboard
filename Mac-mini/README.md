@@ -31,6 +31,7 @@ Tailscale.
 | 4 | Ollama configuration + model pulls | ✅ 2026-04-22 |
 | 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated (event-aggregator staging moved to `~/Home-Tools/event-aggregator/staging/` out of TCC-protected path; laptop instance disabled, mini is sole writer). Medical-records + meal-planner intentionally stay on laptop. |
 | 5c | Service monitor dashboard | ✅ 2026-04-27 — Streamlit at port 8502, shows all 11 LaunchAgents + queues + DBs + Ollama + log tails. `http://homeserver:8502/` |
+| 5d | NAS mount + TCC privacy fix | ✅ 2026-04-29 — Share1 mounted at `~/Share1` via `mount_smbfs //iananny@192.168.4.39/Share1`. Two TCC grants required: `tailscaled` in Local Network + `python3.12` in Full Disk Access. See `feedback_macos_lan_wedge_recovery.md`. |
 | 6 | Minimal monitoring (launchd logs + Pushover) | ⏳ Pending |
 | 7 | Backup (Time Machine + off-site) | ⏳ Pending |
 | 8 | Finance automation scripts (YNAB, Amazon reconciliation) | 🟢 Phase 1 + 2 LIVE 2026-04-24 — Slack bot + read-only YNAB API sync running on the mini; Amazon reconciliation deferred |
