@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import requests
@@ -205,7 +206,14 @@ def _build_prompt(msg: RawMessage, calendar_context: str = "") -> str:
     intro = _SOURCE_INTROS[intro_key]
     context_block = _build_context_block(msg)
 
-    today_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    # "Today" must be in the USER's timezone, not UTC. The LLM resolves
+    # relative dates ("tomorrow", "next Tue") against this string; if we
+    # hand it UTC date late in the user's day, "tomorrow" silently lands
+    # one day too far in the future. Caught 2026-04-29: a message sent at
+    # ~10 AM PT Wed processed at 19:50 PT was given today=2026-04-30 (UTC
+    # Thursday), so "lunch tomorrow" extracted to Friday May 1.
+    user_tz = ZoneInfo(config.USER_TIMEZONE)
+    today_str = datetime.now(tz=user_tz).strftime("%Y-%m-%d")
     schema = (
         _SCHEMA
         .replace(_TIMEZONE_PLACEHOLDER, config.USER_TIMEZONE)
