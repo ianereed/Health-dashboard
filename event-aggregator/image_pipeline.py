@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,7 +90,16 @@ def ingest_local_file(
         analysis.subcategory = None
 
     staging_path = file_writer.stage_document_locally(analysis, pages, staging_id)
-    nas_path = file_writer.copy_to_nas(staging_path, analysis, dry_run=dry_run)
+
+    # NAS_WRITE_DISABLED=1 leaves the staged dir for an external caller (e.g.
+    # nas-intake) to copy out via its own parent-rooted filing scheme. Default
+    # behavior unchanged.
+    nas_write_disabled = os.environ.get("NAS_WRITE_DISABLED", "").strip() not in ("", "0", "false", "False")
+    if nas_write_disabled:
+        logger.info("NAS_WRITE_DISABLED=1 — skipping copy_to_nas; staged at %s", staging_path)
+        nas_path = None
+    else:
+        nas_path = file_writer.copy_to_nas(staging_path, analysis, dry_run=dry_run)
     if nas_path and not dry_run:
         file_writer.purge_staging(staging_path)
 
@@ -116,11 +126,14 @@ def ingest_local_file(
                 "items": batch_items,
             }
             state.add_proposal_batch(batch)
-            day_thread_ts = slack_notifier.get_or_create_day_thread(state)
-            if day_thread_ts:
-                posted_ts = slack_notifier.post_proposals(day_thread_ts, batch_items)
-                if posted_ts:
-                    state.set_proposal_slack_ts(batch_id, posted_ts)
+            # Render via the live dashboard message (same path main.py uses).
+            # post_proposals() was renamed; canonical posting is
+            # post_or_update_dashboard(all_items, state). See main.py:1113-1114.
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            all_items = state.get_all_proposal_items_for_dashboard(today_str)
+            posted_ts = slack_notifier.post_or_update_dashboard(all_items, state)
+            if posted_ts:
+                state.set_proposal_slack_ts(batch_id, posted_ts)
             events_proposed = len(batch_items)
 
     return (

@@ -1,0 +1,2 @@
+# nas-intake v1: stdlib + subprocess only.
+# All OCR/classification heavy lifting happens in event-aggregator's venv.

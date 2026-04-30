@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.home-tools.nas-intake</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/homeserver/Home-Tools/nas-intake/.venv/bin/python3</string>
+    <string>/Users/homeserver/Home-Tools/nas-intake/watcher.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/homeserver/Home-Tools/nas-intake</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>KEYCHAIN_PATH</key>
+    <string>/Users/homeserver/Library/Keychains/login.keychain-db</string>
+  </dict>
+
+  <!-- Scan all NAS intake/ folders every 5 minutes -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/homeserver/Library/Logs/home-tools-nas-intake.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/homeserver/Library/Logs/home-tools-nas-intake-error.log</string>
+</dict>
+</plist>
