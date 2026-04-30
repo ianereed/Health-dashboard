@@ -37,6 +37,7 @@ from thefuzz import fuzz
 
 import config
 import dedup
+import tz_utils
 from connectors import google_auth
 from models import CandidateEvent, WrittenEvent
 
@@ -272,7 +273,7 @@ def _patch_with_additions(
 
     note = (
         f"\n\n[merged via event-aggregator on "
-        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')} | source: {candidate.source}]"
+        f"{tz_utils.today_user_str()} | source: {candidate.source}]"
     )
     try:
         existing = service.events().get(

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
+import tz_utils
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,9 @@ def _build_nas_path(result) -> Path:
 
     category = result.primary_category
     subcategory = result.subcategory
-    date_str = result.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Fallback "received-on" date when the doc has no detected date — used
+    # for the NAS folder year and the filename. User-facing → user-tz.
+    date_str = result.date or tz_utils.today_user_str()
     year = date_str[:4]
     doc_type_folder = _doc_type_to_folder(getattr(result, "document_type", ""))
     slug = _slugify(result.title)

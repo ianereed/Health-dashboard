@@ -512,7 +512,8 @@ def _refresh_proposal_dashboard(state) -> None:
     Saves state again afterward to persist any new dashboard ts."""
     from notifiers import slack_notifier
     import state as state_module
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    import tz_utils
+    today_str = tz_utils.today_user_str()
     all_items = state.get_all_proposal_items_for_dashboard(today_str)
     slack_notifier.post_or_update_dashboard(all_items, state, force_repost=True)
     state_module.save(state)
@@ -585,9 +586,10 @@ def _cmd_add_event(text: str) -> int:
     from models import RawMessage
     from notifiers import slack_notifier
     from main import _candidate_to_proposal_item
+    import tz_utils
 
     state = state_module.load()
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_str = tz_utils.today_user_str()
     msg = RawMessage(
         id=f"manual_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}",
         source="manual",
@@ -693,6 +695,7 @@ def _cmd_status(as_json: bool, only_pending: bool, only_last_run: bool) -> int:
 def _cmd_query(calendar: str, conflicts: str) -> int:
     """Natural-language GCal Q&A via qwen3."""
     import config
+    import tz_utils
     from googleapiclient.discovery import build
     from connectors import google_auth
     from analyzers import calendar_analyzer
@@ -729,7 +732,7 @@ def _cmd_query(calendar: str, conflicts: str) -> int:
             continue
         event_lines.append(f"- {start}-{end}: {e.title}" + (f" @ {e.location}" if e.location else ""))
 
-    today = datetime.now().strftime("%Y-%m-%d %a")
+    today = tz_utils.now_user().strftime("%Y-%m-%d %a")
     mode = "conflicts" if conflicts else "summary"
     prompt = (
         f"Today is {today}. Answer this calendar question concisely in 1-3 short sentences "
@@ -967,8 +970,9 @@ def _cmd_bump_dashboard() -> int:
     """Increment the burial counter for today (called by dispatcher per
     non-bot top-level message in the interactive channel)."""
     import state as state_module
+    import tz_utils
     state = state_module.load()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = tz_utils.today_user_str()
     new_count = state.bump_dashboard_buried(today)
     state_module.save(state)
     print(f":bookmark_tabs: dashboard burial count → {new_count}")

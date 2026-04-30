@@ -495,14 +495,30 @@ class State:
         self._data.setdefault("proposal_dashboard", {})[date_str] = entry
 
     def get_all_proposal_items_for_dashboard(self, today_str: str | None = None) -> list[dict]:
-        """Return items to display on today's dashboard: all pending + today's actioned items."""
+        """Return items to display on today's dashboard: all pending + today's actioned items.
+
+        "Today" is the user's wall-clock day, not UTC's. created_at is stored
+        as a UTC ISO string; convert to USER_TIMEZONE before comparing dates
+        so a proposal created at 23:30 PT (UTC tomorrow) still groups under
+        today's dashboard.
+        """
+        import tz_utils
+        from zoneinfo import ZoneInfo
+        import config
+        user_tz = ZoneInfo(config.USER_TIMEZONE)
         if today_str is None:
-            today_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+            today_str = tz_utils.today_user_str()
         result = []
         seen_keys: set[tuple] = set()
         for batch in self._data.get("pending_proposals", []):
             batch_id = batch.get("batch_id", "")
-            created_date = (batch.get("created_at") or "")[:10]
+            created_at_raw = batch.get("created_at") or ""
+            try:
+                created_local_date = (
+                    datetime.fromisoformat(created_at_raw).astimezone(user_tz).strftime("%Y-%m-%d")
+                )
+            except ValueError:
+                created_local_date = created_at_raw[:10]
             for item in batch.get("items", []):
                 num = item.get("num")
                 key = (batch_id, num)
@@ -511,7 +527,7 @@ class State:
                 seen_keys.add(key)
                 if item["status"] == "pending":
                     result.append(item)
-                elif created_date == today_str and item["status"] in ("approved", "rejected", "expired"):
+                elif created_local_date == today_str and item["status"] in ("approved", "rejected", "expired"):
                     result.append(item)
         return sorted(result, key=lambda x: x.get("num", 0))
 

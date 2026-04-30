@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+import tz_utils
 from analyzers.calendar_analyzer import CalendarAnalysis, CalendarEvent, Conflict
 from notifiers import slack_notifier
 
@@ -38,7 +39,9 @@ def send_daily_digest(
     pending_proposals: int = 0,
 ) -> bool:
     """Send daily digest covering changes in the next 14 days."""
-    now = datetime.now(tz=timezone.utc)
+    # User-tz so the digest title shows the user's wall-clock date.
+    # Window arithmetic against tz-aware event start_dts works regardless.
+    now = tz_utils.now_user()
     cutoff = now + timedelta(days=_SHORT_WINDOW_DAYS)
 
     upcoming_new = [e for e in new_events if e.start_dt <= cutoff]
@@ -80,7 +83,7 @@ def send_weekly_digest(
     state: "state_module.State",
 ) -> bool:
     """Send weekly digest covering changes in the 14–365 day window."""
-    now = datetime.now(tz=timezone.utc)
+    now = tz_utils.now_user()
     near_cutoff = now + timedelta(days=_SHORT_WINDOW_DAYS)
     far_cutoff = now + timedelta(days=_LONG_WINDOW_DAYS)
 

@@ -37,6 +37,7 @@ import requests
 
 import config
 import state as state_module
+import tz_utils
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ def _run_text_job(state, job: dict) -> None:
         main_module._propose_events(events, state, snapshot, dry_run=False, mock=False)
         # Refresh dashboard after each job so the user sees updates immediately.
         if events:
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_str = tz_utils.today_user_str()
             from notifiers import slack_notifier
             all_items = state.get_all_proposal_items_for_dashboard(today_str)
             slack_notifier.post_or_update_dashboard(all_items, state)
@@ -301,8 +302,7 @@ def _ensure_swap_decision_posted(state) -> None:
     # Trigger a dashboard render so the buttons show up.
     try:
         from notifiers import slack_notifier
-        from datetime import timezone
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = tz_utils.today_user_str()
         all_items = state.get_all_proposal_items_for_dashboard(today)
         slack_notifier.post_or_update_dashboard(all_items, state)
     except Exception as exc:

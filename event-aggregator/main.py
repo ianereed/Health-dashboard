@@ -25,6 +25,7 @@ from thefuzz import fuzz
 import config
 import extractor
 import state as state_module
+import tz_utils
 from analyzers import calendar_analyzer
 from analyzers.calendar_analyzer import CalendarEvent
 from connectors import google_auth
@@ -1297,22 +1298,25 @@ def _send_digests(state: state_module.State, dry_run: bool = False) -> None:
     if dry_run:
         return
 
-    now_utc = datetime.now(timezone.utc)
-    now_local = datetime.now()
+    # Digests fire at user-local hour / weekday boundaries. Use user_tz for
+    # both the hour gate AND the "did we already send today" date comparison
+    # so the day rolls at the user's midnight, not UTC's. last_digest_*
+    # returns a UTC tz-aware dt; convert before comparing dates.
+    user_tz = tz_utils.now_user().tzinfo
+    now_local = tz_utils.now_user()
 
+    last_daily = state.last_digest_daily()
+    last_daily_local_date = last_daily.astimezone(user_tz).date() if last_daily else None
     should_daily = (
         now_local.hour >= config.DIGEST_DAILY_HOUR
-        and (
-            state.last_digest_daily() is None
-            or state.last_digest_daily().date() < now_utc.date()
-        )
+        and (last_daily_local_date is None or last_daily_local_date < now_local.date())
     )
+
+    last_weekly = state.last_digest_weekly()
+    last_weekly_local_date = last_weekly.astimezone(user_tz).date() if last_weekly else None
     should_weekly = (
         now_local.weekday() == config.DIGEST_WEEKLY_DOW
-        and (
-            state.last_digest_weekly() is None
-            or state.last_digest_weekly().date() < now_utc.date()
-        )
+        and (last_weekly_local_date is None or last_weekly_local_date < now_local.date())
     )
 
     if not should_daily and not should_weekly:

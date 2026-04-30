@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     import state as state_module
 
 import config
+import tz_utils
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def get_or_create_day_thread(state: "state_module.State") -> str | None:
     if not config.SLACK_BOT_TOKEN:
         return None
 
-    today_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    today_str = tz_utils.today_user_str()
     thread_ts, thread_date = state.get_day_thread()
 
     if thread_ts and thread_date == today_str:
@@ -57,7 +58,7 @@ def get_or_create_day_thread(state: "state_module.State") -> str | None:
 
             # New day — create a fresh thread opener
             client = _client()
-            date_display = datetime.now(tz=timezone.utc).strftime("%B %-d, %Y")
+            date_display = tz_utils.now_user().strftime("%B %-d, %Y")
             result = client.chat_postMessage(
                 channel=config.SLACK_NOTIFY_CHANNEL,
                 text=f"Event Aggregator — {date_display}",
@@ -847,7 +848,7 @@ def post_or_update_dashboard(
         return None
 
     import state as _state_mod
-    today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    today = tz_utils.today_user_str()
     blocks = build_dashboard_blocks(
         items,
         today,

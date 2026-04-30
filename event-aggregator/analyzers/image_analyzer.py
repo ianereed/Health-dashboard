@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 import requests
 
 import config
+import tz_utils
 from models import CandidateEvent, FileAnalysisResult
 
 logger = logging.getLogger(__name__)
@@ -127,7 +128,7 @@ def _analyze_page_local(file_bytes: bytes, filename: str, mimetype: str) -> dict
         return None
 
     b64_data = base64.standard_b64encode(file_bytes).decode("ascii")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = tz_utils.today_user_str()
     prompt = _LOCAL_VISION_PROMPT.format(
         categories=_build_categories_text(),
         today=today,
@@ -184,7 +185,7 @@ def _detect_calendar_items_local(structured_text: str) -> list[CandidateEvent]:
     if not structured_text or not structured_text.strip():
         return []
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = tz_utils.today_user_str()
     text_snippet = structured_text[:4000]
     prompt = _CALENDAR_DETECT_PROMPT.format(today=today, text=text_snippet)
     payload = {
@@ -483,7 +484,7 @@ def check_local_vision_available() -> bool:
 
 def _mock_result(filename: str) -> FileAnalysisResult:
     """Return a synthetic FileAnalysisResult for --mock testing."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = tz_utils.today_user_str()
     from zoneinfo import ZoneInfo
     tz = ZoneInfo(config.USER_TIMEZONE)
     mock_start = datetime.now(tz).replace(hour=14, minute=0, second=0, microsecond=0)
