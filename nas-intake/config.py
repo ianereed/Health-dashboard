@@ -29,7 +29,12 @@ MOUNT_HELPER_TIMEOUT_S = 30
 
 # Large-file pipeline (escalation path — see large_file_pipeline.py)
 LARGE_FILE_TRIGGER_TIMEOUTS = 3      # # of small-file timeouts before escalating
-LARGE_FILE_HEARTBEAT_STALE_S = 300   # heartbeat unchanged this long → assume hung
+# Heartbeat-stale threshold for the watchdog. Must comfortably exceed
+# `_analyze_page_local`'s worst-case retry budget: 3 attempts × 120s + 1s+2s
+# backoffs = ~363s for a single page. We chose 600s during the first live run
+# (Kaiser HMO 20.pdf, 14 pages averaging 86s/page) — page 11 hit retries and
+# tripped the original 300s threshold even though it wasn't truly wedged.
+LARGE_FILE_HEARTBEAT_STALE_S = 600
 LARGE_FILE_HEARTBEAT_POLL_S = 30     # how often the watchdog checks the heartbeat
 LARGE_FILE_LOG_DIR = Path.home() / "Library" / "Logs" / "home-tools-nas-intake-large"
 
