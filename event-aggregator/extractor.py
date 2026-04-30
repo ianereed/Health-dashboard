@@ -183,8 +183,15 @@ def _build_context_block(msg: RawMessage) -> str:
             lines.append(f"Channel: {m['channel'][:100]}")
 
     elif msg.source == "imessage":
-        if m.get("handle_id"):
-            lines.append(f"Sender: {m['handle_id'][:100]}")
+        # Prefer the resolved handle string (phone/email) when present;
+        # fall back to the int handle_id stringified. Either way the value
+        # MUST be coerced to str — handle_id from chat.db is an integer
+        # FK and slicing an int raises TypeError (caught a real bug
+        # 2026-04-29 where every "yes" pre-classified imessage crashed
+        # extraction silently).
+        handle = m.get("handle") or m.get("handle_id")
+        if handle:
+            lines.append(f"Sender: {str(handle)[:100]}")
 
     return "\n".join(lines)
 
