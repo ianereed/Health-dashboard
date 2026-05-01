@@ -9,12 +9,22 @@ the `~/.claude/projects/.../memory/` entries (the accumulated lessons).
 
 ## Quick status (as of 2026-05-01)
 
+**Phase 7 NAS backup LIVE on the mini** (commit `5f806aa`, 2026-05-01):
+two restic repos at `~/Share1/mac-mini-backups/{restic-hourly,restic-daily}`
+on the iananny NAS. Hourly agent backs up `health.db` at every :17;
+daily agent at 03:30 backs up state.json + event_log.jsonl + .env +
+finance.db + nas-intake/state.json + login.keychain-db + incidents.jsonl;
+weekly prune Sunday 04:00. All 13 deploy gates passed including bare-metal
+recovery dry-run. Recovery secrets in 1Password "Mac mini home server
+recovery" Secure Note. Operator runbook at `Mac-mini/PHASE7.md`; bootstrap
+recovery doc at `Mac-mini/RECOVERY.md`. Time Machine + off-site (B2) deferred.
+
 Phase 6 monitoring layer LIVE on the mini (commit `a13c41a`, 2026-04-30):
 heartbeat (every 30 min) → `incidents.jsonl` → daily Slack digest at 07:00
 to `#ian-event-aggregator` + weekly SSH-failure digest. Three new LaunchAgents
-(`com.home-tools.heartbeat`, `daily-digest`, `weekly-ssh-digest`). All 8
-deploy gates passed; soaking. No new accounts, no Pushover, no modifications
-to existing service plists. Operator runbook at `Mac-mini/PHASE6.md`.
+(`com.home-tools.heartbeat`, `daily-digest`, `weekly-ssh-digest`). Operator
+runbook at `Mac-mini/PHASE6.md`. (Heartbeat extended in Phase 7 with a
+backup_health probe that ignores in-flight runs.)
 
 Everything Phase 5 and earlier is done; recipes preserved in
 `Mac-mini/history/` (5b health-dashboard, 5c service-monitor, 5d NAS mount,
@@ -29,7 +39,10 @@ tails) for every loaded `com.home-tools.*` and `com.health-dashboard.*` agent.
 
 ## Resume from here
 
-**Next single action**: Phase 7 — NAS backup. Detailed steps below.
+**Next single action**: Phase 12 — Pick 1 (Mini Jobs queue + console at
+`homeserver:8503`). See `~/.claude/plans/come-up-with-more-encapsulated-spring.md`
+§5 Pick 1 for the sketch; lock the design with `/plan-eng-review` before
+any code.
 
 Pre-flight (confirm health before starting new work):
 
@@ -63,7 +76,7 @@ troubleshooting, and rollback at **`Mac-mini/PHASE6.md`**.
 
 ---
 
-## Phase 7 — Backup (NEXT — NAS-only locked 2026-05-01)
+## Phase 7 — Backup (DONE 2026-05-01 — NAS-only)
 
 Goal: 3-2-1 backup so we can recover from disk failure or ransomware. Now
 that `health.db` is the authoritative copy (laptop's DB is frozen at the
@@ -92,19 +105,41 @@ Backup target is the iananny NAS (192.168.4.39) Share1 already mounted at
 - Phase 5d already proved NAS reachability + TCC + autofs-style remount
   patterns work; Phase 7 doesn't have to re-solve that.
 
-### Scope (v1)
+### What shipped
 
-1. **Time Machine to NAS (SMB target)** — system-native, encrypted, hourly.
-2. **`restic` to NAS** for the priority-list files at higher cadence — hourly
-   for `health.db`, daily for the rest. Repo password in keychain
-   (`restic-backup`/`password`).
-3. **Test a restore.** Pick one file, restore it to a scratch dir, diff.
-   Untested backups aren't backups.
-4. **Exclude:** `.venv/` directories, `__pycache__/`, `.git/`,
-   `~/.ollama/models/**` (re-pullable).
+- **Two restic repos** at `~/Share1/mac-mini-backups/restic-hourly/` and
+  `~/Share1/mac-mini-backups/restic-daily/` (encrypted, content-defined
+  chunked, deduplicated). Independent retention per repo.
+- **Three LaunchAgents**:
+  - `com.home-tools.restic-hourly` — every :17, backs up `health.db`
+  - `com.home-tools.restic-daily` — 03:30 daily, backs up state.json +
+    event_log.jsonl + .env + finance.db + nas-intake/state.json +
+    login.keychain-db + incidents.jsonl
+  - `com.home-tools.restic-prune` — Sun 04:00 weekly, runs
+    `restic prune` against both repos
+- **Recovery secrets** in 1Password Secure Note "Mac mini home server
+  recovery" — 5 fields: 2 restic passwords + NAS_USER/PASSWORD/IP. The
+  in-repo `Mac-mini/RECOVERY.md` is the bootstrap walkthrough; it points
+  at 1Password but never contains the live passwords.
+- **Heartbeat extended** with a `backup_health` probe that emits stale
+  incidents into the Phase 6 daily-digest pipeline. Ignores logs <60 s
+  old to avoid in-flight false-positives.
+- **service-monitor** registry now shows the 3 backup agents in a "Backup"
+  swim-lane on the dashboard.
 
-Off-site leg (B2/Wasabi/restic) is consciously deferred — revisit when
-something concrete makes it feel necessary, not as a pre-built option.
+### Decisions made (locked)
+
+- **Time Machine dropped from v1.** TM-on-NAS encryption from CLI is
+  fragile and unencrypted-on-NAS is a privacy regression. Phase 7.5 if
+  ever wanted = USB SSD with TM-via-GUI.
+- **Off-site (B2/Wasabi) deferred.** Phase 7.5 if/when something makes
+  it feel necessary.
+
+### Files
+
+Implementation plan (with all 8 open questions resolved + outside-voice
+findings folded in) at `~/.claude/plans/phase-7-nas-backup.md`. Operator
+runbook at `Mac-mini/PHASE7.md`. Recovery doc at `Mac-mini/RECOVERY.md`.
 
 ---
 

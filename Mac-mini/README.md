@@ -33,8 +33,8 @@ Tailscale.
 | 5c | Service monitor dashboard | ✅ 2026-04-27 — Streamlit at port 8502, shows every loaded LaunchAgent + queues + DBs + Ollama + log tails. `http://homeserver:8502/` |
 | 5d | NAS mount + TCC privacy fix | ✅ 2026-04-29 — Share1 mounted at `~/Share1` via `mount_smbfs //iananny@192.168.4.39/Share1`. Two TCC grants required: `tailscaled` in Local Network + `python3.12` in Full Disk Access. See `feedback_macos_lan_wedge_recovery.md`. |
 | 5e | nas-intake v1 (NAS drop-folder watcher) | ✅ 2026-04-29 — `~/Home-Tools/nas-intake/` LaunchAgent watches `~/Share1/**/[Ii]ntake/`, OCR + classifies via event-aggregator subprocess (NAS_WRITE_DISABLED=1), files under parent (`<parent>/<year>/<doc-type>/<date>_<slug>/`), appends per-parent JOURNAL.md + journal.jsonl, archives source to `intake/_processed/<YYYY-MM>/`. Calendar events come for free via the subprocess (proposed via Slack dashboard). Auto-remounts via `mount-nas.sh` if NAS unavailable. v1 verified end-to-end with a real medical PDF. |
-| 6 | Minimal monitoring (launchd logs + Pushover) | ⏳ Pending |
-| 7 | Backup (Time Machine + off-site) | ⏳ Pending |
+| 6 | Minimal monitoring (launchd logs + Pushover) | ✅ 2026-04-30 — descoped to daily Slack digest at 07:00 + heartbeat every 30 min + weekly SSH digest. See `Mac-mini/PHASE6.md`. |
+| 7 | Backup (Time Machine + off-site) | ✅ 2026-05-01 — NAS-only via restic, two repos at `~/Share1/mac-mini-backups/`. Hourly `health.db`, daily everything else, weekly prune. TM dropped (Phase 7.5 if ever wanted with USB SSD); off-site deferred. Recovery secrets in 1Password. See `Mac-mini/PHASE7.md` + `Mac-mini/RECOVERY.md`. |
 | 8 | Finance automation scripts (YNAB, Amazon reconciliation) | 🟢 Phase 1 + 2 LIVE 2026-04-24 — Slack bot + read-only YNAB API sync running on the mini; Amazon reconciliation deferred |
 | 9 | Slack UX split — dispatcher bot + `#ian-image-intake` (local-only classify/OCR) | 🟡 Code complete 2026-04-24; user must create Slack app + channel before loading LaunchAgent |
 | 10 | (Deferred) BlueBubbles iMessage bridge | ⏳ Deferred |
