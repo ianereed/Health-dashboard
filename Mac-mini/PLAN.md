@@ -39,10 +39,31 @@ tails) for every loaded `com.home-tools.*` and `com.health-dashboard.*` agent.
 
 ## Resume from here
 
-**Next single action**: Phase 12 — Pick 1 (Mini Jobs queue + console at
-`homeserver:8503`). See `~/.claude/plans/come-up-with-more-encapsulated-spring.md`
-§5 Pick 1 for the sketch; lock the design with `/plan-eng-review` before
-any code.
+**Phase 12 v3 LANDED 2026-05-01** (commits f2df5e9 → eb4d3bf → 814961c
+→ d83f74d → this commit). 12 cron-style LaunchAgents migrated to
+`@huey.periodic_task` Job kinds in `jobs/kinds/`. Mini Ops console live
+at `homeserver:8503`. HTTP enqueue at `homeserver:8504`. The
+`migration_verifier` Job runs hourly with auto-rollback on baseline
+divergence. Operator runbook at `Mac-mini/PHASE12.md`.
+
+**Next single action**: deploy + cutover on the mini.
+
+```bash
+ssh homeserver@homeserver '
+  cd ~/Home-Tools && git pull
+  bash jobs/install.sh                # consumer + http
+  bash console/install.sh             # :8503
+  bash jobs/install.sh migrate-all    # cut over all 12
+  python3 Mac-mini/scripts/preflight.py
+'
+```
+
+After that, the verifier auto-soaks for 72h. Phase 6's daily-digest at
+07:00 surfaces `migration_promoted` and `migration_rollback` incidents.
+After all 12 promote: `bash jobs/install.sh cleanup-soaked`.
+
+Then Phase 12.5 (event-aggregator fetch+worker migration) and Phase 13
+(meal-planner expansion).
 
 Pre-flight (confirm health before starting new work):
 
@@ -184,18 +205,29 @@ Tier-2 commands (mute/watch, force scan, undo last, changes since) shipped
 
 ---
 
-## Phase 12 — Pick 1: Mini Jobs queue + console (next major work after Phase 7)
+## Phase 12 — Mini Jobs framework + Mini Ops console (DONE 2026-05-01 ✅)
 
-Architectural foundation — typed `Job` queue, single long-running worker,
-new Streamlit GUI at `homeserver:8503` with Decisions / Ask / Intake /
-Settings / Jobs tabs. Closes the `state.json` file-lock race in the same
-PR. Every future feature becomes a `Job` subclass + a registry line, not a
-new LaunchAgent + plist + log + monitoring entry.
+Replaced 12 cron-style LaunchAgents with `@huey.periodic_task` Job kinds
+in `jobs/kinds/`. Operator runbook: **`Mac-mini/PHASE12.md`**.
 
-Sketch and rationale in
-`~/.claude/plans/come-up-with-more-encapsulated-spring.md` §5 Pick 1.
-Implementation plan to be authored when Phase 7 lands; will use the gstack
-`/plan-eng-review` skill.
+- `jobs/` — huey foundation, adapters (slack/gcal/todoist/card/nas/sheet),
+  `migration_verifier` (hourly auto-rollback on baseline divergence),
+  CLI (`enqueue/status/kinds/new/doctor/migrate/rollback/cleanup-soaked`),
+  HTTP enqueue at `homeserver:8504` (Tailscale-bound, bearer-token auth).
+- `console/` — Streamlit "Mini Ops" at `homeserver:8503`. Tabs:
+  Jobs, Decisions, Ask, Intake, Plan (placeholder for Phase 13).
+  Sidebar: Settings status panel.
+- 12 migrations land in one commit; cutover per-kind via
+  `bash jobs/install.sh migrate-all`. Each migration's `@baseline` metric
+  is checked hourly; 72 consecutive successes → auto-promote (delete
+  `.plist.disabled`); divergence → auto-rollback (rename back, kickstart
+  old plist). Net plist count: 21 → 10 in service-monitor's `SERVICES`.
+- Closes OPS6: `event-aggregator/state.py:save()` now requires an active
+  `state.locked()` block (RuntimeError otherwise); 32+ callsites wrapped.
+
+Plan source (v3): `~/.claude/plans/phase-12-mini-jobs-queue.md`
+Deferred to Phase 12.5: `event-aggregator.fetch` + worker (the queue +
+model-swap state machine doesn't decouple cleanly from fetch).
 
 ## Phase 13 — Meal-planner expansion (joint priority — first feature after backend)
 

@@ -16,7 +16,9 @@ leaves the house.
 | [`health-dashboard`](health-dashboard/README.md) | HRV / sleep / training-load Streamlit dashboard fed by Apple Health, Strava, Intervals, Garmin | mini | 🟢 live |
 | [`nas-intake`](nas-intake/README.md) | Watches `~/Share1/**/[Ii]ntake/` on the mini, OCRs + classifies docs via the event-aggregator pipeline, files them under `<parent>/<year>/<doc-type>/...` | mini | 🟢 live |
 | [`service-monitor`](service-monitor/README.md) | Streamlit dashboard at `homeserver:8502` showing all loaded LaunchAgents, queue depths, DB sizes, Ollama state, log tails | mini | 🟢 live |
-| [`Mac-mini`](Mac-mini/README.md) | Setup + ops log + cross-cutting LaunchAgents (heartbeat, daily Slack digest, weekly SSH digest, memory/ollama trackers, hourly+daily restic NAS backups) | mini | 🟢 live |
+| [`Mac-mini`](Mac-mini/README.md) | Setup + ops log + cross-cutting LaunchAgents (memory/ollama trackers; the cron-style ones — heartbeat, digests, restic — are now Mini Jobs in `jobs/`) | mini | 🟢 live |
+| [`jobs`](Mac-mini/PHASE12.md) | Phase 12 — typed-job framework (huey-backed). 12 cron-style LaunchAgents now run as `@huey.periodic_task` Job kinds in `jobs/kinds/`. HTTP enqueue at `homeserver:8504`. Operator runbook in `Mac-mini/PHASE12.md` | mini | 🟢 live |
+| [`console`](Mac-mini/PHASE12.md) | Phase 12 — Mini Ops Streamlit at `homeserver:8503`. Tabs: Jobs / Decisions / Ask / Intake / Plan (Phase 13 placeholder) | mini | 🟢 live |
 | [`meal-planner`](meal-planner/README.md) | Google Sheet + Apps Script grocery / recipe automation, with a Python sidecar for Gemini-powered batch jobs | laptop / Apps Script | 🟢 live |
 | [`medical-records`](medical-records/README.md) | Local-only PHI handling for an active recovery; writes appointments + medication tapers to GCal / Reminders | laptop only | 🟢 live |
 | [`contacts`](contacts/README.md) | Toolbox of one-shot Python scripts maintaining `antora_contacts.xlsx` | laptop | 🟡 ad-hoc |
@@ -29,32 +31,36 @@ agent registry.
 
 ## What's next
 
-**Just shipped:** Phase 7 NAS backup (2026-05-01) — two restic repos at
-`~/Share1/mac-mini-backups/`, hourly + daily backups of the 6 priority
-files, weekly prune. Time Machine deferred to Phase 7.5 with USB SSD;
-off-site (B2/Wasabi) deferred indefinitely. Operator runbook at
-[`Mac-mini/PHASE7.md`](Mac-mini/PHASE7.md); recovery doc at
-[`Mac-mini/RECOVERY.md`](Mac-mini/RECOVERY.md).
+**Just shipped:** Phase 12 v3 (2026-05-01) — Mini Jobs framework + Mini
+Ops console. 12 of the mini's 21 cron-style LaunchAgents now run as
+`@huey.periodic_task` Job kinds in `jobs/kinds/`. The `migration_verifier`
+runs hourly with auto-rollback on baseline divergence + auto-promote at
+72h soak. Console at `homeserver:8503` (Jobs / Decisions / Ask / Intake /
+Plan placeholder); HTTP enqueue at `homeserver:8504`. Closes the OPS6
+state.json flock invariant. Operator runbook:
+[`Mac-mini/PHASE12.md`](Mac-mini/PHASE12.md).
 
 The agreed forward sequence (see [`Mac-mini/PLAN.md`](Mac-mini/PLAN.md) for detail):
 
-1. **Pick 1 — Mini Jobs queue + console** at `homeserver:8503`. Architectural
-   foundation. Lifts the interactive surface out of Slack onto a GUI on the
-   mini; Slack stays for mobile. Closes `state.json` file-lock race in the
-   same PR. Implementation plan to be authored via `/plan-eng-review` when
-   the work starts.
-2. **Meal-planner expansion (joint priority — Anny + Ian).** First feature
-   work after the backend foundation lands. Targets: real actions from
-   iPhone (Apple Shortcuts → mini); meaningful weekly meal planning
-   collaboration on the Windows laptop with Claude. Architecture will be
-   designed when the time comes via the gstack review skills
-   (`/office-hours` → `/plan-ceo-review` → `/plan-eng-review`). See the
-   `project_meal_planner_expansion_priority.md` memory for the full ask.
+1. **Phase 12 cutover + 72h soak.** SSH-driven deploy of the framework on
+   the mini, then `bash jobs/install.sh migrate-all` to cut over all 12.
+   The verifier handles the rest unattended.
+2. **Phase 12.5 — event-aggregator fetch+worker migration.** Held back from
+   Phase 12 because the worker's queue + model-swap state machine doesn't
+   decouple cleanly from the fetch loop. Migrate as a unit later.
+3. **Phase 13 — Meal-planner expansion (joint priority, Anny + Ian).**
+   First feature work after the backend lands. Real actions from iPhone
+   via Apple Shortcuts → `:8504`; meaningful weekly planning on the
+   Windows laptop with Claude. Plan tab placeholder reserves the slot in
+   the Mini Ops console. Architecture designed via gstack review skills
+   when the work starts. See the `project_meal_planner_expansion_priority.md`
+   memory for the full ask.
 
-**Long-term future scope** (re-evaluate after the meal-planner work ships):
-the Tier-2 LLM orchestrator design at `future-architecture-upgrade.md`. Pick
-1's `Job` framework is likely to absorb much of its plumbing; revisit
-whether a separate orchestrator service is still warranted at that point.
+**Long-term future scope** (re-evaluate after Phase 13 ships): the Tier-2
+LLM orchestrator design at `future-architecture-upgrade.md`. Phase 12's
+`jobs.adapters` + `requires` + `baseline` machinery already covers a lot
+of what an orchestrator needs; revisit whether a separate orchestrator
+service is still warranted at that point.
 
 ## External docs / memory
 

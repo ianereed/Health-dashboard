@@ -167,96 +167,76 @@ def render_dataflow(status: dict, queues: dict, ollama: dict,
         _ext("→ event-agg  or  finance-mon/intake/"),
     ]))
 
-    # NAS Intake — files dropped into Share1/**/Intake/ folders. Pipeline
-    # delegates OCR to event-aggregator (subprocess, with NAS_WRITE_DISABLED=1)
-    # and does its own parent-rooted filing + per-parent JOURNAL.md.
-    if nas_intake and nas_intake.get("available"):
-        in_flight = nas_intake.get("files_in_flight_large", 0)
-        wedged = nas_intake.get("files_wedged", 0)
-        timeouts = nas_intake.get("files_with_timeouts", 0)
-        ni_status = nas_intake.get("status", "ok")
-        ni_mtime_age = nas_intake.get("mtime_age_sec")
-        # State.json should refresh every 5 min when the watcher ticks. >15 min
-        # without an update means the watcher is silent — possibly stuck or unloaded.
-        NI_AGING, NI_STALE = 900, 1800
-        counts_label = f"intake  large={in_flight}"
-        if timeouts:
-            counts_label += f"  retry={timeouts}"
-        if wedged:
-            counts_label += f"  ⚠wedged={wedged}"
-        lanes.append(_lane("NAS Intake", [
-            _ext("Share1/**/Intake/"), _arrow(),
-            _node("nas-intake 5m", st_("nas_intake"),
-                  _age_str(ni_mtime_age), _ts_cls(ni_mtime_age, NI_AGING, NI_STALE)),
-            _arrow(),
-            _node(counts_label, ni_status),
-            _arrow(),
-            _ext("→ event-agg  +  parent/JOURNAL.md"),
-        ]))
-    else:
-        lanes.append(_lane("NAS Intake", [
-            _ext("Share1/**/Intake/"), _arrow(),
-            _node("nas-intake 5m", st_("nas_intake")),
-            _arrow(),
-            _ext("(state.json unavailable)"),
-        ]))
+    # Mini Jobs — Phase 12. The 12 cron-style agents above were replaced
+    # by huey periodic_tasks running in this consumer. Heartbeat / digest /
+    # health-collect / restic / etc. are now Job kinds, not separate plists.
+    # See Mac-mini/PHASE12.md.
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        repo_root = _Path(__file__).resolve().parents[1]
+        if str(repo_root) not in _sys.path:
+            _sys.path.insert(0, str(repo_root))
+        from jobs import huey as _huey
+        queue_size = _huey.storage.queue_size()
+        jobs_summary = f"queue:{queue_size}"
+    except Exception as exc:
+        jobs_summary = f"unavailable ({type(exc).__name__})"
 
-    # Health dashboard — health.db shows mtime freshness
+    # Migrations in flight from migration_verifier
+    migrations_summary = ""
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        mfile = _Path.home() / "Home-Tools" / "run" / "migrations.json"
+        if mfile.exists():
+            mstate = _json.loads(mfile.read_text())
+            n_in_flight = len(mstate.get("in_flight", {}))
+            n_promoted = len(mstate.get("promoted", []))
+            n_rolled_back = len(mstate.get("rolled_back", []))
+            if n_in_flight or n_rolled_back:
+                migrations_summary = (
+                    f"in-flight:{n_in_flight}  promoted:{n_promoted}  rolled-back:{n_rolled_back}"
+                )
+    except Exception:
+        pass
+
+    jobs_lane = [
+        _ext("HTTP :8504  +  @periodic_task"),
+        _arrow(),
+        _node(f"jobs-consumer  {jobs_summary}", st_("jobs_consumer")),
+        _arrow(),
+        _ext("12 migrated kinds"),
+    ]
+    if migrations_summary:
+        jobs_lane.append(_arrow())
+        jobs_lane.append(_node(f"migrations  {migrations_summary}", "warn" if "rolled-back:0" not in migrations_summary else "ok"))
+    lanes.append(_lane("Mini Jobs", jobs_lane))
+
+    # Mini Ops console — :8503 — Streamlit surface for Ian (TC4).
+    lanes.append(_lane("Mini Ops", [
+        _node("console :8503", st_("console")),
+        _arrow(),
+        _ext("Jobs / Decisions / Ask / Intake / Plan"),
+    ]))
+
+    # Health dashboard — DB freshness only (collectors are Mini Jobs now).
     lanes.append(_lane("Health Dashboard", [
         _ext("iPhone Health"), _arrow(),
         _node("receiver :8095", st_("hd_receiver")),
-        '<span class="svc-mon-arrow"> ┐</span>',
-        _node("collect 7am", st_("hd_collect")),
-        _node("intervals-poll 5m", st_("hd_intervals")),
-        _node("staleness", st_("hd_staleness")),
-        '<span class="svc-mon-arrow"> ┘</span>',
         _arrow(),
         _ext("health.db", _age_str(hdb_age), _ts_cls(hdb_age, HDB_AGING, HDB_STALE)),
         _arrow(),
         _node("streamlit :8501", st_("hd_streamlit")),
     ]))
 
-    # Finance monitor — finance.db shows mtime freshness
+    # Finance monitor — bot KeepAlive; watcher is now a Mini Job (every 5m).
     lanes.append(_lane("Finance Monitor", [
         _ext("YNAB API + intake/"), _arrow(),
-        _node("watcher 5m", st_("fin_watcher")), _arrow(),
         _ext("finance.db", _age_str(fdb_age), _ts_cls(fdb_age, FDB_AGING, FDB_STALE)),
         _arrow(),
         _node("bot", st_("fin_bot")), _arrow(),
         _ext("Slack DM"),
-    ]))
-
-    # Phase 7 backup — restic snapshots to NAS. Freshness based on each
-    # agent's log mtime (matches what heartbeat.py:check_backup_freshness
-    # does for incident emission, so dashboard and incidents agree).
-    BACKUP_HOURLY_AGING, BACKUP_HOURLY_STALE = 4500, 7200    # 75min, 2h (every 1h)
-    BACKUP_DAILY_AGING, BACKUP_DAILY_STALE = 90000, 172800   # 25h, 48h (daily)
-    BACKUP_PRUNE_AGING, BACKUP_PRUNE_STALE = 691200, 1382400  # 8d, 16d (weekly)
-
-    def _backup_age_sec(svc_id: str) -> int | None:
-        svc = SERVICES_BY_ID.get(svc_id)
-        if not svc:
-            return None
-        try:
-            return int(time.time() - os.path.getmtime(svc.log_path))
-        except (OSError, FileNotFoundError):
-            return None
-
-    hourly_age = _backup_age_sec("p7_restic_hourly")
-    daily_age = _backup_age_sec("p7_restic_daily")
-    prune_age = _backup_age_sec("p7_restic_prune")
-
-    lanes.append(_lane("Backup", [
-        _ext("priority files"),
-        _arrow(),
-        _node("restic-hourly :17", st_("p7_restic_hourly"),
-              _age_str(hourly_age), _ts_cls(hourly_age, BACKUP_HOURLY_AGING, BACKUP_HOURLY_STALE)),
-        _node("restic-daily 03:30", st_("p7_restic_daily"),
-              _age_str(daily_age), _ts_cls(daily_age, BACKUP_DAILY_AGING, BACKUP_DAILY_STALE)),
-        _node("restic-prune Sun 04:00", st_("p7_restic_prune"),
-              _age_str(prune_age), _ts_cls(prune_age, BACKUP_PRUNE_AGING, BACKUP_PRUNE_STALE)),
-        _arrow(),
-        _ext("~/Share1/mac-mini-backups/  (encrypted)"),
     ]))
 
     # Shared infra — Ollama with per-model loaded/idle visibility
