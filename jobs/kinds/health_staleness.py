@@ -18,7 +18,7 @@ VENV_PYTHON = PROJECT / ".venv" / "bin" / "python3"
 
 @huey.periodic_task(crontab(minute="0", hour="7,21"))
 @requires(["db:health-dashboard/data/health.db", "fs:health-dashboard"])
-@baseline(metric="file-mtime:logs/health-staleness.log", divergence_window="20m")
+@baseline(metric="file-mtime:logs/health-staleness.log", divergence_window="20m", cadence="12h")
 @migrates_from("com.health-dashboard.staleness")
 def health_staleness() -> dict:
     proc = subprocess.run(

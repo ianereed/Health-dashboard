@@ -18,7 +18,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "Mac-mini" / "scripts" / "restic-
 
 @huey.periodic_task(crontab(minute="30", hour="3"))
 @requires(["bin:restic", "fs:Mac-mini/scripts"])
-@baseline(metric="restic-snapshot-count:restic-daily", divergence_window="25h")
+@baseline(metric="restic-snapshot-count:restic-daily", divergence_window="25h", cadence="1d")
 def restic_daily() -> dict:
     proc = subprocess.run([sys.executable, str(SCRIPT), "--profile", "daily"],
                           capture_output=True, text=True, timeout=3600)

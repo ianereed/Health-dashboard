@@ -18,7 +18,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "Mac-mini" / "scripts" / "restic-
 
 @huey.periodic_task(crontab(minute="0", hour="4", day_of_week="0"))
 @requires(["bin:restic", "fs:Mac-mini/scripts"])
-@baseline(metric="file-mtime:logs/restic-prune.log", divergence_window="8d")
+@baseline(metric="file-mtime:logs/restic-prune.log", divergence_window="8d", cadence="7d")
 def restic_prune() -> dict:
     proc = subprocess.run([sys.executable, str(SCRIPT)],
                           capture_output=True, text=True, timeout=7200)

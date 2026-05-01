@@ -23,7 +23,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "Mac-mini" / "scripts" / "daily-d
 
 @huey.periodic_task(crontab(minute="0", hour="7"))
 @requires(["secret:SLACK_BOT_TOKEN", "fs:logs"])
-@baseline(metric="file-mtime:logs/daily-digest.log", divergence_window="20m")
+@baseline(metric="file-mtime:logs/daily-digest.log", divergence_window="20m", cadence="1d")
 def daily_digest() -> dict:
     proc = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=120)
     record_fire("daily_digest")

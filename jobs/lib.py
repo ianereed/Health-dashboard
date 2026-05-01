@@ -28,12 +28,18 @@ logger = logging.getLogger(__name__)
 class Baseline:
     metric: str               # e.g. "incidents.jsonl-mtime"
     divergence_window: str    # e.g. "2h", "35m", "80m", "8d"
-    cadence_seconds: int = 0  # filled in by @huey.periodic_task wrapper if needed
+    cadence: str = ""         # e.g. "5m", "30m", "1d", "7d" — must match the
+                              # @huey.periodic_task crontab. Drives the
+                              # verifier's grace period + staleness math.
     description: str = ""
 
     @property
     def divergence_seconds(self) -> int:
         return _parse_duration(self.divergence_window)
+
+    @property
+    def cadence_seconds(self) -> int:
+        return _parse_duration(self.cadence) if self.cadence else 3600
 
 
 def get_baseline(fn) -> Baseline | None:
@@ -95,13 +101,22 @@ def requires(deps: list[str]) -> Callable:
     return deco
 
 
-def baseline(metric: str, divergence_window: str, description: str = "") -> Callable:
+def baseline(metric: str, divergence_window: str, cadence: str = "", description: str = "") -> Callable:
     """Annotate a Job with the @baseline metric the migration_verifier reads.
 
     The verifier introspects `fn._baseline` on the in-flight Job's callable
     to know what to check after each migration cutover.
+
+    `cadence` should match the @huey.periodic_task crontab — it tells the
+    verifier how long to grace-skip before judging a missing baseline as
+    failure. Defaults to 1h if omitted (loose default; declare explicitly).
     """
-    bl = Baseline(metric=metric, divergence_window=divergence_window, description=description)
+    bl = Baseline(
+        metric=metric,
+        divergence_window=divergence_window,
+        cadence=cadence,
+        description=description,
+    )
 
     def deco(fn: Callable) -> Callable:
         fn._baseline = bl  # type: ignore[attr-defined]

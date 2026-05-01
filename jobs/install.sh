@@ -63,9 +63,21 @@ case "$ACTION" in
         # Job kind is already running in the consumer (committed in code).
         #
         # Order: simplest first; verifier watches each.
+        #
+        # Held back (post-2026-05-01 hotfix audit):
+        #   - health_intervals_poll: Intervals.icu credentials missing from
+        #     keychain; original LaunchAgent has been silently failing.
+        #     Migrate after `health-dashboard/setup.sh` is run.
+        #   - health_collect: ambient question whether Garmin/Strava
+        #     collectors actually run successfully. Verify manually
+        #     before migrating.
+        #   - health_staleness: rc=1 under consumer in 2026-05-01 cutover
+        #     but rc=0 manually — pending re-observation under fixed
+        #     consumer.
+        # To migrate any held-back kind explicitly, run:
+        #     bash jobs/install.sh migrate <kind>
         for kind in heartbeat daily_digest weekly_ssh_digest dispatcher_3day_check \
-                    finance_monitor_watch nas_intake_scan health_collect \
-                    health_intervals_poll health_staleness \
+                    finance_monitor_watch nas_intake_scan \
                     restic_hourly restic_daily restic_prune ; do
             echo "--- migrating $kind ---"
             "$JOBS/.venv/bin/python" -m jobs.cli migrate "$kind" || {

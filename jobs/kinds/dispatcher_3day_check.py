@@ -19,7 +19,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "Mac-mini" / "scripts" / "dispatc
 # we anchor to day_of_month at known offsets.
 @huey.periodic_task(crontab(minute="30", hour="9", day="1,4,7,10,13,16,19,22,25,28"))
 @requires(["bin:bash", "fs:logs"])
-@baseline(metric="file-mtime:logs/dispatcher-3day.txt", divergence_window="80h")
+@baseline(metric="file-mtime:logs/dispatcher-3day.txt", divergence_window="80h", cadence="3d")
 def dispatcher_3day_check() -> dict:
     proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, timeout=300)
     record_fire("dispatcher_3day_check")

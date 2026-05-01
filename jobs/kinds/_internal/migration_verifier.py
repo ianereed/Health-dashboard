@@ -1,15 +1,39 @@
 """
-migration_verifier — heart of Phase 12 v3.
+migration_verifier — heart of Phase 12 v3 (post-2026-05-01 hotfix).
 
 Hourly @periodic_task that walks the in-flight migration list and:
   1. Confirms the migrated Job has fired since the last check (within
      the cadence × 1.5 budget). No-fire → rollback.
-  2. Confirms the @baseline metric advanced as expected. Diverged → rollback.
+  2. Confirms the @baseline metric is healthy. Diverged → rollback.
   3. Increments the soaked-hours counter. At 72 → auto-promote (delete the
      `.plist.disabled` and the original script).
 
 Rollback renames `<plist>.disabled` → `<plist>` and kickstarts launchctl,
 then logs an incident readable by Phase 6's daily-digest.
+
+## Baseline check semantics (hotfix)
+
+Each migration record carries a `baseline_snapshot` captured at
+`migration_begun` (mtime float / restic snapshot count / None for
+unsupported metrics). The verifier judges health using THREE signals:
+
+  (a) **Grace period.** For the first `cadence_seconds × 2` after
+      migration_begun, no rollback fires for path-missing or
+      no-advance — the kind hasn't been around long enough for its
+      next natural fire. Grace passes count as "healthy" but do NOT
+      increment hours_soaked.
+
+  (b) **Snapshot advance.** For mtime/count metrics, after grace, the
+      current value must be greater than the snapshot. This catches
+      the case where the baseline file existed pre-cutover but the
+      migrated kind isn't actually updating it.
+
+  (c) **Staleness window.** After grace, current value must also be
+      "recent enough". Recent means: `now - mtime ≤ cadence + window`.
+      This handles all cadences: 5-min kinds get short windows;
+      weekly kinds get week-long windows.
+
+A single rollback fires only if (a) is exhausted AND ((b) or (c)) fails.
 """
 from __future__ import annotations
 
@@ -48,6 +72,7 @@ class Migration:
     last_check: str = ""           # ISO
     hours_soaked: int = 0
     last_fire: str = ""            # ISO of last consumer fire (set by hook)
+    baseline_snapshot: Any = None  # mtime float / count int / None
     notes: list[str] = field(default_factory=list)
 
 
@@ -77,36 +102,45 @@ def log_incident(event: str, **fields: Any) -> None:
         f.write(json.dumps(record, default=str) + "\n")
 
 
-# ── @baseline metric checks ───────────────────────────────────────────────────
-#
-# Each entry maps a `baseline_metric` string to a callable that returns
-# (passed: bool, evidence: dict). Adding a new migration means adding one
-# entry here when its metric isn't already supported.
+# ── path helpers shared by snapshot capture + verifier ────────────────────────
 
 
-def _check_mtime_recent(path: Path, max_age_seconds: int) -> tuple[bool, dict]:
-    if not path.exists():
-        return False, {"reason": "path_missing", "path": str(path)}
-    age = datetime.now(timezone.utc).timestamp() - path.stat().st_mtime
-    return age <= max_age_seconds, {"path": str(path), "age_seconds": int(age), "limit": max_age_seconds}
+def _resolve_metric_path(metric: str) -> Path | None:
+    """Map a baseline metric string to the on-disk Path it observes.
 
-
-def _check_db_mtime(rel: str, max_age_seconds: int) -> tuple[bool, dict]:
-    return _check_mtime_recent(Path.home() / "Home-Tools" / rel, max_age_seconds)
-
-
-def _check_restic_snapshot_count(repo: str, max_age_seconds: int) -> tuple[bool, dict]:
-    """Compare current snapshot count vs baseline — pass if it grew within the window.
-
-    repo is the path under ~/Share1/ (autofs target). The mini's restic password
-    is in env var RESTIC_PASSWORD_<repo_upper>.
+    Returns None for metrics that aren't path-based (restic counts, no-op).
     """
-    repo_path = Path.home() / "Share1" / repo
+    if metric == "incidents.jsonl-mtime":
+        return INCIDENTS_PATH
+    if metric.startswith("file-mtime:"):
+        return Path.home() / "Home-Tools" / metric.split(":", 1)[1]
+    if metric.startswith("db-mtime:"):
+        return Path.home() / "Home-Tools" / metric.split(":", 1)[1]
+    return None
+
+
+def _restic_repo_path(repo: str) -> Path:
+    """Where the named restic repo lives on disk.
+
+    Per Mac-mini/scripts/restic-backup.py:25, repos are under
+    ~/Share1/mac-mini-backups/, NOT ~/Share1/. Pre-hotfix verifier had
+    the wrong path here.
+
+    Resolved lazily via Path.home() so tests that monkeypatch HOME
+    pick up the override.
+    """
+    return Path.home() / "Share1" / "mac-mini-backups" / repo
+
+
+def _restic_snapshot_count(repo: str) -> tuple[int | None, dict]:
+    """Read snapshot count for a restic repo. Returns (count, evidence).
+    count=None if unreadable; evidence describes why."""
+    repo_path = _restic_repo_path(repo)
     if not repo_path.exists():
-        return False, {"reason": "repo_missing", "path": str(repo_path)}
+        return None, {"reason": "repo_missing", "path": str(repo_path)}
     pwd = os.environ.get(f"RESTIC_PASSWORD_{repo.upper().replace('-', '_')}")
     if not pwd:
-        return False, {"reason": "no_password_env", "expected": f"RESTIC_PASSWORD_{repo.upper().replace('-', '_')}"}
+        return None, {"reason": "no_password_env", "expected": f"RESTIC_PASSWORD_{repo.upper().replace('-', '_')}"}
     try:
         out = subprocess.run(
             ["restic", "-r", str(repo_path), "snapshots", "--json"],
@@ -114,42 +148,177 @@ def _check_restic_snapshot_count(repo: str, max_age_seconds: int) -> tuple[bool,
             capture_output=True, text=True, timeout=120,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return False, {"reason": "restic_unavailable", "error": str(exc)}
+        return None, {"reason": "restic_unavailable", "error": str(exc)}
     if out.returncode != 0:
-        return False, {"reason": "restic_error", "stderr": out.stderr[:200]}
+        return None, {"reason": "restic_error", "stderr": out.stderr[:200]}
     try:
         snaps = json.loads(out.stdout)
     except json.JSONDecodeError:
-        return False, {"reason": "json_decode_failed", "stdout_prefix": out.stdout[:200]}
-    if not snaps:
-        return False, {"reason": "no_snapshots", "repo": repo}
-    latest = max(s.get("time", "") for s in snaps)
-    try:
-        latest_dt = datetime.fromisoformat(latest.replace("Z", "+00:00"))
-    except ValueError:
-        return False, {"reason": "bad_timestamp", "latest": latest}
-    age = (datetime.now(timezone.utc) - latest_dt).total_seconds()
-    return age <= max_age_seconds, {"repo": repo, "latest_age_seconds": int(age), "limit": max_age_seconds, "count": len(snaps)}
+        return None, {"reason": "json_decode_failed", "stdout_prefix": out.stdout[:200]}
+    return len(snaps), {"repo": repo, "count": len(snaps)}
 
 
-def check_baseline(metric: str, divergence_window: str) -> tuple[bool, dict]:
-    """Dispatch on metric string. Returns (passed, evidence)."""
-    window_s = _parse_duration(divergence_window)
+def capture_baseline_snapshot(metric: str) -> Any:
+    """Read the current value of a baseline metric — used at migration_begun
+    to record a `baseline_snapshot` that the verifier later requires the
+    migrated kind to advance past.
 
-    if metric == "incidents.jsonl-mtime":
-        return _check_mtime_recent(INCIDENTS_PATH, window_s)
-    if metric.startswith("file-mtime:"):
-        rel = metric.split(":", 1)[1]
-        return _check_mtime_recent(Path.home() / "Home-Tools" / rel, window_s)
-    if metric.startswith("db-mtime:"):
-        rel = metric.split(":", 1)[1]
-        return _check_db_mtime(rel, window_s)
+    Returns:
+      - float (mtime epoch seconds) for file-mtime / db-mtime / incidents.jsonl-mtime
+      - int (snapshot count) for restic-snapshot-count
+      - None for no-op or unsupported metrics, or when path doesn't exist yet
+    """
+    p = _resolve_metric_path(metric)
+    if p is not None:
+        return p.stat().st_mtime if p.exists() else None
     if metric.startswith("restic-snapshot-count:"):
         repo = metric.split(":", 1)[1]
-        return _check_restic_snapshot_count(repo, window_s)
+        count, _ = _restic_snapshot_count(repo)
+        return count
+    return None
+
+
+# ── @baseline metric checks ───────────────────────────────────────────────────
+
+
+def _check_path_metric(
+    path: Path,
+    window_s: int,
+    cadence_s: int,
+    snapshot: float | None,
+    elapsed_s: float,
+) -> tuple[bool, dict]:
+    """Verifier check for any path-based mtime metric.
+
+    Logic (post-hotfix):
+      - If still in grace (elapsed < cadence × 2) and path is missing or
+        mtime <= snapshot, return healthy (first_fire_grace).
+      - After grace: path must exist, mtime must be > snapshot, and
+        `now - mtime ≤ cadence + window`.
+    """
+    grace_s = cadence_s * 2
+
+    if not path.exists():
+        if elapsed_s < grace_s:
+            return True, {"reason": "first_fire_grace", "path": str(path), "elapsed_s": int(elapsed_s), "grace_s": grace_s}
+        return False, {"reason": "path_missing", "path": str(path)}
+
+    current_mtime = path.stat().st_mtime
+    age_s = datetime.now(timezone.utc).timestamp() - current_mtime
+    max_age_s = cadence_s + window_s
+
+    # Snapshot-advance: after grace, require strict advance.
+    if snapshot is not None and current_mtime <= snapshot:
+        if elapsed_s < grace_s:
+            return True, {
+                "reason": "first_fire_grace",
+                "path": str(path),
+                "elapsed_s": int(elapsed_s),
+                "grace_s": grace_s,
+                "snapshot_unchanged": True,
+            }
+        return False, {
+            "reason": "no_advance_since_snapshot",
+            "path": str(path),
+            "snapshot_mtime": snapshot,
+            "current_mtime": current_mtime,
+        }
+
+    # Staleness: now-mtime ≤ cadence + window
+    if age_s > max_age_s:
+        if elapsed_s < grace_s:
+            return True, {
+                "reason": "first_fire_grace",
+                "path": str(path),
+                "age_s": int(age_s),
+                "limit_s": max_age_s,
+            }
+        return False, {
+            "reason": "stale",
+            "path": str(path),
+            "age_seconds": int(age_s),
+            "limit_seconds": max_age_s,
+        }
+
+    return True, {"path": str(path), "age_seconds": int(age_s), "limit_seconds": max_age_s}
+
+
+def _check_restic_snapshot_count_advanced(
+    repo: str,
+    window_s: int,
+    cadence_s: int,
+    snapshot: int | None,
+    elapsed_s: float,
+) -> tuple[bool, dict]:
+    """Restic check using snapshot-advance + cadence-aware staleness."""
+    grace_s = cadence_s * 2
+    count, evidence = _restic_snapshot_count(repo)
+    if count is None:
+        if elapsed_s < grace_s:
+            return True, {"reason": "first_fire_grace", **evidence, "elapsed_s": int(elapsed_s)}
+        return False, evidence
+
+    # Snapshot-advance
+    if snapshot is not None and count <= snapshot:
+        if elapsed_s < grace_s:
+            return True, {"reason": "first_fire_grace", "repo": repo, "snapshot_count": snapshot, "current_count": count, "elapsed_s": int(elapsed_s)}
+        return False, {"reason": "no_advance_since_snapshot", "repo": repo, "snapshot_count": snapshot, "current_count": count}
+
+    # Latest-snapshot staleness (was already checked here pre-hotfix)
+    pwd = os.environ.get(f"RESTIC_PASSWORD_{repo.upper().replace('-', '_')}")
+    if not pwd:
+        return True, {"repo": repo, "count": count, "warn": "no password env to fetch latest timestamp"}
+    try:
+        out = subprocess.run(
+            ["restic", "-r", str(_restic_repo_path(repo)), "snapshots", "--json"],
+            env={**os.environ, "RESTIC_PASSWORD": pwd},
+            capture_output=True, text=True, timeout=120,
+        )
+        snaps = json.loads(out.stdout)
+        if not snaps:
+            return False, {"reason": "no_snapshots", "repo": repo}
+        latest = max(s.get("time", "") for s in snaps)
+        latest_dt = datetime.fromisoformat(latest.replace("Z", "+00:00"))
+        age = (datetime.now(timezone.utc) - latest_dt).total_seconds()
+        max_age_s = cadence_s + window_s
+        if age > max_age_s:
+            if elapsed_s < grace_s:
+                return True, {"reason": "first_fire_grace", "repo": repo, "age_s": int(age), "limit_s": max_age_s}
+            return False, {"reason": "stale", "repo": repo, "latest_age_seconds": int(age), "limit_seconds": max_age_s}
+        return True, {"repo": repo, "count": count, "latest_age_seconds": int(age), "limit_seconds": max_age_s}
+    except Exception as exc:
+        return True, {"repo": repo, "count": count, "warn": f"latest-timestamp check skipped: {exc}"}
+
+
+def check_baseline(
+    metric: str,
+    divergence_window: str,
+    cadence_seconds: int,
+    snapshot: Any,
+    elapsed_seconds: float,
+) -> tuple[bool, dict]:
+    """Dispatch on metric string. Returns (passed, evidence).
+
+    Args:
+      metric: from @baseline(metric=…)
+      divergence_window: from @baseline(divergence_window=…); fudge factor.
+      cadence_seconds: kind's expected fire cadence (drives grace + staleness).
+      snapshot: value captured at migration_begun (mtime float / count int / None).
+      elapsed_seconds: now - migration_begun.
+    """
+    window_s = _parse_duration(divergence_window)
+
+    p = _resolve_metric_path(metric)
+    if p is not None:
+        return _check_path_metric(p, window_s, cadence_seconds, snapshot, elapsed_seconds)
+
+    if metric.startswith("restic-snapshot-count:"):
+        repo = metric.split(":", 1)[1]
+        return _check_restic_snapshot_count_advanced(repo, window_s, cadence_seconds, snapshot, elapsed_seconds)
+
     if metric == "no-op":
-        # For migrations whose baseline is "the verifier itself just runs cleanly"
         return True, {"reason": "no-op metric — always passes"}
+
     return False, {"reason": "unsupported_metric", "metric": metric}
 
 
@@ -194,12 +363,22 @@ def migration_verifier() -> dict:
 
     promoted_now = []
     rolled_back_now = []
+    grace_skips: list[str] = []
     now = datetime.now(timezone.utc)
 
     for kind, m in list(in_flight.items()):
         m["last_check"] = now.isoformat()
 
-        # 1. Did it fire? (last_fire updated by huey post-execute hook in jobs/__init__.py)
+        # Manual halt — operator paused this kind. Don't act on it.
+        if m.get("halted"):
+            continue
+
+        cadence_s = int(m.get("cadence_seconds") or 3600)
+        started_at = datetime.fromisoformat(m["started_at"])
+        elapsed_s = (now - started_at).total_seconds()
+        grace_s = cadence_s * 2
+
+        # 1. Did it fire? Skip in grace; cadence × 1.5 once we're past grace.
         last_fire_iso = m.get("last_fire", "")
         if last_fire_iso:
             try:
@@ -208,9 +387,9 @@ def migration_verifier() -> dict:
             except ValueError:
                 gap = float("inf")
         else:
-            gap = (now - datetime.fromisoformat(m["started_at"])).total_seconds()
-        if gap > m["cadence_seconds"] * 1.5 and gap > 600:  # ignore <10min as startup grace
-            evidence = {"gap_seconds": int(gap), "cadence_seconds": m["cadence_seconds"]}
+            gap = elapsed_s
+        if elapsed_s >= grace_s and gap > cadence_s * 1.5 and gap > 600:
+            evidence = {"gap_seconds": int(gap), "cadence_seconds": cadence_s}
             rollback(m, reason="no_fire", evidence=evidence)
             state.setdefault("rolled_back", []).append({**m, "reason": "no_fire", "evidence": evidence, "at": now.isoformat()})
             del in_flight[kind]
@@ -218,7 +397,13 @@ def migration_verifier() -> dict:
             continue
 
         # 2. Baseline check.
-        passed, evidence = check_baseline(m["baseline_metric"], m["divergence_window"])
+        passed, evidence = check_baseline(
+            m["baseline_metric"],
+            m["divergence_window"],
+            cadence_s,
+            m.get("baseline_snapshot"),
+            elapsed_s,
+        )
         if not passed:
             rollback(m, reason="baseline_diverged", evidence=evidence)
             state.setdefault("rolled_back", []).append({**m, "reason": "baseline_diverged", "evidence": evidence, "at": now.isoformat()})
@@ -226,7 +411,10 @@ def migration_verifier() -> dict:
             rolled_back_now.append(kind)
             continue
 
-        # 3. Soak counter.
+        # 3. Soak counter — only ticks for genuinely-healthy checks, not grace.
+        if evidence.get("reason") == "first_fire_grace":
+            grace_skips.append(kind)
+            continue
         m["hours_soaked"] = m.get("hours_soaked", 0) + 1
         if m["hours_soaked"] >= SOAK_TARGET_HOURS:
             promote(m)
@@ -241,6 +429,7 @@ def migration_verifier() -> dict:
         "checked": len(in_flight) + len(promoted_now) + len(rolled_back_now),
         "promoted": promoted_now,
         "rolled_back": rolled_back_now,
+        "grace_skips": grace_skips,
         "in_flight_remaining": list(in_flight.keys()),
     }
 

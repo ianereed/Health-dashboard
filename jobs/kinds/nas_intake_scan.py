@@ -18,7 +18,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "nas-intake" / "watcher.py"
 
 @huey.periodic_task(crontab(minute="*/5"))
 @requires(["fs:nas-intake"])
-@baseline(metric="file-mtime:nas-intake/state.json", divergence_window="6m")
+@baseline(metric="file-mtime:nas-intake/state.json", divergence_window="6m", cadence="5m")
 @migrates_from("com.home-tools.nas-intake")
 def nas_intake_scan() -> dict:
     proc = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=600)

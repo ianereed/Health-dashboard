@@ -215,10 +215,18 @@ def _migrate(kind: str) -> int:
         return 1
     plist.rename(disabled)
 
-    # Determine cadence from huey's task wrapper.
-    cadence_seconds = getattr(fn, "_cadence_seconds", 0) or _guess_cadence(fn)
+    # Cadence comes from the kind's @baseline declaration (post-hotfix).
+    # Pre-hotfix migrations stored 3600 (the verifier's own cadence) which
+    # made the verifier's grace + staleness math wrong for every kind.
+    cadence_seconds = bl.cadence_seconds
 
-    from jobs.kinds._internal.migration_verifier import load_state, save_state, log_incident
+    # Snapshot the current baseline value so the verifier can require
+    # advancement (catches the case where the baseline file existed
+    # pre-cutover but the migrated kind isn't actually updating it).
+    from jobs.kinds._internal.migration_verifier import (
+        load_state, save_state, log_incident, capture_baseline_snapshot,
+    )
+    baseline_snapshot = capture_baseline_snapshot(bl.metric)
     state = load_state()
     state.setdefault("in_flight", {})[kind] = {
         "kind": kind,
@@ -227,6 +235,7 @@ def _migrate(kind: str) -> int:
         "cadence_seconds": cadence_seconds,
         "baseline_metric": bl.metric,
         "divergence_window": bl.divergence_window,
+        "baseline_snapshot": baseline_snapshot,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "hours_soaked": 0,
         "last_fire": "",
@@ -234,14 +243,20 @@ def _migrate(kind: str) -> int:
         "notes": [],
     }
     save_state(state)
-    log_incident("migration_begun", kind=kind, baseline=bl.metric, window=bl.divergence_window)
-    print(f"migrated {kind} (old plist → {disabled.name}). Verifier will check hourly.")
+    log_incident(
+        "migration_begun",
+        kind=kind,
+        baseline=bl.metric,
+        window=bl.divergence_window,
+        cadence_seconds=cadence_seconds,
+        snapshot=baseline_snapshot,
+    )
+    print(
+        f"migrated {kind} (old plist → {disabled.name}). "
+        f"Verifier will check hourly. cadence={bl.cadence or '(default 1h)'}, "
+        f"baseline_snapshot={baseline_snapshot}",
+    )
     return 0
-
-
-def _guess_cadence(fn) -> int:
-    """Heuristic — fall back to a conservative 1-hour cadence."""
-    return 3600
 
 
 def _rollback(kind: str) -> int:
