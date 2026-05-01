@@ -62,3 +62,42 @@ MIGRATIONS_STATE_PATH = Path.home() / "Home-Tools" / "run" / "migrations.json"
 from jobs.lib import baseline, requires  # noqa: E402
 
 __all__ = ["huey", "requires", "baseline", "MIGRATIONS_STATE_PATH"]
+
+
+def _load_all_kinds() -> None:
+    """Import every Job kind so its `@huey.task` / `@huey.periodic_task`
+    decorator fires and the task lands in huey's registry. Without this,
+    huey_consumer.py jobs.huey starts with an empty registry — the
+    consumer would log "X not found in TaskRegistry" on every dequeue.
+
+    Auto-discover by walking jobs/kinds/ + jobs/kinds/_internal/ once at
+    import time. Failures are logged but non-fatal so a single broken kind
+    doesn't take down the whole consumer.
+    """
+    import importlib
+    import logging
+    import pkgutil
+    from pathlib import Path
+
+    logger = logging.getLogger(__name__)
+    import jobs.kinds as _kinds_pkg
+    for finder, name, ispkg in pkgutil.iter_modules(
+        _kinds_pkg.__path__, prefix="jobs.kinds."
+    ):
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # one bad kind shouldn't kill the consumer
+            logger.warning("failed to load kind %s: %s", name, exc)
+    internal_root = Path(_kinds_pkg.__path__[0]) / "_internal"
+    if internal_root.exists():
+        for f in internal_root.glob("*.py"):
+            if f.name.startswith("_"):
+                continue
+            modname = f"jobs.kinds._internal.{f.stem}"
+            try:
+                importlib.import_module(modname)
+            except Exception as exc:
+                logger.warning("failed to load internal kind %s: %s", modname, exc)
+
+
+_load_all_kinds()
