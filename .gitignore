@@ -13,6 +13,13 @@ add_recovery_tab.py
 update_sheets.py
 *.png
 
+# Defense in depth: never commit any .env file (per-project .gitignores already
+# cover the known ones; this catches future projects that forget to set theirs).
+# .env.example / .env.sample / .env.template templates are NOT matched by these
+# patterns and remain tracked.
+.env
+**/.env
+
 # Transient runtime locks — never commit
 *.lock
 
