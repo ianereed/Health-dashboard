@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# launchd's environment is sparse — /sbin is needed for ifconfig on macOS.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"
+
 cd "$(dirname "$0")/.."   # ~/Home-Tools
 
 VENV="$(pwd)/jobs/.venv"
@@ -20,11 +23,12 @@ security unlock-keychain -p "" "$KEYCHAIN_PATH" 2>/dev/null || true
 
 export HOME_TOOLS_HTTP_TOKEN="$(security find-generic-password -a 'home-tools' -s 'jobs_http_token' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 
-# tailscale0 IP (the address that is reachable from iPhone over Tailscale)
+# tailscale0 IP (the address that is reachable from iPhone over Tailscale).
+# Don't let a missing ifconfig kill the script — fall back to localhost.
+set +e
 TAILSCALE_IP="$(ifconfig 2>/dev/null | awk '/utun.*100\./ {print $2; exit}')"
+set -e
 if [ -z "$TAILSCALE_IP" ]; then
-    # Fallback: bind localhost only if Tailscale is down. Better than failing
-    # the LaunchAgent — service-monitor will flag it.
     TAILSCALE_IP="127.0.0.1"
     echo "warn: no tailscale0 IP found, binding to 127.0.0.1" >&2
 fi
