@@ -1,6 +1,10 @@
 """Render the data-flow swim lanes as HTML for st.markdown(unsafe_allow_html=True)."""
 
+import os
+import time
 from datetime import datetime, timezone
+
+from services import SERVICES_BY_ID
 
 STATUS_EMOJI = {"ok": "🟢", "warn": "🟡", "err": "🔴", "unknown": "⚫"}
 STATUS_CLASS = {"ok": "ok", "warn": "warn", "err": "err", "unknown": "ext"}
@@ -222,17 +226,35 @@ def render_dataflow(status: dict, queues: dict, ollama: dict,
         _ext("Slack DM"),
     ]))
 
-    # Phase 7 backup — restic snapshots to NAS. Freshness based on
-    # state-file mtime (heartbeat probe writes incidents on staleness).
+    # Phase 7 backup — restic snapshots to NAS. Freshness based on each
+    # agent's log mtime (matches what heartbeat.py:check_backup_freshness
+    # does for incident emission, so dashboard and incidents agree).
     BACKUP_HOURLY_AGING, BACKUP_HOURLY_STALE = 4500, 7200    # 75min, 2h (every 1h)
     BACKUP_DAILY_AGING, BACKUP_DAILY_STALE = 90000, 172800   # 25h, 48h (daily)
     BACKUP_PRUNE_AGING, BACKUP_PRUNE_STALE = 691200, 1382400  # 8d, 16d (weekly)
+
+    def _backup_age_sec(svc_id: str) -> int | None:
+        svc = SERVICES_BY_ID.get(svc_id)
+        if not svc:
+            return None
+        try:
+            return int(time.time() - os.path.getmtime(svc.log_path))
+        except (OSError, FileNotFoundError):
+            return None
+
+    hourly_age = _backup_age_sec("p7_restic_hourly")
+    daily_age = _backup_age_sec("p7_restic_daily")
+    prune_age = _backup_age_sec("p7_restic_prune")
+
     lanes.append(_lane("Backup", [
         _ext("priority files"),
         _arrow(),
-        _node("restic-hourly :17", st_("p7_restic_hourly")),
-        _node("restic-daily 03:30", st_("p7_restic_daily")),
-        _node("restic-prune Sun 04:00", st_("p7_restic_prune")),
+        _node("restic-hourly :17", st_("p7_restic_hourly"),
+              _age_str(hourly_age), _ts_cls(hourly_age, BACKUP_HOURLY_AGING, BACKUP_HOURLY_STALE)),
+        _node("restic-daily 03:30", st_("p7_restic_daily"),
+              _age_str(daily_age), _ts_cls(daily_age, BACKUP_DAILY_AGING, BACKUP_DAILY_STALE)),
+        _node("restic-prune Sun 04:00", st_("p7_restic_prune"),
+              _age_str(prune_age), _ts_cls(prune_age, BACKUP_PRUNE_AGING, BACKUP_PRUNE_STALE)),
         _arrow(),
         _ext("~/Share1/mac-mini-backups/  (encrypted)"),
     ]))

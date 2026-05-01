@@ -142,6 +142,10 @@ gate_7() {
     return
   fi
   ASIDE="$BACKUP_ROOT.aside-test"
+  # Cleanup trap: if we Ctrl-C / crash between mv and un-mv, the live tree
+  # would be missing and the next scheduled hourly fire would emit a real
+  # repo_corrupt incident. Always un-mv on exit.
+  trap '[[ -d "$ASIDE" && ! -d "$BACKUP_ROOT" ]] && mv "$ASIDE" "$BACKUP_ROOT" 2>/dev/null; trap - RETURN INT TERM' RETURN INT TERM
   mv "$BACKUP_ROOT" "$ASIDE" 2>/dev/null || { fail "could not move $BACKUP_ROOT aside"; return; }
   KEYCHAIN_PATH="$KEYCHAIN_PATH" python3 "$HERE/restic-backup.py" --profile hourly >/dev/null 2>&1
   rc=$?
@@ -163,10 +167,14 @@ gate_8() {
   if [[ ! -d "$HOURLY_REPO/keys" ]]; then
     fail "$HOURLY_REPO/keys not found — cannot test"; return
   fi
-  mv "$HOURLY_REPO/keys" "$HOURLY_REPO/keys.aside-test" 2>/dev/null
+  ASIDE_KEYS="$HOURLY_REPO/keys.aside-test"
+  # Cleanup trap: a Ctrl-C between mv and un-mv would leave the live
+  # hourly repo unrestorable until manually fixed. Always un-mv on exit.
+  trap '[[ -d "$ASIDE_KEYS" && ! -d "$HOURLY_REPO/keys" ]] && mv "$ASIDE_KEYS" "$HOURLY_REPO/keys" 2>/dev/null; trap - RETURN INT TERM' RETURN INT TERM
+  mv "$HOURLY_REPO/keys" "$ASIDE_KEYS" 2>/dev/null
   out="$(KEYCHAIN_PATH="$KEYCHAIN_PATH" python3 "$HERE/restic-backup.py" --profile hourly 2>&1)"
   rc=$?
-  mv "$HOURLY_REPO/keys.aside-test" "$HOURLY_REPO/keys"
+  mv "$ASIDE_KEYS" "$HOURLY_REPO/keys"
   flag="$RUN_DIR/restic-hourly-failed.flag"
   if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q "corrupt"; then
     reason="$(python3 -c "import json; print(json.load(open('$flag'))['reason'])" 2>/dev/null || echo '?')"
@@ -178,19 +186,25 @@ gate_8() {
 }
 
 gate_9() {
-  echo "== Gate 9: concurrent-write safety (synthetic write while restic runs) =="
+  echo "== Gate 9: concurrent-write safety (synthetic WAL traffic in same dir as health.db) =="
   unlock_kc
   HEALTH_DB="$HOME/Home-Tools/health-dashboard/data/health.db"
   if [[ ! -f "$HEALTH_DB" ]]; then
     fail "health.db not present at $HEALTH_DB"; return
   fi
-  # Run a writer in background that does a meaningful WAL write every 0.1s for 3s.
+  # Write to a sibling DB in the same directory as health.db. macOS HFS+/APFS
+  # journal traffic + SQLite WAL fsync activity in the same dir is what we
+  # actually want to stress; we don't need to mutate the production DB itself.
+  # A Ctrl-C during the loop here is harmless — the temp DB is just a file
+  # and gets cleaned up on the next gate run.
+  TEST_DB="$(dirname "$HEALTH_DB")/_phase7_concurrent_test.db"
+  trap 'rm -f "$TEST_DB" "$TEST_DB-wal" "$TEST_DB-shm" 2>/dev/null; trap - RETURN INT TERM' RETURN INT TERM
+  rm -f "$TEST_DB" "$TEST_DB-wal" "$TEST_DB-shm"
   (
-    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do
-      sqlite3 "$HEALTH_DB" "CREATE TABLE IF NOT EXISTS _phase7_test(t INTEGER); INSERT INTO _phase7_test VALUES(strftime('%s','now'));" 2>/dev/null
+    for i in $(seq 1 25); do
+      sqlite3 "$TEST_DB" "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS t(v INTEGER); INSERT INTO t VALUES(strftime('%s','now'));" 2>/dev/null
       sleep 0.1
     done
-    sqlite3 "$HEALTH_DB" "DROP TABLE IF EXISTS _phase7_test;" 2>/dev/null
   ) &
   WRITER_PID=$!
   KEYCHAIN_PATH="$KEYCHAIN_PATH" python3 "$HERE/restic-backup.py" --profile hourly >/dev/null 2>&1
@@ -200,7 +214,7 @@ gate_9() {
     fail "backup failed during concurrent writes"; return
   fi
   if KEYCHAIN_PATH="$KEYCHAIN_PATH" python3 "$HERE/restic-restore-test.py" >/dev/null 2>&1; then
-    pass "backup + restore + integrity_check survive concurrent writes"
+    pass "backup + restore + integrity_check survive concurrent WAL traffic"
   else
     fail "restored DB failed integrity_check after concurrent writes — investigate WAL handling"
   fi

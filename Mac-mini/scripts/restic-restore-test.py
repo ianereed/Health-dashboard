@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -40,7 +41,20 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _cleanup_stale_tempdirs() -> None:
+    """Remove leftover restore-test dirs from prior crashed runs.
+
+    `tempfile.TemporaryDirectory` cleans up on context-manager exit but not
+    on `kill -9` or process death. A 91MB DB per leftover adds up.
+    """
+    for d in Path("/tmp").glob("restic-restore-test-*"):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def main() -> int:
+    _cleanup_stale_tempdirs()
+
     subprocess.run(
         ["security", "unlock-keychain", "-p", "", KEYCHAIN_PATH],
         capture_output=True, check=False,

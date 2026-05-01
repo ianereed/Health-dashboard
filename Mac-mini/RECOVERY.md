@@ -29,7 +29,8 @@ Prereqs: macOS installed on the new mini, you can ssh in, you can read
 1Password from a phone or laptop.
 
 ```bash
-# 1. Install Homebrew + restic + sqlite3 (sqlite3 ships with macOS but verify).
+# 1. Install Homebrew + restic. (sqlite3 ships with macOS at /usr/bin/sqlite3
+#    so no separate install needed; the bare-metal script verifies.)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install restic
 
@@ -61,13 +62,17 @@ cd ~/Home-Tools/nas-intake && bash install.sh
 cd ~/Home-Tools/service-monitor && bash install.sh
 bash ~/Home-Tools/Mac-mini/install-phase6.sh
 
-# 5. For Phase 7 itself: the backup repos already exist. Don't re-initialize.
-#    Just install the LaunchAgents (skip prepare, go straight to finalize):
-#      - The keychain entries restored from the daily backup, so the
-#        finalize phase will find them and use them.
-#      - Manually skip step 1 (--prepare) by:
-#        - touch ~/recovery-secrets.txt && rm ~/recovery-secrets.txt   # satisfy the "deleted" check
-#        - bash ~/Home-Tools/Mac-mini/install-phase7.sh --finalize
+# 5. For Phase 7 itself: the backup repos already exist on the NAS.
+#    Re-run the prepare phase normally — install-phase7.sh detects the
+#    existing keychain entries (restored from the daily backup in step 3)
+#    and reuses them, so the secrets file shows the SAME passwords as in
+#    1Password. Compare to confirm, then proceed:
+#      bash ~/Home-Tools/Mac-mini/install-phase7.sh           # prepare (will reuse keychain)
+#      # Confirm the 5 fields match your 1Password Secure Note, then:
+#      rm ~/recovery-secrets.txt
+#      bash ~/Home-Tools/Mac-mini/install-phase7.sh --finalize
+#    The finalize phase skips repo init (idempotent — sees existing config)
+#    and just reinstalls the 3 LaunchAgents.
 
 # 6. Verify everything's back:
 python3 ~/Home-Tools/Mac-mini/scripts/preflight.py
@@ -130,3 +135,13 @@ restic snapshots --compact | tail -5
 - **Quarterly**: re-run `python3 Mac-mini/scripts/restic-restore-test.py` to confirm restores still work
 - **Yearly**: print a fresh paper copy of the 1Password Secure Note (just in case)
 - **When the NAS gets close to full**: bump retention down or archive old snapshots
+- **When Homebrew deprecates `python@3.12`** (probably ~2027 given the
+  typical ~3-year support window): the 3 backup LaunchAgents are pinned to
+  `/opt/homebrew/opt/python@3.12/bin/python3.12` because that exact path
+  was granted Full Disk Access via TCC. To migrate: install python@3.13
+  (or whatever's current), grant FDA to its binary in System Settings →
+  Privacy & Security → Full Disk Access, update the 3 plists in
+  `Mac-mini/LaunchAgents/com.home-tools.restic-{hourly,daily,prune}.plist`,
+  reload via `bash Mac-mini/install-phase7.sh --finalize`. Without FDA on
+  the new python, the launchd-spawned wrapper can't read `~/Share1` and
+  every backup silently fails.

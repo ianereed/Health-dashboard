@@ -95,20 +95,51 @@ def get_password(service: str, account: str = "password") -> str:
     return p.stdout.strip()
 
 
+def _nas_responsive(share: Path) -> bool:
+    """Quick stat probe with timeout — detects stale SMB mounts.
+
+    macOS leaves the mountpoint structure in place when the SMB connection
+    drops; os.path.ismount() returns True but actual reads hang. A 10s
+    `stat` probe via subprocess (so the timeout is actually enforced)
+    catches this. If stat returns or errors quickly, mount is alive.
+    """
+    try:
+        result = subprocess.run(
+            ["stat", str(share / "mac-mini-backups")],
+            capture_output=True, timeout=10, check=False,
+        )
+        return result.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
 def ensure_nas_mounted() -> bool:
-    """Returns True if ~/Share1 is mounted (or could be re-mounted).
+    """Returns True if ~/Share1 is mounted, responsive, and re-mountable on demand.
 
     Uses os.path.ismount() rather than iterdir() so the check works even
     without Full Disk Access — TCC silently filters iterdir() output on
     SMB mounts when the launchd-spawned python lacks FDA. ismount() reads
     only filesystem metadata (st_dev), which doesn't trigger TCC.
+
+    Then probes responsiveness: a stale SMB mount passes ismount() but
+    blocks on read. The stat probe with timeout catches that.
     """
     share = HOME / "Share1"
-    if os.path.ismount(share):
+    if os.path.ismount(share) and _nas_responsive(share):
         return True
+    # Mount is missing or stale — try to recover via mount-nas.sh.
+    if os.path.ismount(share):
+        # Stale: force unmount before remount.
+        subprocess.run(
+            ["umount", "-f", str(share)],
+            capture_output=True, timeout=15, check=False,
+        )
     if MOUNT_NAS_SH.exists():
-        subprocess.run(["bash", str(MOUNT_NAS_SH)], capture_output=True, check=False)
-    return os.path.ismount(share)
+        subprocess.run(
+            ["bash", str(MOUNT_NAS_SH)],
+            capture_output=True, timeout=30, check=False,
+        )
+    return os.path.ismount(share) and _nas_responsive(share)
 
 
 def repo_health(repo_dir: Path) -> str:
@@ -147,6 +178,14 @@ def emit_state_change(profile: str, observed: str) -> None:
 
     Only emits to incidents.jsonl after the same new state is observed
     twice in a row. Catches flapping NAS noise (fail->ok->fail rapidly).
+
+    Cold-start consequence: a first-ever fail emits zero incidents
+    (consecutive=1, no prior emitted state to compare against). The Phase
+    6 heartbeat probe covers this gap — it sees the failed.flag (written
+    BEFORE this function) within 30 minutes and emits its own
+    `first_seen_bad` event. Net: a real first-fire failure surfaces in
+    the next daily Slack digest, just via heartbeat rather than via this
+    wrapper.
     """
     state_file = RUN_DIR / f"restic-{profile}-state.json"
     RUN_DIR.mkdir(parents=True, exist_ok=True)
