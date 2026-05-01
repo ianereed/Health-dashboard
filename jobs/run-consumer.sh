@@ -29,4 +29,4 @@ export HOME_TOOLS_HTTP_TOKEN="$(security find-generic-password -a 'home-tools' -
 export RESTIC_PASSWORD_RESTIC_HOURLY="$(security find-generic-password -a 'home-tools' -s 'restic_pw_hourly' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 export RESTIC_PASSWORD_RESTIC_DAILY="$(security find-generic-password -a 'home-tools' -s 'restic_pw_daily' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 
-exec "$VENV/bin/huey_consumer.py" jobs.huey -w 2 -k thread
+exec "$VENV/bin/huey_consumer" jobs.huey -w 2 -k thread
