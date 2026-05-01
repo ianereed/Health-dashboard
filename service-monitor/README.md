@@ -14,9 +14,12 @@ Mac mini service status dashboard. Shows live status of every loaded `com.home-t
 | dispatcher | bot (KeepAlive) |
 | finance-monitor | bot (KeepAlive), watcher (5 min) |
 | health-dashboard | receiver, collect, intervals-poll, staleness, streamlit |
+| nas-intake | watcher (5 min) |
 | service-monitor | this dashboard (self) |
+| phase6 (monitoring) | heartbeat (30 min), daily-digest (07:00), weekly-ssh-digest (Mon 09:00) |
+| phase7 (NAS backup) | restic-hourly (:17), restic-daily (03:30), restic-prune (Sun 04:00) |
 
-Also: Ollama :11434, health.db row counts, finance.db row counts, event-aggregator queue depths.
+Also: Ollama :11434, health.db row counts, finance.db row counts, event-aggregator queue depths, RAM pressure (memory-tracker), Ollama load history (ollama-tracker), Phase 7 backup-lane freshness.
 
 ## Deploy (mini)
 

@@ -20,11 +20,12 @@
 > drift detection from Day 1, daily Pushover summary), and P2 graduation
 > criteria.
 
-> Prereq: `Mac-mini/PLAN.md` Phase 6 (heartbeat + weekly SSH audit, now
-> shipped as the daily Slack digest layer 2026-04-30) and Phase 7 (NAS
-> backup) must be complete first. Then Phase 12 (Pick 1, Mini Jobs queue
-> + console) and Phase 13 (meal-planner expansion). Only after all four
-> have shipped should this design be re-opened for evaluation.
+> Prereq status: Phase 6 (heartbeat + weekly SSH audit, shipped as the
+> daily Slack digest layer 2026-04-30) ✅ and Phase 7 (NAS backup, shipped
+> 2026-05-01) ✅ are both complete. Still required before re-opening this
+> design: Phase 12 (Pick 1, Mini Jobs queue + console) and Phase 13
+> (meal-planner expansion). Only after all four have shipped should this
+> design be re-opened for evaluation.
 
 > **Companion doc:** `~/.claude/plans/i-am-considering-restructuring-virtual-dream.md` contains the evaluation that led to this design (benefits/cons of an agent layer, framework-verification caveat). This document is the architecture plan for *if and when* you proceed.
 

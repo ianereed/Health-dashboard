@@ -16,7 +16,7 @@ leaves the house.
 | [`health-dashboard`](health-dashboard/README.md) | HRV / sleep / training-load Streamlit dashboard fed by Apple Health, Strava, Intervals, Garmin | mini | 🟢 live |
 | [`nas-intake`](nas-intake/README.md) | Watches `~/Share1/**/[Ii]ntake/` on the mini, OCRs + classifies docs via the event-aggregator pipeline, files them under `<parent>/<year>/<doc-type>/...` | mini | 🟢 live |
 | [`service-monitor`](service-monitor/README.md) | Streamlit dashboard at `homeserver:8502` showing all loaded LaunchAgents, queue depths, DB sizes, Ollama state, log tails | mini | 🟢 live |
-| [`Mac-mini`](Mac-mini/README.md) | Setup + ops log + cross-cutting LaunchAgents (heartbeat, daily Slack digest, weekly SSH digest, memory/ollama trackers) | mini | 🟢 live |
+| [`Mac-mini`](Mac-mini/README.md) | Setup + ops log + cross-cutting LaunchAgents (heartbeat, daily Slack digest, weekly SSH digest, memory/ollama trackers, hourly+daily restic NAS backups) | mini | 🟢 live |
 | [`meal-planner`](meal-planner/README.md) | Google Sheet + Apps Script grocery / recipe automation, with a Python sidecar for Gemini-powered batch jobs | laptop / Apps Script | 🟢 live |
 | [`medical-records`](medical-records/README.md) | Local-only PHI handling for an active recovery; writes appointments + medication tapers to GCal / Reminders | laptop only | 🟢 live |
 | [`contacts`](contacts/README.md) | Toolbox of one-shot Python scripts maintaining `antora_contacts.xlsx` | laptop | 🟡 ad-hoc |
@@ -29,18 +29,21 @@ agent registry.
 
 ## What's next
 
-The agreed forward sequence (see `Mac-mini/PLAN.md` for detail):
+**Just shipped:** Phase 7 NAS backup (2026-05-01) — two restic repos at
+`~/Share1/mac-mini-backups/`, hourly + daily backups of the 6 priority
+files, weekly prune. Time Machine deferred to Phase 7.5 with USB SSD;
+off-site (B2/Wasabi) deferred indefinitely. Operator runbook at
+[`Mac-mini/PHASE7.md`](Mac-mini/PHASE7.md); recovery doc at
+[`Mac-mini/RECOVERY.md`](Mac-mini/RECOVERY.md).
 
-1. **Phase 7 — NAS backup (NAS-only).** Restic + Time Machine to `~/Share1`
-   (the iananny SMB share already mounted on the mini) for `health.db`,
-   event-aggregator state, `finance.db`, login keychain, Phase 6 incidents
-   log. Off-site (B2/Wasabi) explicitly deferred — open to adding it later
-   as a second leg, not now.
-2. **Pick 1 — Mini Jobs queue + console** at `homeserver:8503`. Architectural
+The agreed forward sequence (see [`Mac-mini/PLAN.md`](Mac-mini/PLAN.md) for detail):
+
+1. **Pick 1 — Mini Jobs queue + console** at `homeserver:8503`. Architectural
    foundation. Lifts the interactive surface out of Slack onto a GUI on the
    mini; Slack stays for mobile. Closes `state.json` file-lock race in the
-   same PR.
-3. **Meal-planner expansion (joint priority — Anny + Ian).** First feature
+   same PR. Implementation plan to be authored via `/plan-eng-review` when
+   the work starts.
+2. **Meal-planner expansion (joint priority — Anny + Ian).** First feature
    work after the backend foundation lands. Targets: real actions from
    iPhone (Apple Shortcuts → mini); meaningful weekly meal planning
    collaboration on the Windows laptop with Claude. Architecture will be
