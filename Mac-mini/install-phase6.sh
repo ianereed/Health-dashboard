@@ -73,7 +73,7 @@ for label in "${PLISTS[@]}"; do
     exit 1
   fi
 
-  if launchctl list 2>/dev/null | grep -q " $label$"; then
+  if launchctl list 2>/dev/null | grep -qE "[[:space:]]${label}$"; then
     echo "  [$label] unloading previous"
     launchctl unload "$dst" 2>/dev/null || true
   fi
@@ -90,7 +90,7 @@ sleep 2
 echo
 echo "== Status =="
 for label in "${PLISTS[@]}"; do
-  line=$(launchctl list 2>/dev/null | grep " $label$" || true)
+  line=$(launchctl list 2>/dev/null | grep -E "[[:space:]]${label}$" || true)
   if [[ -n "$line" ]]; then
     echo "  $line"
   else

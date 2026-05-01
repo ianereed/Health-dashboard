@@ -37,13 +37,13 @@ HEALTH_DB_STALE_S = 25 * 3600  # 25h
 # Long-running KeepAlive agents we expect to see in `launchctl list` with a PID.
 # Periodic agents (StartInterval / StartCalendarInterval) drop their PID between
 # fires — listing them as expected here would generate false "down" incidents.
+# Source of truth for the agent labels: service-monitor/services.py — keep this
+# list in sync with the KeepAlive entries there.
 EXPECTED_AGENTS = [
     "com.home-tools.dispatcher",
-    "com.home-tools.event-aggregator",
     "com.home-tools.event-aggregator.worker",
     "com.home-tools.finance-monitor",
     "com.home-tools.service-monitor",
-    "com.home-tools.heartbeat",
     "com.health-dashboard.receiver",
     "com.health-dashboard.streamlit",
 ]
