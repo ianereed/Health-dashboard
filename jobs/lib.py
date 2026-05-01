@@ -110,6 +110,28 @@ def baseline(metric: str, divergence_window: str, description: str = "") -> Call
     return deco
 
 
+def migrates_from(plist_label: str) -> Callable:
+    """Pin the LaunchAgent label this kind replaces.
+
+    Kind name → label is otherwise inferred as `com.home-tools.<kind>`
+    with `_` → `-`, but real labels diverge (e.g. nas_intake_scan
+    replaces `com.home-tools.nas-intake`; health_collect replaces
+    `com.health-dashboard.collect`). This decorator pins the actual
+    label so `cli migrate <kind>` finds the right plist.
+    """
+    def deco(fn: Callable) -> Callable:
+        fn._plist_label = plist_label  # type: ignore[attr-defined]
+        return fn
+    return deco
+
+
+def get_plist_label(fn) -> str | None:
+    label = getattr(fn, "_plist_label", None)
+    if label is None and hasattr(fn, "func"):
+        label = getattr(fn.func, "_plist_label", None)
+    return label
+
+
 class RequirementsNotMet(Exception):
     """Raised when @requires pre-flight fails. The message is intentionally
     actionable — names the kind and lists each missing dep so the operator

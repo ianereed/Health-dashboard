@@ -8,7 +8,7 @@ from pathlib import Path
 
 from huey import crontab
 
-from jobs import baseline, huey, requires
+from jobs import baseline, huey, migrates_from, requires
 from jobs.kinds._internal.migration_verifier import record_fire
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ SCRIPT = Path(__file__).resolve().parents[2] / "finance-monitor" / "watcher.py"
 @huey.periodic_task(crontab(minute="*/5"))
 @requires(["db:finance-monitor/data/finance.db", "fs:finance-monitor"])
 @baseline(metric="db-mtime:finance-monitor/data/finance.db", divergence_window="6m")
+@migrates_from("com.home-tools.finance-monitor-watcher")
 def finance_monitor_watch() -> dict:
     proc = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=240)
     record_fire("finance_monitor_watch")

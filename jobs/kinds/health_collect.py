@@ -12,7 +12,7 @@ from pathlib import Path
 
 from huey import crontab
 
-from jobs import baseline, huey, requires
+from jobs import baseline, huey, migrates_from, requires
 from jobs.kinds._internal.migration_verifier import record_fire
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,7 @@ VENV_PYTHON = PROJECT / ".venv" / "bin" / "python3"
 @huey.periodic_task(crontab(minute="0,20", hour="7"))
 @requires(["db:health-dashboard/data/health.db", "fs:health-dashboard"])
 @baseline(metric="db-mtime:health-dashboard/data/health.db", divergence_window="35m")
+@migrates_from("com.health-dashboard.collect")
 def health_collect() -> dict:
     proc = subprocess.run(
         [str(VENV_PYTHON), "-m", "collectors.collect_all"],

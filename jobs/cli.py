@@ -171,7 +171,7 @@ def _new(name: str) -> int:
 
 def _migrate(kind: str) -> int:
     """Begin a migration: rename old plist to .plist.disabled, record baseline."""
-    from jobs.lib import get_baseline
+    from jobs.lib import get_baseline, get_plist_label
     kinds = _registered_kinds()
     fn = kinds.get(kind)
     if fn is None:
@@ -181,7 +181,8 @@ def _migrate(kind: str) -> int:
     if bl is None:
         print(f"kind {kind!r} has no @baseline declared — cannot migrate safely", file=sys.stderr)
         return 2
-    plist_label = f"com.home-tools.{kind.replace('_', '-')}"
+    # Prefer the @migrates_from(label) override; otherwise infer from kind name.
+    plist_label = get_plist_label(fn) or f"com.home-tools.{kind.replace('_', '-')}"
 
     # Find the old plist on the mini.
     candidates = [

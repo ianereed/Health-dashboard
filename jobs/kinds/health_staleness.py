@@ -7,7 +7,7 @@ from pathlib import Path
 
 from huey import crontab
 
-from jobs import baseline, huey, requires
+from jobs import baseline, huey, migrates_from, requires
 from jobs.kinds._internal.migration_verifier import record_fire
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ VENV_PYTHON = PROJECT / ".venv" / "bin" / "python3"
 @huey.periodic_task(crontab(minute="0", hour="7,21"))
 @requires(["db:health-dashboard/data/health.db", "fs:health-dashboard"])
 @baseline(metric="file-mtime:logs/health-staleness.log", divergence_window="20m")
+@migrates_from("com.health-dashboard.staleness")
 def health_staleness() -> dict:
     proc = subprocess.run(
         [str(VENV_PYTHON), "-m", "collectors.staleness_check"],
