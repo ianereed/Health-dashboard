@@ -114,38 +114,22 @@ gate_6() {
   TEST_LABEL="com.home-tools.restic-test-launchd"
   TEST_PLIST="/tmp/$TEST_LABEL.plist"
   TEST_LOG="/tmp/restic-test-launchd.log"
-  cat > "$TEST_PLIST" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>$TEST_LABEL</string>
-    <key>ProgramArguments</key><array>
-        <string>/usr/bin/python3</string>
-        <string>$HERE/restic-backup.py</string>
-        <string>--profile</string><string>hourly</string>
-        <string>--dry-run</string>
-    </array>
-    <key>EnvironmentVariables</key><dict>
-        <key>HOME</key><string>$HOME</string>
-        <key>KEYCHAIN_PATH</key><string>$KEYCHAIN_PATH</string>
-        <key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    </dict>
-    <key>RunAtLoad</key><true/>
-    <key>StandardOutPath</key><string>$TEST_LOG</string>
-    <key>StandardErrorPath</key><string>$TEST_LOG</string>
-</dict>
-</plist>
-EOF
-  rm -f "$TEST_LOG"
-  launchctl load "$TEST_PLIST" 2>/dev/null
-  sleep 4
-  launchctl unload "$TEST_PLIST" 2>/dev/null || true
-  rm -f "$TEST_PLIST"
-  if [[ -f "$TEST_LOG" ]] && grep -q "backup ok" "$TEST_LOG"; then
-    pass "launchd-spawned run completed (keychain self-unlock works)"
+  # Use the actual restic-hourly agent via launchctl kickstart instead of
+  # spinning a one-shot test plist. Kickstart fires the agent through
+  # launchd, exercises the same keychain-self-unlock + StandardOutPath
+  # plumbing, and writes to the real log so we can assert on it.
+  RESTIC_LOG="$LOG_DIR/restic-hourly.log"
+  before_size=$(wc -c < "$RESTIC_LOG" 2>/dev/null || echo 0)
+  if launchctl kickstart -k "gui/$UID/com.home-tools.restic-hourly" 2>/dev/null; then
+    sleep 5
+    after_size=$(wc -c < "$RESTIC_LOG" 2>/dev/null || echo 0)
+    if [[ "$after_size" -gt "$before_size" ]] && tail -50 "$RESTIC_LOG" | grep -q "backup ok"; then
+      pass "launchd-mediated run completed (keychain self-unlock works under launchd)"
+    else
+      fail "launchd kickstart fired but no 'backup ok' in $RESTIC_LOG (size before=$before_size after=$after_size)"
+    fi
   else
-    fail "launchd-spawned test did not log success — check $TEST_LOG"
+    fail "launchctl kickstart failed — agent may not be loaded (try: launchctl list | grep restic-hourly)"
   fi
 }
 
@@ -260,23 +244,32 @@ gate_12() {
   echo "== Gate 12: heartbeat backup_health probe (fresh + stale + in-flight handling) =="
   HEARTBEAT="$HERE/heartbeat.py"
   RESTIC_LOG="$LOG_DIR/restic-hourly.log"
+  # Ensure the log exists — kickstart the agent if needed (Gate 6 already
+  # does this in --all mode but be defensive in case Gate 12 runs alone).
   if [[ ! -f "$RESTIC_LOG" ]]; then
-    fail "restic-hourly.log not present at $RESTIC_LOG"; return
+    launchctl kickstart -k "gui/$UID/com.home-tools.restic-hourly" 2>/dev/null
+    sleep 5
   fi
-  # Touch the log to "now" — should be classified ok (or in-flight).
-  touch "$RESTIC_LOG"
-  python3 "$HEARTBEAT" >/dev/null 2>&1
-  # Back-date the log to 3h ago — should be classified stale.
+  if [[ ! -f "$RESTIC_LOG" ]]; then
+    fail "restic-hourly.log still not present at $RESTIC_LOG after kickstart"; return
+  fi
+  # Back-date the log to 3h ago — should be classified stale by probe.
   touch -t "$(date -v-3H +%Y%m%d%H%M.%S 2>/dev/null || date -d '-3 hours' +%Y%m%d%H%M.%S)" "$RESTIC_LOG"
   python3 "$HEARTBEAT" >/dev/null 2>&1
   STATE="$RUN_DIR/heartbeat-state.json"
   if [[ -f "$STATE" ]] && grep -q "backup:hourly" "$STATE"; then
-    pass "heartbeat now tracks backup:hourly key"
+    state_value=$(python3 -c "import json; print(json.load(open('$STATE')).get('backup:hourly', '?'))")
+    if [[ "$state_value" = "stale" ]]; then
+      pass "heartbeat probe classified back-dated log as stale (state=$state_value)"
+    else
+      fail "expected backup:hourly=stale, got $state_value"
+    fi
   else
     fail "heartbeat-state.json missing backup:hourly key (probe may not be wired up)"
   fi
   # Restore log mtime to ~now so subsequent runs see fresh.
   touch "$RESTIC_LOG"
+  python3 "$HEARTBEAT" >/dev/null 2>&1
 }
 
 gate_13() {

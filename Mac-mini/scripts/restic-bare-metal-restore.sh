@@ -51,16 +51,26 @@ command -v sqlite3 >/dev/null 2>&1 || { echo "FAIL: sqlite3 not on PATH"; exit 1
 command -v mount_smbfs >/dev/null 2>&1 || { echo "FAIL: mount_smbfs not on PATH (macOS only)"; exit 1; }
 
 # 1. Mount the NAS.
+# In test-gate mode (sandboxed HOME), the live mount on the parent user's
+# ~/Share1 is reused by symlink because mount_smbfs refuses concurrent
+# mounts of the same share. In real bare-metal mode, mount fresh.
 SHARE="$HOME/Share1"
+DID_MOUNT=0
+LIVE_SHARE="$(eval echo "~$(whoami)/Share1")"
 if mount | grep -q " on $SHARE "; then
   echo "[1/5] NAS already mounted at $SHARE"
+elif [ "${INTERACTIVE:-0}" = "0" ] && [ -n "$LIVE_SHARE" ] && mount | grep -q " on $LIVE_SHARE "; then
+  echo "[1/5] reusing live SMB mount at $LIVE_SHARE (symlink for sandboxed test)"
+  rm -f "$SHARE" 2>/dev/null
+  ln -s "$LIVE_SHARE" "$SHARE"
 else
   echo "[1/5] mounting NAS at $SHARE"
   mount_smbfs "//${NAS_USER}:${NAS_PASS}@${NAS_IP}/Share1" "$SHARE"
+  DID_MOUNT=1
 fi
 
 cleanup() {
-  if [ "${INTERACTIVE:-0}" = "0" ]; then
+  if [ "${INTERACTIVE:-0}" = "0" ] && [ "$DID_MOUNT" = "1" ]; then
     umount "$SHARE" 2>/dev/null || true
   fi
 }
