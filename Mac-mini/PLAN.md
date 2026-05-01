@@ -7,6 +7,17 @@ the `~/.claude/projects/.../memory/` entries (the accumulated lessons).
 
 ---
 
+## Naming convention
+
+A **Phase** is confirmed scope, completable in one sitting, sequentially
+numbered (no decimals — rule applies starting at Phase 13; Phase 12.5 is
+grandfathered). A **Pick** is a catalogued suggestion (see brainstorm at
+`~/.claude/plans/come-up-with-more-encapsulated-spring.md`); Picks remain
+suggestions until explicitly promoted to a Phase, at which point the Pick
+number is retired and only the new Phase number is used.
+
+---
+
 ## Quick status (as of 2026-05-01)
 
 **Phase 7 NAS backup LIVE on the mini** (commit `5f806aa`, 2026-05-01):
@@ -229,49 +240,68 @@ Plan source (v3): `~/.claude/plans/phase-12-mini-jobs-queue.md`
 Deferred to Phase 12.5: `event-aggregator.fetch` + worker (the queue +
 model-swap state machine doesn't decouple cleanly from fetch).
 
-## Phase 13 — Meal-planner expansion (joint priority — first feature after backend)
+## Phase 13 — Meal-planner overhaul: architecting (one sitting via gstack review pipeline)
 
-**Decided 2026-05-01.** Anny + Ian agreed this is the most valuable next
-feature. Two stated capabilities:
+**Decided 2026-05-01.** Anny + Ian agreed the meal-planner overhaul is the
+most valuable next feature after Phase 12.5. Two stated capabilities the
+build will need to deliver:
 
 - **Real iPhone actions** — tap a tile, get a result. Adds to weekly meal
   plan, captures a recipe photo, queries the pantry, etc. Likely uses the
-  Apple Shortcuts → mini HTTP endpoint pattern (Pick 7's groundwork).
+  Apple Shortcuts → mini HTTP endpoint pattern (the `:8504` jobs-http
+  endpoint from Phase 12 is the door).
 - **Windows-laptop weekly planning collaboration with Claude** — sit down,
   talk through the week's meals with Claude in the loop, end up with a
   populated Sheet + grocery list + Todoist. Not a static UI; a real
   conversation surface.
 
-Architecture is **not yet designed.** When this Phase starts, run the full
-gstack review pipeline (`/office-hours` → `/plan-ceo-review` →
-`/plan-eng-review`) to lock the design before any code. Existing scaffolding
-to lean on: `meal-planner/` (Apps Script frontend + Gemini batch sidecar),
-the model-swap pattern from `event-aggregator/worker.py`, and Pick 1's Job
-framework.
+**This Phase is the architecting sitting only.** Output is a plan, not
+code. Run the full gstack review pipeline (`/office-hours` →
+`/plan-ceo-review` → `/plan-eng-review` or `/autoplan`) to lock the design
+before any build chunks start.
 
-This Phase subsumes Pick 5 (replace meal-planner Gemini with local mini)
-and partially overlaps Pick 7 (Apple Shortcuts → mini). Reference memory
+Existing scaffolding to lean on: `meal-planner/` (Apps Script frontend +
+Gemini batch sidecar), the model-swap pattern from
+`event-aggregator/worker.py`, and Phase 12's Job framework + adapters
+layer (`jobs/adapters/{slack,gcal,todoist,card,nas,sheet}.py`). The `sheet`
+adapter is currently a strict NotImplementedError stub — Phase 14+ will
+fill it in.
+
+This Phase subsumes the meal-planner Gemini → local migration and reuses
+the Apple Shortcuts → mini HTTP endpoint groundwork. Reference memory
 `project_meal_planner_expansion_priority.md` carries the verbatim user ask.
+
+## Phase 14+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
+
+Once Phase 13 produces a locked plan, the build splits into one-sitting
+chunks. Each chunk gets the next sequential Phase number when claimed.
+Numbers are not pre-allocated — if Phase 13 outputs four chunks, they
+become Phases 14, 15, 16, 17 as each is started.
+
+The "one sitting" rule keeps each Phase scope tight: a chunk that doesn't
+finish in a sitting either gets reduced or split before the next Phase
+starts.
 
 ## Long-term future scope (re-evaluate later)
 
 - **Tier-2 LLM orchestrator** — design at `future-architecture-upgrade.md`.
   CEO-approved 2026-04-30 but **demoted to long-term scope on 2026-05-01.**
-  Pick 1's `Job` framework is likely to absorb most of its plumbing (typed
+  Phase 12's `Job` framework already absorbs most of its plumbing (typed
   queue, single worker, audit log, console surface, recipe registry).
-  Re-evaluate after Pick 1 + meal-planner ship — an orchestrator on top of
-  the Jobs framework may still make sense, or the Jobs framework alone may
-  be sufficient. Don't pre-build.
+  Re-evaluate after the meal-planner work ships — an orchestrator on top
+  of the Jobs framework may still make sense, or the Jobs framework alone
+  may be sufficient. Don't pre-build.
 - **BlueBubbles iMessage bridge** — requires iCloud sign-in on the mini.
   Defer until we actually want iMessage-based control.
 - **Hermes Agent / OpenClaw evaluation** — couldn't verify OpenClaw in 2026
   web searches; both need real-world provenance audit before installing.
   Finance / dispatcher / event-aggregator work fine without an agent framework.
-- **Picks 2–10 from the brainstorm** — receipt → YNAB matcher (Pick 2),
-  morning brief (Pick 3), document Q&A (Pick 4), trip detector (Pick 6),
-  anomaly digest (Pick 10), relationship radar (Pick 9), Recall search
-  (Pick 8). All re-rankable in the context of what the meal-planner work
-  teaches us; revisit ordering when meal-planner ships.
+- **Brainstorm backlog (suggestions, no fixed ranking)** —
+  `~/.claude/plans/come-up-with-more-encapsulated-spring.md` carries ~55
+  ideas grouped by domain. Examples: receipt → YNAB matcher, morning
+  brief, document Q&A, trip detector, anomaly digest, relationship radar,
+  cross-corpus Recall search. None are committed scope; the user picks
+  one in context when ready and it becomes a Phase at that moment.
 
 ---
 

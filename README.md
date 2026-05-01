@@ -48,19 +48,29 @@ The agreed forward sequence (see [`Mac-mini/PLAN.md`](Mac-mini/PLAN.md) for deta
 2. **Phase 12.5 — event-aggregator fetch+worker migration.** Held back from
    Phase 12 because the worker's queue + model-swap state machine doesn't
    decouple cleanly from the fetch loop. Migrate as a unit later.
-3. **Phase 13 — Meal-planner expansion (joint priority, Anny + Ian).**
-   First feature work after the backend lands. Real actions from iPhone
-   via Apple Shortcuts → `:8504`; meaningful weekly planning on the
-   Windows laptop with Claude. Plan tab placeholder reserves the slot in
-   the Mini Ops console. Architecture designed via gstack review skills
-   when the work starts. See the `project_meal_planner_expansion_priority.md`
-   memory for the full ask.
+3. **Phase 13 — Meal-planner overhaul: architecting (joint priority, Anny + Ian).**
+   First sitting under the new "one Phase = one sitting" rule. Output is
+   a locked design (not code), produced via the gstack review pipeline
+   (`/office-hours` → `/plan-ceo-review` → `/plan-eng-review`). Targets
+   real actions from iPhone via Apple Shortcuts → `:8504`, and meaningful
+   weekly planning on the Windows laptop with Claude. Plan tab placeholder
+   reserves the slot in the Mini Ops console. See the
+   `project_meal_planner_expansion_priority.md` memory for the full ask.
+4. **Phase 14+ — Meal-planner overhaul: build (chunks numbered as claimed).**
+   Once Phase 13 produces a locked design, the build splits into one-sitting
+   chunks. Each chunk gets the next sequential Phase number when it starts.
 
-**Long-term future scope** (re-evaluate after Phase 13 ships): the Tier-2
-LLM orchestrator design at `future-architecture-upgrade.md`. Phase 12's
-`jobs.adapters` + `requires` + `baseline` machinery already covers a lot
-of what an orchestrator needs; revisit whether a separate orchestrator
-service is still warranted at that point.
+**Naming convention:** A Phase is confirmed scope, completable in one
+sitting, sequentially numbered (no decimals — rule applies starting at
+Phase 13; Phase 12.5 is grandfathered). Catalogued suggestions in the
+brainstorm (`~/.claude/plans/come-up-with-more-encapsulated-spring.md`)
+remain ideas until promoted to a Phase.
+
+**Long-term future scope** (re-evaluate after the meal-planner work ships):
+the Tier-2 LLM orchestrator design at `future-architecture-upgrade.md`.
+Phase 12's `jobs.adapters` + `requires` + `baseline` machinery already
+covers a lot of what an orchestrator needs; revisit whether a separate
+orchestrator service is still warranted at that point.
 
 ## External docs / memory
 
