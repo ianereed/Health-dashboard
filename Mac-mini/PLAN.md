@@ -74,7 +74,7 @@ APIs, which only cover recent data. Protect it.
 
 1. `~/Home-Tools/health-dashboard/data/health.db` (~91MB, authoritative)
 2. `~/Home-Tools/event-aggregator/state.json` + `event_log.jsonl`
-3. `~/Home-Tools/finance-monitor/db/finance.db`
+3. `~/Home-Tools/finance-monitor/data/finance.db`
 4. `~/Home-Tools/nas-intake/state.json`
 5. `~/Library/Keychains/login.keychain-db` (7+ secrets, painful to re-migrate)
 6. `~/Home-Tools/logs/incidents.jsonl` (Phase 6 audit trail)

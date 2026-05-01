@@ -34,6 +34,17 @@ INCIDENTS_FILE = LOGS_DIR / "incidents.jsonl"
 HEALTH_DB = HOME / "Home-Tools" / "health-dashboard" / "data" / "health.db"
 HEALTH_DB_STALE_S = 25 * 3600  # 25h
 
+# Phase 7 backup probes — read log mtimes to infer last-success freshness.
+# A log file modified in the last IN_FLIGHT_S is considered "running now"
+# and skipped (avoids classifying a mid-run :17 backup as stale at :30).
+RESTIC_HOURLY_LOG = HOME / "Library" / "Logs" / "home-tools" / "restic-hourly.log"
+RESTIC_DAILY_LOG = HOME / "Library" / "Logs" / "home-tools" / "restic-daily.log"
+RESTIC_HOURLY_FAILED_FLAG = RUN_DIR / "restic-hourly-failed.flag"
+RESTIC_DAILY_FAILED_FLAG = RUN_DIR / "restic-daily-failed.flag"
+BACKUP_HOURLY_STALE_S = 2 * 3600       # 2h (fires every 1h, allow 1 miss)
+BACKUP_DAILY_STALE_S = 26 * 3600       # 26h (fires daily, allow ~1h slop)
+BACKUP_IN_FLIGHT_S = 60                # logs <60s old = in-flight, skip judgment
+
 # Long-running KeepAlive agents we expect to see in `launchctl list` with a PID.
 # Periodic agents (StartInterval / StartCalendarInterval) drop their PID between
 # fires — listing them as expected here would generate false "down" incidents.
@@ -100,6 +111,25 @@ def check_db_freshness(path: Path, stale_s: int) -> str:
     return "fresh" if age < stale_s else "stale"
 
 
+def check_backup_freshness(log: Path, failed_flag: Path, stale_s: int) -> str:
+    """Return 'ok', 'fail', 'stale', 'in_flight', or 'missing'.
+
+    - in_flight: log was modified <60s ago (mid-run; don't judge)
+    - fail:      restic-{profile}-failed.flag exists (wrapper recorded a persistent failure)
+    - missing:   no log file yet (first run hasn't happened)
+    - stale:     log mtime older than stale_s (agent silently stopped firing)
+    - ok:        log fresh, no failed.flag
+    """
+    if failed_flag.exists():
+        return "fail"
+    if not log.exists():
+        return "missing"
+    age = time.time() - log.stat().st_mtime
+    if age < BACKUP_IN_FLIGHT_S:
+        return "in_flight"
+    return "ok" if age < stale_s else "stale"
+
+
 def collect_current() -> dict[str, str]:
     state: dict[str, str] = {}
     for label in EXPECTED_AGENTS:
@@ -107,6 +137,18 @@ def collect_current() -> dict[str, str]:
     for name, url in ENDPOINTS:
         state[f"endpoint:{name}"] = check_endpoint(url)
     state["db:health"] = check_db_freshness(HEALTH_DB, HEALTH_DB_STALE_S)
+    # Phase 7 backup probes — skip if in-flight (don't generate noise on a
+    # restic run that started 30s ago and hasn't finished yet).
+    hourly = check_backup_freshness(
+        RESTIC_HOURLY_LOG, RESTIC_HOURLY_FAILED_FLAG, BACKUP_HOURLY_STALE_S,
+    )
+    if hourly != "in_flight":
+        state["backup:hourly"] = hourly
+    daily = check_backup_freshness(
+        RESTIC_DAILY_LOG, RESTIC_DAILY_FAILED_FLAG, BACKUP_DAILY_STALE_S,
+    )
+    if daily != "in_flight":
+        state["backup:daily"] = daily
     return state
 
 
@@ -142,7 +184,10 @@ def append_event(event: dict) -> None:
 
 
 def is_bad_state(value: str) -> bool:
-    return value not in ("up", "fresh")
+    return value not in ("up", "fresh", "ok", "missing")
+    # "missing" is expected on first install before the first backup runs;
+    # it's not a state worth waking the user about. The next run flips to
+    # "ok" or "fail" and any subsequent transition is reported normally.
 
 
 def main() -> int:

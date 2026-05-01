@@ -222,6 +222,21 @@ def render_dataflow(status: dict, queues: dict, ollama: dict,
         _ext("Slack DM"),
     ]))
 
+    # Phase 7 backup — restic snapshots to NAS. Freshness based on
+    # state-file mtime (heartbeat probe writes incidents on staleness).
+    BACKUP_HOURLY_AGING, BACKUP_HOURLY_STALE = 4500, 7200    # 75min, 2h (every 1h)
+    BACKUP_DAILY_AGING, BACKUP_DAILY_STALE = 90000, 172800   # 25h, 48h (daily)
+    BACKUP_PRUNE_AGING, BACKUP_PRUNE_STALE = 691200, 1382400  # 8d, 16d (weekly)
+    lanes.append(_lane("Backup", [
+        _ext("priority files"),
+        _arrow(),
+        _node("restic-hourly :17", st_("p7_restic_hourly")),
+        _node("restic-daily 03:30", st_("p7_restic_daily")),
+        _node("restic-prune Sun 04:00", st_("p7_restic_prune")),
+        _arrow(),
+        _ext("~/Share1/mac-mini-backups/  (encrypted)"),
+    ]))
+
     # Shared infra — Ollama with per-model loaded/idle visibility
     TRACKER_STALE_SEC = 300  # 5 min — tracker polls every 60s
     history = ollama.get("history") or {}

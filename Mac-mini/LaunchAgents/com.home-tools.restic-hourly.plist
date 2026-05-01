@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.home-tools.restic-hourly</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/homeserver/Home-Tools/Mac-mini/scripts/restic-backup.py</string>
+        <string>--profile</string>
+        <string>hourly</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/homeserver/Home-Tools</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/homeserver</string>
+        <key>KEYCHAIN_PATH</key>
+        <string>/Users/homeserver/Library/Keychains/login.keychain-db</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>17</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/homeserver/Library/Logs/home-tools/restic-hourly.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/homeserver/Library/Logs/home-tools/restic-hourly.log</string>
+</dict>
+</plist>

@@ -9,6 +9,11 @@ from paths import (
     PHASE6_DIGEST_FAILED_FLAG,
 )
 
+# Phase 7 log paths — derived from LOG_DIR_HOME_TOOLS to match Phase 6 convention.
+PHASE7_RESTIC_HOURLY_LOG = LOG_DIR_HOME_TOOLS / "restic-hourly.log"
+PHASE7_RESTIC_DAILY_LOG = LOG_DIR_HOME_TOOLS / "restic-daily.log"
+PHASE7_RESTIC_PRUNE_LOG = LOG_DIR_HOME_TOOLS / "restic-prune.log"
+
 
 @dataclass(frozen=True)
 class Svc:
@@ -68,6 +73,16 @@ SERVICES: list[Svc] = [
     Svc("p6_weekly_ssh","com.home-tools.weekly-ssh-digest",         "phase6",           "Mon 09:00",
         str(PHASE6_WEEKLY_SSH_LOG), is_periodic=True,
         plist_source_path="Mac-mini/LaunchAgents/com.home-tools.weekly-ssh-digest.plist"),
+    # Phase 7 (NAS backup) — see Mac-mini/PHASE7.md
+    Svc("p7_restic_hourly", "com.home-tools.restic-hourly",          "phase7",           "every hour at :17",
+        str(PHASE7_RESTIC_HOURLY_LOG), is_periodic=True,
+        plist_source_path="Mac-mini/LaunchAgents/com.home-tools.restic-hourly.plist"),
+    Svc("p7_restic_daily", "com.home-tools.restic-daily",            "phase7",           "03:30 daily",
+        str(PHASE7_RESTIC_DAILY_LOG), is_periodic=True,
+        plist_source_path="Mac-mini/LaunchAgents/com.home-tools.restic-daily.plist"),
+    Svc("p7_restic_prune", "com.home-tools.restic-prune",            "phase7",           "Sun 04:00 weekly",
+        str(PHASE7_RESTIC_PRUNE_LOG), is_periodic=True,
+        plist_source_path="Mac-mini/LaunchAgents/com.home-tools.restic-prune.plist"),
 ]
 
 
