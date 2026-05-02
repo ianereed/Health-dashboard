@@ -118,10 +118,18 @@ def _ensure_parent_dir(out_path: Path) -> None:
 
 
 def _query_chat_db(db_path: Path, since_ns: float) -> list[sqlite3.Row]:
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
+    # Copy chat.db together with its -wal and -shm sidecars. SQLite is in WAL
+    # mode; recent rows live in chat.db-wal until Messages.app checkpoints
+    # (rarely). Copying only chat.db silently elides every message since the
+    # last checkpoint — caused 8h+ blind spots in the export.
+    with tempfile.TemporaryDirectory() as td:
+        tmp_dir = Path(td)
+        tmp_path = tmp_dir / "chat.db"
         shutil.copy2(db_path, tmp_path)
+        for suffix in ("-wal", "-shm"):
+            sidecar = db_path.with_name(db_path.name + suffix)
+            if sidecar.exists():
+                shutil.copy2(sidecar, tmp_dir / sidecar.name)
         with sqlite3.connect(str(tmp_path)) as conn:
             conn.row_factory = sqlite3.Row
             # JOIN handle table so we ship the real identifier (phone/email)
@@ -148,8 +156,6 @@ def _query_chat_db(db_path: Path, since_ns: float) -> list[sqlite3.Row]:
                 """,
                 (since_ns, _ROW_LIMIT),
             ).fetchall()
-    finally:
-        tmp_path.unlink(missing_ok=True)
 
 
 def _resolve_body(row: sqlite3.Row) -> str | None:
