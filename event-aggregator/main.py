@@ -1645,6 +1645,12 @@ def fetch_only() -> int:
     with state_module.locked():
         state.prune()
         state_module.save(state)
+    # Phase 12.5: liveness signal for the jobs framework's @baseline check.
+    # Touched after every fetch_only() run regardless of how many messages
+    # were enqueued — fetches can legitimately produce zero new items.
+    _fetch_run_dir = state_module.STATE_PATH.parent / "run"
+    _fetch_run_dir.mkdir(exist_ok=True)
+    (_fetch_run_dir / "event-aggregator-fetch.last").touch()
     logger.info("fetch-only: enqueued %d new message(s); text_queue depth=%d",
                 enqueued, state.text_queue_depth())
     return 0

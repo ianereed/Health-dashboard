@@ -28,9 +28,7 @@ class Svc:
 
 SERVICES: list[Svc] = [
     # KeepAlive listeners that didn't migrate (no jobs-style cadence).
-    Svc("evt_fetch",    "com.home-tools.event-aggregator.fetch",   "event-aggregator", "every 10 min",
-        str(LOG_DIR_HOME_TOOLS / "event-aggregator-fetch.log"), is_periodic=True,
-        plist_source_path="event-aggregator/com.home-tools.event-aggregator.fetch.plist"),
+    # evt_fetch migrated to jobs framework in Phase 12.5 (kind: event_aggregator_fetch).
     Svc("evt_worker",   "com.home-tools.event-aggregator.worker",  "event-aggregator", "KeepAlive",
         str(LOG_DIR_HOME_TOOLS / "event-aggregator-worker.log"),
         plist_source_path="event-aggregator/com.home-tools.event-aggregator.worker.plist"),

@@ -19,6 +19,7 @@ EXPECTED_MIGRATIONS = {
     "restic_hourly",
     "restic_daily",
     "restic_prune",
+    "event_aggregator_fetch",
 }
 
 
