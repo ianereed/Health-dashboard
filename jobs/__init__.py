@@ -58,10 +58,10 @@ configure_sqlite(_db_path)
 # The migrations.json runtime-state path. Created lazily by migration_verifier.
 MIGRATIONS_STATE_PATH = Path.home() / "Home-Tools" / "run" / "migrations.json"
 
-# Re-export so kinds can write `from jobs import huey, requires, baseline`.
-from jobs.lib import baseline, migrates_from, requires  # noqa: E402
+# Re-export so kinds can write `from jobs import huey, requires, baseline, requires_model`.
+from jobs.lib import baseline, migrates_from, record_swap, requires, requires_model  # noqa: E402
 
-__all__ = ["huey", "requires", "baseline", "migrates_from", "MIGRATIONS_STATE_PATH"]
+__all__ = ["huey", "requires", "baseline", "migrates_from", "requires_model", "record_swap", "MIGRATIONS_STATE_PATH"]
 
 
 def _load_all_kinds() -> None:

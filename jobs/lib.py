@@ -8,16 +8,24 @@ specific actionable error rather than a stack trace mid-job.
 `@baseline(metric="...", divergence_window="...")` annotates a migrated Job
 with the success-signature the migration_verifier compares against. Stored on
 the function as `_baseline` for the verifier to introspect.
+
+`@requires_model("text"|"vision")` ensures the correct Ollama model is loaded
+before a Job runs. Lazy teardown: no unload on return; the next opposite-kind
+call triggers the swap. Thread-safe via `_model_state._lock` (RLock).
 """
 from __future__ import annotations
 
 import functools
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -223,6 +231,190 @@ def _expand(value: str) -> Path:
     if value.startswith("~"):
         return Path(value).expanduser()
     return Path.home() / "Home-Tools" / value
+
+
+# ── @requires_model primitive ─────────────────────────────────────────────────
+
+_MODEL_SWAP_LOG = Path.home() / "Home-Tools" / "logs" / "model_swaps.jsonl"
+
+
+def _parse_keep_alive(raw: str):
+    """Parse "-1" → int(-1), "30s"/"10m" → str (Ollama accepts both forms)."""
+    raw = (raw or "").strip()
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return raw
+
+
+class _ModelState:
+    """Process-wide singleton tracking the Ollama model currently loaded.
+
+    Model names and contexts are read from environment variables at call time
+    so the primitive works in the jobs consumer (which sets them in its plist)
+    without a hard import from event-aggregator/config.py.
+
+    Thread-safety: all mutations go through self._lock (RLock). Huey 3
+    thread-mode workers may call concurrently.
+
+    Lazy teardown: swap_to() is called only when the requested kind differs
+    from the currently loaded model. No unload happens on return from the
+    decorated function.
+
+    Batch hint: while _batch_kind is set (by requires_model("text",
+    batch_hint="drain")), calls to ensure() for the opposite kind are silently
+    deferred. The batch clears when the outer function returns, after which the
+    next opposite-kind call proceeds normally.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._current: str | None = None
+        self._batch_kind: str | None = None
+
+    # ── config from env ────────────────────────────────────────────────────────
+
+    @property
+    def text_model(self) -> str:
+        return os.environ.get("OLLAMA_MODEL", "qwen3:14b")
+
+    @property
+    def vision_model(self) -> str:
+        return os.environ.get("LOCAL_VISION_MODEL", "qwen2.5vl:7b")
+
+    @property
+    def ollama_url(self) -> str:
+        return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    @property
+    def text_ctx(self) -> int:
+        return int(os.environ.get("OLLAMA_NUM_CTX_TEXT", "16384"))
+
+    @property
+    def vision_ctx(self) -> int:
+        return int(os.environ.get("OLLAMA_NUM_CTX_VISION", "16384"))
+
+    @property
+    def text_keep_alive(self):
+        return _parse_keep_alive(os.environ.get("OLLAMA_KEEP_ALIVE_TEXT", "-1"))
+
+    @property
+    def vision_keep_alive(self):
+        return _parse_keep_alive(os.environ.get("OLLAMA_KEEP_ALIVE_VISION", "30s"))
+
+    def model_for(self, kind: str) -> str:
+        if kind == "text":
+            return self.text_model
+        if kind == "vision":
+            return self.vision_model
+        raise ValueError(f"unknown model kind {kind!r} (expected 'text' or 'vision')")
+
+    def _http_post(self, url: str, payload: dict, timeout: int = 120) -> None:
+        """POST JSON to url. Extracted for easy monkeypatching in tests."""
+        import urllib.request as _urllib
+        data = json.dumps(payload).encode()
+        req = _urllib.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with _urllib.urlopen(req, timeout=timeout):
+            pass
+
+    def swap_to(self, kind: str) -> None:
+        """Unload current model (if any) and warmup the target kind.
+        Caller MUST hold self._lock.
+        Records the swap to model_swaps.jsonl for telemetry.
+        """
+        target = self.model_for(kind)
+        if self._current == target:
+            return
+
+        from_model = self._current
+        t0 = time.monotonic()
+
+        if from_model is not None:
+            try:
+                self._http_post(
+                    f"{self.ollama_url}/api/generate",
+                    {"model": from_model, "keep_alive": 0, "prompt": "", "stream": False},
+                    timeout=10,
+                )
+                logger.info("model_state: unloaded %s", from_model)
+            except Exception as exc:
+                logger.warning("model_state: unload %s failed (best-effort): %s", from_model, exc)
+
+        ctx = self.text_ctx if kind == "text" else self.vision_ctx
+        ka = self.text_keep_alive if kind == "text" else self.vision_keep_alive
+        try:
+            self._http_post(
+                f"{self.ollama_url}/api/generate",
+                {"model": target, "prompt": "", "stream": False,
+                 "keep_alive": ka, "options": {"num_ctx": ctx}},
+                timeout=120,
+            )
+            logger.info("model_state: warmed %s (ctx=%d)", target, ctx)
+        except Exception as exc:
+            logger.warning("model_state: warmup %s failed (best-effort): %s", target, exc)
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        self._current = target
+        record_swap(from_model or "none", target, latency_ms)
+
+    def ensure(self, kind: str) -> None:
+        """Ensure the named model kind is loaded. Caller MUST hold self._lock.
+        If a batch of the opposite kind is active, this call is deferred
+        (silently returns without swapping).
+        """
+        target = self.model_for(kind)
+        if self._current == target:
+            return
+        if self._batch_kind is not None and kind != self._batch_kind:
+            return  # deferred; next ensure() after batch clears will swap
+        self.swap_to(kind)
+
+
+_model_state = _ModelState()
+
+
+def record_swap(from_model: str, to_model: str, latency_ms: int) -> None:
+    """Append a model-swap telemetry record to model_swaps.jsonl."""
+    row = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "from": from_model,
+        "to": to_model,
+        "latency_ms": latency_ms,
+    }
+    try:
+        _MODEL_SWAP_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(_MODEL_SWAP_LOG, "a") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
+
+
+def requires_model(kind: str, batch_hint: str = "") -> Callable:
+    """Ensure the named Ollama model kind is loaded before calling the decorated fn.
+
+    kind: "text" or "vision"
+    batch_hint="drain": while this function executes, opposite-kind swap requests
+    are deferred. Preserves warmup amortization when the same kind is called
+    repeatedly (e.g. draining a text queue before switching to vision).
+
+    Lazy teardown: no unload on return. The next call to requires_model with the
+    opposite kind triggers the swap.
+    """
+    def deco(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with _model_state._lock:
+                if batch_hint == "drain":
+                    _model_state._batch_kind = kind
+                _model_state.ensure(kind)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                if batch_hint == "drain":
+                    with _model_state._lock:
+                        _model_state._batch_kind = None
+        return wrapper
+    return deco
 
 
 # ── output_config dispatch helper ─────────────────────────────────────────────

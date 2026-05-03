@@ -46,6 +46,63 @@ _TICK_SLEEP_SECONDS = 1   # short pause between successive jobs (avoid tight loo
 _SWAP_DECISION_TIMEOUT_MIN = 5  # auto-resolve a pending swap decision to "wait" after this
 
 
+# ── Phase 12.6 shim: local model-state tracker ───────────────────────────────
+# Mirrors the @requires_model contract from jobs/lib.py (lazy teardown, swap-
+# on-demand) without importing from the jobs package (which requires the jobs
+# venv). Replaced in Phase 12.7 when _run_text_job/_run_ocr_job move to
+# jobs kinds and use @requires_model directly.
+
+def _record_model_swap(from_model: str, to_model: str, latency_ms: int) -> None:
+    """Write a swap telemetry row to ~/Home-Tools/logs/model_swaps.jsonl."""
+    import json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    from pathlib import Path as _Path
+    log = _Path.home() / "Home-Tools" / "logs" / "model_swaps.jsonl"
+    row = {"ts": _dt.now(_tz.utc).isoformat(), "from": from_model, "to": to_model, "latency_ms": latency_ms}
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "a") as fh:
+            fh.write(_json.dumps(row) + "\n")
+    except OSError:
+        pass
+
+
+class _WorkerModelState:
+    """Process-local model-swap state for the while-loop worker.
+
+    ensure_text() / ensure_vision() swap only when the model kind changes
+    (lazy teardown). After an OCR job the vision model stays resident until
+    the next text job triggers the swap back — preserving warmup amortization.
+    """
+
+    def __init__(self) -> None:
+        self.current_model: str | None = None
+
+    def ensure_text(self) -> None:
+        if self.current_model == config.OLLAMA_MODEL:
+            return
+        self._swap_to(config.OLLAMA_MODEL, config.OLLAMA_NUM_CTX_TEXT, config.OLLAMA_KEEP_ALIVE_TEXT)
+
+    def ensure_vision(self) -> None:
+        if self.current_model == config.LOCAL_VISION_MODEL:
+            return
+        self._swap_to(config.LOCAL_VISION_MODEL, config.OLLAMA_NUM_CTX_VISION, config.OLLAMA_KEEP_ALIVE_VISION)
+
+    def _swap_to(self, model: str, ctx: int, keep_alive) -> None:
+        import time as _time
+        t0 = _time.monotonic()
+        from_model = self.current_model
+        if from_model is not None:
+            _ollama_unload(from_model)
+        _ollama_warmup(model, ctx, keep_alive=keep_alive)
+        latency_ms = int((_time.monotonic() - t0) * 1000)
+        self.current_model = model
+        _record_model_swap(from_model or "none", model, latency_ms)
+
+
+_model_swap = _WorkerModelState()
+
+
 # ── Signal handling — graceful shutdown ───────────────────────────────────────
 
 _shutdown_requested = False
@@ -321,12 +378,9 @@ def run_worker() -> int:
         config.LOCAL_VISION_MODEL, config.OLLAMA_NUM_CTX_VISION,
     )
 
-    # Warm the primary text model so the first job doesn't pay the load latency.
-    _ollama_warmup(
-        config.OLLAMA_MODEL,
-        config.OLLAMA_NUM_CTX_TEXT,
-        keep_alive=config.OLLAMA_KEEP_ALIVE_TEXT,
-    )
+    # Warm the text model at startup. _model_swap.ensure_text() is a no-op on
+    # subsequent text jobs once the model is already hot (lazy-teardown contract).
+    _model_swap.ensure_text()
 
     while not _shutdown_requested:
         with state_module.locked():
@@ -340,7 +394,7 @@ def run_worker() -> int:
             state.update_worker_status(
                 text_queue=text_depth,
                 ocr_queue=ocr_depth,
-                current_model=config.OLLAMA_MODEL,
+                current_model=_model_swap.current_model or config.OLLAMA_MODEL,
             )
             state_module.save(state)
 
@@ -373,11 +427,13 @@ def run_worker() -> int:
 
         try:
             if run_ocr:
-                # Swap: unload text model, run vision, reload text.
-                _ollama_unload(config.OLLAMA_MODEL)
+                # Lazy swap: ensure vision model is loaded. If text was loaded,
+                # this unloads text and warms vision. No reload of text after —
+                # the next text job's ensure_text() does it.
+                _model_swap.ensure_vision()
                 with state_module.locked():
                     state = state_module.load()
-                    state.update_worker_status(current_model=config.LOCAL_VISION_MODEL)
+                    state.update_worker_status(current_model=_model_swap.current_model)
                     job = state.pop_ocr_job()
                     if job:
                         state.update_worker_status(job_in_flight={
@@ -391,19 +447,13 @@ def run_worker() -> int:
                     with state_module.locked():
                         state.update_worker_status(job_in_flight=None)
                         state_module.save(state)
-                # Reload primary so next text job is hot.
-                _ollama_unload(config.LOCAL_VISION_MODEL)
-                _ollama_warmup(
-                    config.OLLAMA_MODEL,
-                    config.OLLAMA_NUM_CTX_TEXT,
-                    keep_alive=config.OLLAMA_KEEP_ALIVE_TEXT,
-                )
-                with state_module.locked():
-                    state.update_worker_status(current_model=config.OLLAMA_MODEL)
-                    state_module.save(state)
             elif run_text:
+                # Lazy swap: ensure text model. Noop if text already loaded;
+                # swaps vision→text only if vision was left resident from OCR.
+                _model_swap.ensure_text()
                 with state_module.locked():
                     state = state_module.load()
+                    state.update_worker_status(current_model=_model_swap.current_model)
                     job = state.pop_text_job()
                     if job:
                         state.update_worker_status(job_in_flight={
