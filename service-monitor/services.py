@@ -29,11 +29,10 @@ class Svc:
 SERVICES: list[Svc] = [
     # KeepAlive listeners that didn't migrate (no jobs-style cadence).
     # evt_fetch migrated to jobs framework in Phase 12.5 (kind: event_aggregator_fetch).
-    # evt_worker migrating to jobs framework in Phase 12.7 (kinds: event_aggregator_text,
-    # event_aggregator_vision, event_aggregator_decision_poller). Plist disabled at cutover.
-    Svc("evt_worker",   "com.home-tools.event-aggregator.worker",  "event-aggregator", "KeepAlive (→ jobs 12.7)",
-        str(LOG_DIR_HOME_TOOLS / "event-aggregator-worker.log"),
-        plist_source_path="event-aggregator/com.home-tools.event-aggregator.worker.plist"),
+    # evt_worker migrated to jobs framework in Phase 12.7 — retired, plist disabled.
+    #   Replacement kinds: event_aggregator_text, event_aggregator_vision,
+    #   event_aggregator_decision_poller — all run inside the jobs consumer.
+    # Svc entry removed in Phase 12.7; worker.py loop deleted in Phase 12.8.
     Svc("disp",         "com.home-tools.dispatcher",                "dispatcher",       "KeepAlive",
         str(LOG_PATH_DISPATCHER),
         plist_source_path="dispatcher/com.home-tools.dispatcher.plist"),
@@ -67,6 +66,8 @@ SERVICES: list[Svc] = [
 # warnings. Add a one-line reason — if you can't articulate the reason, it
 # probably belongs in SERVICES.
 KNOWN_UNMONITORED_LABELS: dict[str, str] = {
+    "com.home-tools.event-aggregator.worker":
+        "Phase 12.7: migrated to jobs kinds (event_aggregator_text/vision/decision_poller); worker loop retired, plist.disabled; run_worker() deleted in Phase 12.8",
     "com.home-tools.memory-tracker":
         "Tier-2 memory observer — writes JSON to ~/Library/Application Support/, surfaced in service-monitor app, not a Svc itself",
     "com.home-tools.ollama-tracker":
