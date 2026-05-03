@@ -22,7 +22,7 @@ KEYCHAIN_PATH="${KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain-db}"
 security unlock-keychain -p "" "$KEYCHAIN_PATH" 2>/dev/null || true
 
 # Pull tokens out into env vars (lazy adapters read os.environ).
-export SLACK_BOT_TOKEN="$(security find-generic-password -a 'home-tools' -s 'slack_bot_token' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
+export SLACK_BOT_TOKEN="$(security find-generic-password -s 'dispatcher-slack' -a 'bot_token' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 export TODOIST_API_TOKEN="$(security find-generic-password -a 'home-tools' -s 'todoist_api_token' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 export HOME_TOOLS_HTTP_TOKEN="$(security find-generic-password -a 'home-tools' -s 'jobs_http_token' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 # Restic per-repo passwords (used by migration_verifier's restic-snapshot-count check).
