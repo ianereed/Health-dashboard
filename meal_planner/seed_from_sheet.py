@@ -333,37 +333,12 @@ def seed(
             )
             add_recipe_tag(recipe_id, tag, path=p_db)
 
-            ing_count = 0
-            for sort_order, item in enumerate(parsed):
-                try:
-                    name = str(item.get("name", "")).strip()
-                    if not name:
-                        continue
-                    qty_raw = item.get("qty")
-                    qty_per_serving: float | None
-                    if qty_raw is None:
-                        qty_per_serving = None
-                    else:
-                        qty_per_serving = float(qty_raw) / base_servings
-                    unit = str(item.get("unit", "") or "").strip() or None
-                    notes = str(item.get("notes", "") or "").strip() or None
-                    todoist_section = str(item.get("todoist_section", "") or "").strip() or None
-                except (TypeError, ValueError) as exc:
-                    print(f"\n    ingredient parse error ({exc}) — skipping this ingredient")
-                    continue
-
-                cur_rowcount = _insert_ingredient_checked(
-                    recipe_id=recipe_id,
-                    name=name,
-                    qty_per_serving=qty_per_serving,
-                    unit=unit,
-                    notes=notes,
-                    todoist_section=todoist_section,
-                    sort_order=sort_order,
-                    path=p_db,
-                )
-                if cur_rowcount == 1:
-                    ing_count += 1
+            ing_count = _insert_ingredients_batch(
+                recipe_id=recipe_id,
+                parsed=parsed,
+                base_servings=base_servings,
+                path=p_db,
+            )
 
             done.add(key)
             _save_progress(done, p_progress)
@@ -373,30 +348,51 @@ def seed(
     return seeded, skipped
 
 
-def _insert_ingredient_checked(
+def _insert_ingredients_batch(
     *,
     recipe_id: int,
-    name: str,
-    qty_per_serving: float | None,
-    unit: str | None,
-    notes: str | None,
-    todoist_section: str | None,
-    sort_order: int,
+    parsed: list[dict],
+    base_servings: int,
     path: Path,
 ) -> int:
-    """Insert ingredient and return rowcount (1 on success, 0 on silent failure)."""
+    """Insert all parsed ingredients for a recipe in one connection. Returns count inserted."""
     p = path or _db.DB_PATH
-    with _db._get_conn(p) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO ingredients
-              (recipe_id, name, qty_per_serving, unit, notes,
-               todoist_section, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (recipe_id, name, qty_per_serving, unit, notes, todoist_section, sort_order),
-        )
-        return cur.rowcount
+    conn = _db._get_conn(p)
+    try:
+        count = 0
+        for sort_order, item in enumerate(parsed):
+            try:
+                name = str(item.get("name", "")).strip()
+                if not name:
+                    continue
+                qty_raw = item.get("qty")
+                qty_per_serving: float | None
+                if qty_raw is None:
+                    qty_per_serving = None
+                else:
+                    qty_per_serving = float(qty_raw) / base_servings
+                unit = str(item.get("unit", "") or "").strip() or None
+                notes = str(item.get("notes", "") or "").strip() or None
+                todoist_section = str(item.get("todoist_section", "") or "").strip() or None
+            except (TypeError, ValueError) as exc:
+                print(f"\n    ingredient parse error ({exc}) — skipping this ingredient")
+                continue
+
+            cur = conn.execute(
+                """
+                INSERT INTO ingredients
+                  (recipe_id, name, qty_per_serving, unit, notes,
+                   todoist_section, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (recipe_id, name, qty_per_serving, unit, notes, todoist_section, sort_order),
+            )
+            if cur.rowcount == 1:
+                count += 1
+        conn.commit()
+        return count
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
