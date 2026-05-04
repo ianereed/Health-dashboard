@@ -292,24 +292,21 @@ def seed(
     done = _load_progress(p_progress)
 
     spreadsheet = _open_sheet(sheet_id, service_account_path)
-    worksheets = spreadsheet.worksheets()
-    total_recipes = sum(
-        len(_get_recipes_from_worksheet(ws))
-        for ws in worksheets
+    worksheet_data = [
+        (ws, _get_recipes_from_worksheet(ws))
+        for ws in spreadsheet.worksheets()
         if ws.title.lower() != "readme"
-    )
+    ]
+    total_recipes = sum(len(rs) for _, rs in worksheet_data)
 
     seeded = 0
     skipped = 0
     recipe_num = 0
 
-    for ws in worksheets:
+    for ws, recipes_in_tab in worksheet_data:
         tab_name = ws.title
-        if tab_name.lower() == "readme":
-            continue
         tag = tab_name.lower()  # tab name is the tag (normalized already by add_recipe_tag)
 
-        recipes_in_tab = _get_recipes_from_worksheet(ws)
         for title, col_idx, ingredient_strings in recipes_in_tab:
             recipe_num += 1
             key = _progress_key(tab_name, col_idx)
