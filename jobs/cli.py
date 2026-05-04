@@ -9,6 +9,7 @@ Subcommands:
   doctor                           Smoke-test: enqueue nop, wait for consumer, report.
   migrate <kind>                   Begin a migration: rename old plist → .disabled,
                                    record baseline in migrations.json.
+  promote <kind>                   Manually promote an in-flight migration (skip soak).
   rollback <kind>                  Manual rollback of an in-flight migration.
   halt-verifier <kind>             Pause migration_verifier checks for one kind.
   cleanup-soaked                   Remove .disabled plists for promoted migrations.
@@ -281,6 +282,22 @@ def _migrate(kind: str) -> int:
     return 0
 
 
+def _promote(kind: str) -> int:
+    """Manually promote an in-flight migration, skipping the soak wait."""
+    from jobs.kinds._internal.migration_verifier import load_state, save_state, promote as do_promote
+    state = load_state()
+    m = state.get("in_flight", {}).get(kind)
+    if not m:
+        print(f"{kind} is not in_flight", file=sys.stderr)
+        return 1
+    do_promote(m)
+    state.setdefault("promoted", []).append({**m, "at": datetime.now(timezone.utc).isoformat()})
+    del state["in_flight"][kind]
+    save_state(state)
+    print(f"promoted {kind}")
+    return 0
+
+
 def _rollback(kind: str) -> int:
     from jobs.kinds._internal.migration_verifier import load_state, save_state, rollback as do_rollback
     state = load_state()
@@ -347,6 +364,9 @@ def main(argv: list[str] | None = None) -> int:
     sp_mig = sp.add_parser("migrate", help="begin a migration: rename old plist → .disabled")
     sp_mig.add_argument("kind")
 
+    sp_prom = sp.add_parser("promote", help="manually promote an in-flight migration (skip soak)")
+    sp_prom.add_argument("kind")
+
     sp_rb = sp.add_parser("rollback", help="manual rollback of an in-flight migration")
     sp_rb.add_argument("kind")
 
@@ -369,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         return _new(args.name)
     if args.cmd == "migrate":
         return _migrate(args.kind)
+    if args.cmd == "promote":
+        return _promote(args.kind)
     if args.cmd == "rollback":
         return _rollback(args.kind)
     if args.cmd == "halt-verifier":
