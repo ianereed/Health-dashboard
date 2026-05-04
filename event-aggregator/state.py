@@ -195,14 +195,6 @@ class State:
         queue = self._data.get("ocr_queue", [])
         return queue[0] if queue else None
 
-    def worker_status(self) -> dict:
-        return self._data.get("worker_status", {})
-
-    def update_worker_status(self, **kwargs) -> None:
-        bucket = self._data.setdefault("worker_status", {})
-        bucket.update(kwargs)
-        bucket["updated_at"] = _utcnow().isoformat()
-
     # ── Swap decisions (Slack [Wait]/[Interrupt] interactive proposals) ──────
 
     def add_swap_decision(self, ocr_path: str, text_queue_depth: int) -> str:

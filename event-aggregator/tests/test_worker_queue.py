@@ -96,26 +96,16 @@ class TestSwapDecisions:
         assert s.resolve_swap_decision("nope", "wait") is False
 
     def test_stale_auto_wait(self):
-        from worker import _expire_stale_swap_decisions
         s = _state()
         did = s.add_swap_decision("/tmp/x.pdf", text_queue_depth=2)
         # Backdate the decision past the timeout.
         s._data["swap_decisions"][did]["created_at"] = (
             datetime.now(timezone.utc) - timedelta(hours=1)
         ).isoformat()
-        _expire_stale_swap_decisions(s)
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+        s.expire_pending_decisions(cutoff)
         assert s.get_swap_decision(did)["decision"] == "wait"
         assert s.get_swap_decision(did)["auto_resolved"] is True
-
-
-class TestWorkerStatus:
-    def test_status_round_trip(self):
-        s = _state()
-        s.update_worker_status(text_queue=3, ocr_queue=1, current_model="qwen3:14b")
-        st = s.worker_status()
-        assert st["text_queue"] == 3
-        assert st["ocr_queue"] == 1
-        assert "updated_at" in st
 
 
 class TestPreClassifier:

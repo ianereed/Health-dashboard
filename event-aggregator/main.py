@@ -1664,9 +1664,6 @@ if __name__ == "__main__":
         first = sys.argv[1]
         if first == "fetch-only":
             sys.exit(fetch_only())
-        if first == "worker":
-            import worker
-            sys.exit(worker.run_worker())
         if first in _SUBCOMMANDS:
             import cli
             sys.exit(cli.main())
