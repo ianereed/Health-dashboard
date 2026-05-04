@@ -2,10 +2,6 @@
 
 Reads TODOIST_SECTIONS (JSON name→section_id map), scales each recipe,
 consolidates via Gemini, then creates one Todoist task per GroceryLine.
-
-labels defaults to ["event-aggregator"] if omitted from output_config;
-this Job kind overrides explicitly so meal-planner tasks land under the
-meal-planner label rather than the event-aggregator label.
 """
 from __future__ import annotations
 

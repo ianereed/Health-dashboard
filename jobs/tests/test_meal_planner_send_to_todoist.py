@@ -10,9 +10,9 @@ import json
 from pathlib import Path
 
 import pytest
+import requests as _requests
 
 from meal_planner.db import init_db, insert_ingredient, insert_recipe
-from meal_planner.queries import get_recipe
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,6 @@ def test_happy_path_calls_todoist_with_meal_planner_label(monkeypatch, tmp_path:
         todoist_captured.append(kwargs.get("json") or {})
         return _TodoistResp()
 
-    import requests as _requests
     monkeypatch.setattr(_requests, "post", fake_requests_post)
 
     from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
@@ -130,7 +129,6 @@ def test_section_drift_falls_back_to_first_section(monkeypatch, tmp_path: Path) 
         todoist_captured.append(kwargs.get("json") or {})
         return _TodoistResp()
 
-    import requests as _requests
     monkeypatch.setattr(_requests, "post", fake_post)
 
     from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
@@ -162,7 +160,6 @@ def test_priority_is_string_not_int(monkeypatch, tmp_path: Path) -> None:
         todoist_captured.append(kwargs.get("json") or {})
         return _TodoistResp()
 
-    import requests as _requests
     monkeypatch.setattr(_requests, "post", fake_post)
 
     from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
@@ -194,7 +191,6 @@ def test_returns_items_sent_and_attempted(monkeypatch, tmp_path: Path) -> None:
             return _GeminiResp(gemini_items)
         return _TodoistResp()
 
-    import requests as _requests
     monkeypatch.setattr(_requests, "post", fake_post)
 
     from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist

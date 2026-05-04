@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from typing import TYPE_CHECKING
 
 import requests
@@ -70,7 +71,6 @@ def _call_gemini(prompt: str, api_key: str) -> str | None:
                 delay_str = detail.get("retryDelay", "60s")
                 retry_delay = int(re.sub(r"[^0-9]", "", delay_str) or "60") + 2
                 break
-        import time
         print(f"consolidation: rate limited — waiting {retry_delay}s…", flush=True)
         time.sleep(retry_delay)
 
