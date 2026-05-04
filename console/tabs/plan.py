@@ -1,0 +1,59 @@
+"""Plan tab — read-only Recipes view (Phase 14.2).
+
+Renders a recipe browser with a scale slider. No send button — that's Phase 14.5.
+Tab label stays "Plan" until Phase 14.6 renames it to "Recipes".
+"""
+from __future__ import annotations
+
+import streamlit as st
+
+from meal_planner import db as _db
+from meal_planner import queries, scaling
+
+
+def render() -> None:
+    try:
+        _render_inner()
+    except Exception as exc:
+        st.error(f"Plan tab error: {exc}")
+
+
+def _render_inner() -> None:
+    if not _db.DB_PATH.exists():
+        st.info(
+            "**No recipes seeded yet.**\n\n"
+            "Run `python -m meal_planner.seed_from_sheet` on the mini to populate "
+            "the recipe database, then refresh."
+        )
+        return
+
+    recipes = queries.list_recipes()
+    if not recipes:
+        st.info("Recipe database exists but contains no recipes yet.")
+        return
+
+    recipe_map = {r.title: r for r in recipes}
+    chosen_title = st.selectbox("Recipe", list(recipe_map.keys()))
+    recipe = recipe_map[chosen_title]
+
+    target = st.slider(
+        "Servings",
+        min_value=1,
+        max_value=20,
+        value=recipe.base_servings,
+    )
+
+    st.caption(f"Base: {recipe.base_servings} servings → scaling to {target}")
+
+    ingredients = scaling.scale_ingredients(recipe, target)
+    if not ingredients:
+        st.write("No ingredients recorded for this recipe.")
+        return
+
+    rows = []
+    for ing in ingredients:
+        qty_str = f"{ing.qty_per_serving:.2g}" if ing.qty_per_serving is not None else "—"
+        unit_str = ing.unit or ""
+        rows.append({"Ingredient": ing.name, "Qty": qty_str, "Unit": unit_str})
+
+    st.table(rows)

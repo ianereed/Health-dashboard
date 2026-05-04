@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import streamlit as st  # noqa: E402
 
 from console.sidebar import settings  # noqa: E402
-from console.tabs import ask, decisions, intake, jobs, plan_placeholder  # noqa: E402
+from console.tabs import ask, decisions, intake, jobs, plan  # noqa: E402
 
 st.set_page_config(
     page_title="Mini Ops",
@@ -58,4 +58,4 @@ with tab_ask:
 with tab_intake:
     intake.render()
 with tab_plan:
-    plan_placeholder.render()
+    plan.render()
