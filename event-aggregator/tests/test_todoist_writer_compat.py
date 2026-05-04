@@ -6,10 +6,6 @@ produce the new shape. All HTTP is mocked.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from models import CandidateTodo
 from writers import todoist_writer
 
