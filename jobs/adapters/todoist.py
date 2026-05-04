@@ -17,6 +17,8 @@ def create_task(output_config: dict, payload: dict) -> dict:
     output_config:
         target: "todoist"
         project_id: str | None  (None = inbox)
+        section_id: str | None  (None = no section; tasks land in the project inbox)
+        labels: list[str] | None  (None = ["event-aggregator"] for back-compat)
     payload:
         title, due_date, priority, source, source_id, ... (CandidateTodo fields)
     """
@@ -46,6 +48,11 @@ def create_task(output_config: dict, payload: dict) -> dict:
         priority=payload.get("priority", "normal"),
     )
     ok = todoist_writer.create_task(
-        token, project_id=output_config.get("project_id"), todo=todo, dry_run=False,
+        token,
+        project_id=output_config.get("project_id"),
+        todo=todo,
+        dry_run=False,
+        section_id=output_config.get("section_id"),
+        labels=output_config.get("labels"),
     )
     return {"created": bool(ok)}

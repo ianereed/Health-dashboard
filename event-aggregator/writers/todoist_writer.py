@@ -81,6 +81,9 @@ def create_task(
     project_id: str | None,
     todo: "CandidateTodo",
     dry_run: bool = False,
+    *,
+    section_id: str | None = None,
+    labels: list[str] | None = None,
 ) -> bool:
     """
     Create a Todoist task from a CandidateTodo.
@@ -89,6 +92,12 @@ def create_task(
     when project_id is omitted from the payload). Pass an explicit project_id
     to target a specific project; the caller is responsible for resolving
     sub-project routing (or omitting it to land in the parent project).
+
+    section_id: optional Todoist section ID; when set, tasks land in that
+    section rather than the project's inbox section.
+
+    labels: list of label strings to apply. When None (default), falls back
+    to ["event-aggregator"] to preserve backward-compat for existing callers.
 
     Returns True on success (or in dry-run mode).
     """
@@ -110,10 +119,12 @@ def create_task(
         "content": todo.title,
         "description": "\n".join(description_parts),
         "priority": _PRIORITY_MAP.get(todo.priority, 2),
-        "labels": ["event-aggregator"],
+        "labels": labels if labels is not None else ["event-aggregator"],
     }
     if project_id:
         payload["project_id"] = project_id
+    if section_id:
+        payload["section_id"] = section_id
     if todo.due_date:
         payload["due_date"] = todo.due_date
 
