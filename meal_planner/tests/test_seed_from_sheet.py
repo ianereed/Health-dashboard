@@ -190,6 +190,27 @@ def test_multiple_recipes_in_one_tab(db_path: Path) -> None:
     assert count == 2
 
 
+def test_malformed_parsed_ingredients_skipped(db_path: Path) -> None:
+    """Malformed items (empty name, non-numeric qty) are skipped; valid ones land."""
+    malformed_and_valid = [
+        {"name": "", "qty": 1.0, "unit": "cup", "notes": "", "todoist_section": "Pantry"},
+        {"name": "valid item", "qty": "nope", "unit": "tbsp", "notes": "", "todoist_section": "Pantry"},
+        {"name": "soy sauce", "qty": 2.0, "unit": "tbsp", "notes": "", "todoist_section": "Pantry"},
+    ]
+    ws = _make_worksheet("Asian", [["Teriyaki Chicken"], ["2 tbsp soy sauce"]])
+    seeded, skipped = _run_seed(db_path, [ws], parsed_ingredients=malformed_and_valid)
+
+    assert seeded == 1
+    assert skipped == 0
+
+    conn = sqlite3.connect(str(db_path))
+    ing_count = conn.execute("SELECT COUNT(*) FROM ingredients").fetchone()[0]
+    names = [r[0] for r in conn.execute("SELECT name FROM ingredients").fetchall()]
+    conn.close()
+    assert ing_count == 1
+    assert names == ["soy sauce"]
+
+
 def test_single_transaction_no_orphan_on_batch_failure(db_path: Path) -> None:
     """If _insert_ingredients_batch raises, no recipe row should land (A2 regression)."""
     ws = _make_worksheet("Asian", [["Teriyaki Chicken"], ["2 tbsp soy sauce"]])
