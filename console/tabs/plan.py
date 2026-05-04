@@ -1,6 +1,7 @@
-"""Plan tab — read-only Recipes view (Phase 14.2).
+"""Plan tab — Recipes view with Send-to-Todoist (Phase 14.5).
 
-Renders a recipe browser with a scale slider. No send button — that's Phase 14.5.
+Renders a recipe browser with a scale slider and a "Send to Todoist" button
+that enqueues the meal_planner_send_to_todoist Job kind.
 Tab label stays "Plan" until Phase 14.6 renames it to "Recipes".
 """
 from __future__ import annotations
@@ -37,14 +38,27 @@ def _render_inner() -> None:
     chosen_title = st.selectbox("Recipe", list(recipe_map.keys()))
     recipe = recipe_map[chosen_title]
 
-    target = st.slider(
-        "Servings",
-        min_value=1,
-        max_value=20,
-        value=recipe.base_servings,
-    )
+    col_slider, col_btn = st.columns([3, 1])
+    with col_slider:
+        target = st.slider(
+            "Servings",
+            min_value=1,
+            max_value=20,
+            value=recipe.base_servings,
+        )
+    with col_btn:
+        st.write("")  # vertical alignment spacer
+        send_clicked = st.button("Send to Todoist", type="primary")
 
     st.caption(f"Base: {recipe.base_servings} servings → scaling to {target}")
+
+    if send_clicked:
+        try:
+            from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+            result = meal_planner_send_to_todoist([[recipe.id, target]])
+            st.success(f"Job enqueued — task ID: {getattr(result, 'id', '?')}")
+        except Exception as exc:
+            st.error(f"Failed to enqueue: {exc}")
 
     ingredients = scaling.scale_ingredients(recipe, target)
     if not ingredients:
