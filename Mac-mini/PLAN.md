@@ -61,12 +61,11 @@ legacy worker loop retired. Both migrations promoted. Full record in
 Approach C2 (fills Phase 12's reserved Plan slot). Locked decisions in
 `project_meal_planner_expansion_priority.md` memory.
 
-**Next phase: Phase 14 — Meal-planner V0.** Recipe DB + Recipes tab in
-console + send-to-Todoist Job kind + sheet seed + `console/app.py`
-deep-link refactor. Entry checklist:
-1. Rollback-marker commit first
-2. `git mv meal-planner meal_planner`
-3. Implement per the approved Phase 13 design
+**Phase 14 DONE 2026-05-04 ✅** — Meal-planner V0 shipped. Recipes tab live
+at `http://homeserver:8503/?tab=recipes`. Anny walkthrough pending (SC6).
+
+**Next phase: Phase 15 — Recipe-photo-LLM bake-off.** Research only,
+output `meal_planner/MODEL_CHOICE.md`. Entry gate: Anny walkthrough passes.
 
 Pre-flight (confirm health before starting new work):
 
@@ -261,16 +260,34 @@ Design approved via /office-hours + gstack review pipeline. Approach C2
 memory: `project_meal_planner_expansion_priority.md`. Approved design doc:
 `~/.gstack/projects/ianereed-Home-Tools/ianereed-main-design-20260501-132248.md`.
 
-## Phase 14+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
+## Phase 14 — Meal-planner V0 (DONE 2026-05-04 ✅)
 
-Once Phase 13 produces a locked plan, the build splits into one-sitting
-chunks. Each chunk gets the next sequential Phase number when claimed.
-Numbers are not pre-allocated — if Phase 13 outputs four chunks, they
-become Phases 14, 15, 16, 17 as each is started.
+Recipe DB + Recipes tab in console + send-to-Todoist Job kind + sheet seed +
+`console/app.py` deep-link refactor. Phases 14.1–14.7 all landed on
+`phase14/meal-planner-v0`. Key commits: package cutover (14.1), read API +
+Recipes tab (14.2), Sheet seeder (14.3), Todoist adapter (14.4),
+consolidation + send-to-Todoist kind (14.5), deep-link refactor + rename
+(14.6), V0 ship + infra fixes (14.7).
 
-The "one sitting" rule keeps each Phase scope tight: a chunk that doesn't
-finish in a sitting either gets reduced or split before the next Phase
-starts.
+Infra fixes shipped in 14.7: `jobs/run-consumer.sh` now sources
+`meal_planner/.env`; `requests` added to `jobs/requirements.txt`.
+
+Success Criteria status: SC1 ✅ deep-link works, SC2 16 recipes (dataset
+ceiling), SC3 tags TBD post-Anny-walkthrough, SC4 ✅ dropdown+slider+button
+render, SC5 ✅ kind registered in huey, SC6 deferred to Anny walkthrough.
+
+## Phase 15 — Recipe-photo-LLM bake-off (next)
+
+Research only — no production code. Compare Gemini-flash, Gemini-flash-lite,
+Claude Haiku-4.5, GPT-4o-mini, local qwen2.5-vl on recipe photo extraction.
+Output: `meal_planner/MODEL_CHOICE.md`.
+
+Entry gate: Anny's Phase 14.7 walkthrough passes end-to-end (SC6).
+
+## Phase 16+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
+
+Each chunk gets the next sequential Phase number when claimed.
+Numbers are not pre-allocated.
 
 ## Long-term future scope (re-evaluate later)
 

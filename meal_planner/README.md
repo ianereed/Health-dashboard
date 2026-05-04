@@ -1,71 +1,101 @@
-# meal-planner
+# meal_planner
 
-Two-part meal planning system: a Google Apps Script frontend (the planning UI lives in a Google Sheet) plus a Python sidecar that does heavy LLM work via the Gemini API for recipe categorization and pantry consolidation.
+Meal planning system for the household. Phase 14 V0 ships a recipe browser tab
+in the Mini Ops console with a Send-to-Todoist grocery list flow.
 
 ## What it is
 
 ```
-  Google Sheet (Apps Script UI) ◀───────────┐
-        │                                    │
-        ▼                                    │
-  bulk_import.py    (Gemini batch) ─────────▶│
-  consolidate.py    (Gemini batch) ─────────▶│
-  Photo upload → vision (gemini-2.5-flash) ──┘
+  Google Sheet (legacy — kept as fallback through Phase 18)
+        │
+        ▼
+  seed_from_sheet.py  (Gemini batch) → recipes.db
+        │
+        ▼
+  console/tabs/plan.py  (Streamlit Recipes tab at :8503/?tab=recipes)
+        │
+        ▼
+  meal_planner_send_to_todoist Job kind → Gemini consolidation → Todoist tasks
 ```
 
-Apps Script side handles the daily UX. Python side runs locally on demand for the heavy batches.
+Phase 14 introduced the Python package (renamed from `meal-planner/`) and
+wired the entire flow from Sheet seed to Todoist write. The Apps Script
+frontend still works as a read-only fallback; it will be decommissioned in
+Phase 18.
 
 ## Audience
 
-You + family. Lives in your **personal** Google account, not Antora's.
+Joint (Anny + Ian). LAN + Tailscale only. No external auth.
+
+## Deep-link URL
+
+```
+http://homeserver:8503/?tab=recipes
+```
+
+Use the explicit `?tab=recipes` parameter — tab clicks don't update the URL
+(Streamlit st.tabs limitation). Send this URL to Anny, not the bare `/`.
 
 ## Status
 
-**Fully working**. Gemini API integration stable.
+**V0 live (Phase 14.7, 2026-05-04).** 16 recipes seeded from the existing
+Sheet. Send-to-Todoist button enqueues a huey job; the consumer runs the
+Gemini consolidation pass and creates one Todoist task per grocery line under
+the `meal-planner` label.
+
+Phase 15+ direction: `Mac-mini/PLAN.md`.
 
 ## ⚠️ Critical model rules
 
-These are the most easily-broken things in the project (memory: `project_meal_planner.md`):
-
 | Task | Model | Why |
 |------|-------|-----|
-| Recipe categorization | `gemini-2.5-flash-lite` | RPD (requests-per-day) headroom; handles batch volume |
+| Recipe categorization | `gemini-2.5-flash-lite` | RPD headroom for batch volume |
 | Pantry consolidation | `gemini-2.5-flash-lite` | Same |
 | Bulk recipe import | `gemini-2.5-flash-lite` | Same |
-| Single-photo recipe vision | `gemini-2.5-flash` | Vision quality requires the larger model |
+| Single-photo recipe vision | `gemini-2.5-flash` | Vision quality |
 | ❌ ANY task | `gemini-1.5-flash` | DOES NOT WORK — don't use |
 
-If the categorization step starts failing, FIRST check that `gemini-2.5-flash-lite` is still the model. Tinkering with model selection has bitten this project before.
+## Package layout
 
-## Layout
-
-- `apps-script/` — Google Apps Script source. Has its own [`SETUP.md`](apps-script/SETUP.md) for the Sheet-side configuration.
-- `bulk_import.py` (415 lines) — bulk recipe ingestion via Gemini
-- `consolidate.py` — pantry / grocery list consolidation
-
-## Setup
-
-```bash
-cd meal-planner
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env  # add GEMINI_API_KEY
+```
+meal_planner/
+  __init__.py
+  db.py               — SQLite schema, init_db, insert_recipe/ingredient
+  models.py           — Recipe, Ingredient, GroceryLine dataclasses
+  queries.py          — list_recipes(), get_recipe()
+  scaling.py          — scale_ingredients(recipe, target_servings)
+  consolidation.py    — consolidate_for_grocery() via Gemini
+  seed_from_sheet.py  — one-shot importer from Google Sheet
+  legacy/             — archived Apps Script + old consolidate.py
+  tests/
+apps-script/          — legacy Google Apps Script source (read-only fallback)
 ```
 
-## Future
+Job kind: `jobs/kinds/meal_planner_send_to_todoist.py`
 
-- Pantry-aware suggestions (use what's about to expire)
-- Better leftover handling
-- Possibly Apple Shortcuts integration for "what's for dinner" voice query
+## Env vars (meal_planner/.env on mini)
 
-## Out of scope
+| Var | Required | Notes |
+|-----|----------|-------|
+| `GEMINI_API_KEY` | yes | consolidation + seed categorization |
+| `TODOIST_API_TOKEN` | yes | pulled from keychain in consumer |
+| `TODOIST_SECTIONS` | yes | JSON map of section name → section_id |
+| `TODOIST_PROJECT_ID` | no | defaults to Todoist inbox |
+| `MEAL_PLANNER_SHEET_ID` | seed only | Google Sheet ID |
+| `GOOGLE_SERVICE_ACCOUNT_PATH` | seed only | path to service account JSON |
 
-- Calorie tracking (Apple Health does this)
-- Multi-week prep automation (manual planning is faster than automating it)
-- Shopping integration (out of scope for this hobby project)
+## Running the seeder
+
+```bash
+cd ~/Home-Tools
+source meal_planner/.env
+python -m meal_planner.seed_from_sheet
+```
+
+This hits the live Google Sheet and has a Gemini API cost. Don't run in CI.
 
 ## Reference
 
-- Memory: `project_meal_planner.md`
-- `apps-script/SETUP.md` — Sheet/Apps Script setup
+- `Mac-mini/PLAN.md` — Phase 15+ roadmap
+- Memory: `project_meal_planner.md`, `project_meal_planner_expansion_priority.md`
+- Design doc: `~/.gstack/projects/ianereed-Home-Tools/ianereed-main-design-20260501-132248.md`
