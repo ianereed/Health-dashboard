@@ -73,12 +73,22 @@ orchestrate.
 | dispatcher_3day_check | every ~3 days | `file-mtime:logs/dispatcher-3day.txt` | 80h |
 | finance_monitor_watch | every 5m | `db-mtime:finance-monitor/finance.db` | 6m |
 | nas_intake_scan | every 5m | `file-mtime:nas-intake/state.json` | 6m |
-| health_collect | 07:00+07:20 | `db-mtime:health-dashboard/data/health.db` | 35m |
-| health_intervals_poll | every 5m | `db-mtime:health-dashboard/data/health.db` | 6m |
-| health_staleness | 07:00+21:00 | `file-mtime:logs/health-staleness.log` | 20m |
+| health_collect † | 07:00+07:20 | `db-mtime:health-dashboard/data/health.db` | 35m |
+| health_intervals_poll † | every 5m | `db-mtime:health-dashboard/data/health.db` | 6m |
+| health_staleness † | 07:00+21:00 | `file-mtime:logs/health-staleness.log` | 20m |
 | restic_hourly | every :17 | `restic-snapshot-count:restic-hourly` | 80m |
 | restic_daily | 03:30 | `restic-snapshot-count:restic-daily` | 25h |
 | restic_prune | Sun 04:00 | `file-mtime:logs/restic-prune.log` | 8d |
+
+**† Health migrations deferred (2026-05-04):** `health_collect`,
+`health_intervals_poll`, `health_staleness` exist as huey kinds in
+`jobs/kinds/` and are firing on schedule, but the formal `jobs.cli migrate`
+ritual was skipped — `migrations.json` has no entry for them, the verifier
+never built a baseline, and the original
+`com.health-dashboard.{collect,intervals-poll,staleness}.plist` files are
+unloaded but not renamed to `.disabled`. Operationally fine; bookkeeping
+gap. Resume in a later phase: run `jobs.cli migrate <kind>` on each, then
+`promote` (soak risk is tiny since they've been live for days).
 
 Not migrated (still plists):
 

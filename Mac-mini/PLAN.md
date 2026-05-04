@@ -232,6 +232,13 @@ Plan source (v3): `~/.claude/plans/phase-12-mini-jobs-queue.md`
 Deferred to Phase 12.5: `event-aggregator.fetch` + worker (the queue +
 model-swap state machine doesn't decouple cleanly from fetch).
 
+**Health migrations deferred (2026-05-04):** `health_collect`,
+`health_intervals_poll`, `health_staleness` huey kinds exist and fire on
+schedule, but `jobs.cli migrate` was never run on them — no
+`migrations.json` entry, no verifier baseline, original plists unloaded
+but not renamed to `.disabled`. Operationally fine. Punted to a later
+phase; close out with `jobs.cli migrate <kind>` then `promote` for each.
+
 ## Phase 12.5 — Event-aggregator on the Jobs framework (DONE 2026-05-04 ✅)
 
 All sub-phases complete. Full record in `Mac-mini/PHASE12.md` "Phase 12.5
