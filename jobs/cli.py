@@ -115,8 +115,10 @@ def _enqueue(kind: str, params_json: str | None) -> int:
     if params:
         # Detect kinds that take a single positional dict (e.g. event_aggregator_text(job: dict)).
         # For those, pass params as a positional arg instead of **kwargs to avoid TypeError.
+        # huey TaskWrapper stores the original callable in .func; inspect that rather than the wrapper.
         try:
-            sig = inspect.signature(fn)
+            inspect_target = inspect.unwrap(getattr(fn, 'func', fn))
+            sig = inspect.signature(inspect_target)
             pos_params = [
                 p for p in sig.parameters.values()
                 if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
