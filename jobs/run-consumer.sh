@@ -30,4 +30,12 @@ export HOME_TOOLS_HTTP_TOKEN="$(security find-generic-password -a 'home-tools' -
 export RESTIC_PASSWORD_RESTIC_HOURLY="$(security find-generic-password -a 'password' -s 'restic-hourly-backup' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 export RESTIC_PASSWORD_RESTIC_DAILY="$(security find-generic-password -a 'password' -s 'restic-daily-backup' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 
+# Load meal-planner config (TODOIST_SECTIONS, GEMINI_API_KEY, TODOIST_PROJECT_ID, etc.).
+if [ -f "$(pwd)/meal_planner/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$(pwd)/meal_planner/.env"
+    set +a
+fi
+
 exec "$VENV/bin/huey_consumer" jobs.huey -w 1 -k thread
