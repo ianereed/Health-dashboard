@@ -91,3 +91,31 @@ def test_search_recipes_name_and_tags(seeded_db: Path) -> None:
     # name contains "beef" AND has "asian" tag — no match
     results_none = search_recipes(name_substring="beef", tags=("asian",), path=seeded_db)
     assert results_none == []
+
+
+def test_search_recipes_tags_dedup(seeded_db: Path) -> None:
+    # duplicate tag in input must produce same results as single occurrence
+    deduped = search_recipes(tags=("asian", "asian"), path=seeded_db)
+    single = search_recipes(tags=("asian",), path=seeded_db)
+    assert {r.id for r in deduped} == {r.id for r in single}
+
+
+def test_get_recipe_roundtrip_all_fields(db_path: Path) -> None:
+    rid = insert_recipe(
+        title="Full Recipe",
+        base_servings=6,
+        instructions="Mix and bake.",
+        cook_time_min=45,
+        source="Grandma",
+        photo_path="/photos/full.jpg",
+        path=db_path,
+    )
+    r = get_recipe(rid, path=db_path)
+    assert r.title == "Full Recipe"
+    assert r.base_servings == 6
+    assert r.instructions == "Mix and bake."
+    assert r.cook_time_min == 45
+    assert r.source == "Grandma"
+    assert r.photo_path == "/photos/full.jpg"
+    assert r.created_at is not None
+    assert r.updated_at is not None

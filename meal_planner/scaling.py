@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from meal_planner import db as _db
 from meal_planner.models import Ingredient, Recipe
 
 
@@ -16,9 +17,8 @@ def scale_ingredients(
     qty_per_serving is multiplied by target_servings; None stays None.
     Returned Ingredient.id mirrors the source row — no new DB rows created.
     Results are ordered by sort_order.
+    If recipe.id has no ingredient rows, returns [].
     """
-    from meal_planner import db as _db
-
     p = path or _db.DB_PATH
     with _db._get_conn(p) as conn:
         rows = conn.execute(

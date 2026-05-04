@@ -121,7 +121,11 @@ def insert_ingredient(
 
 
 def add_recipe_tag(recipe_id: int, tag: str, *, path: Path | None = None) -> None:
-    """Insert tag if new, then link to the recipe. Idempotent."""
+    """Insert tag if new, then link to the recipe. Idempotent.
+
+    Tag names are case-folded to lowercase on write; queries do not need to fold.
+    """
+    tag = tag.strip().lower()
     p = path or DB_PATH
     with _get_conn(p) as conn:
         conn.execute(

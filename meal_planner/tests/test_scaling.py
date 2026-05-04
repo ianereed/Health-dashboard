@@ -61,6 +61,32 @@ def test_preserves_sort_order(db_path: Path) -> None:
     assert scaled[1].name == "b_item"
 
 
+def test_scale_empty_recipe(db_path: Path) -> None:
+    rid = _make_recipe(db_path)
+    recipe = get_recipe(rid, path=db_path)
+    assert scale_ingredients(recipe, 4, path=db_path) == []
+
+
+def test_scale_zero_servings(db_path: Path) -> None:
+    rid = _make_recipe(db_path, base_servings=4)
+    insert_ingredient(recipe_id=rid, name="flour", qty_per_serving=1.0, unit="cup", path=db_path)
+    insert_ingredient(recipe_id=rid, name="egg", qty_per_serving=None, unit=None, path=db_path)
+    recipe = get_recipe(rid, path=db_path)
+    scaled = scale_ingredients(recipe, 0, path=db_path)
+    assert scaled[0].qty_per_serving == pytest.approx(0.0)
+    assert scaled[1].qty_per_serving is None  # None stays None
+
+
+def test_scale_unknown_recipe_id(db_path: Path) -> None:
+    from meal_planner.models import Recipe
+    phantom = Recipe(
+        id=99999, title="Ghost", base_servings=4,
+        instructions=None, cook_time_min=None, source=None, photo_path=None,
+        created_at="", updated_at="",
+    )
+    assert scale_ingredients(phantom, 2, path=db_path) == []
+
+
 def test_preserves_todoist_section_and_notes(db_path: Path) -> None:
     rid = _make_recipe(db_path)
     insert_ingredient(

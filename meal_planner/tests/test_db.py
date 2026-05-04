@@ -78,6 +78,20 @@ def test_add_recipe_tag_idempotent(db_path: Path) -> None:
     conn.close()
 
 
+def test_add_recipe_tag_case_folding(db_path: Path) -> None:
+    rid = insert_recipe(title="Tag Case Test", base_servings=4, path=db_path)
+    add_recipe_tag(rid, "Asian", path=db_path)
+    add_recipe_tag(rid, "asian", path=db_path)  # same after fold — must not duplicate
+    conn = sqlite3.connect(str(db_path))
+    tag_count = conn.execute("SELECT COUNT(*) FROM tags WHERE name = 'asian'").fetchone()[0]
+    link_count = conn.execute(
+        "SELECT COUNT(*) FROM recipe_tags WHERE recipe_id = ?", (rid,)
+    ).fetchone()[0]
+    conn.close()
+    assert tag_count == 1
+    assert link_count == 1
+
+
 def test_cascade_delete(db_path: Path) -> None:
     rid = insert_recipe(title="Cascade Test", base_servings=4, path=db_path)
     insert_ingredient(recipe_id=rid, name="salt", path=db_path)

@@ -15,7 +15,8 @@ def render() -> None:
     try:
         _render_inner()
     except Exception as exc:
-        st.error(f"Plan tab error: {exc}")
+        st.error("Plan tab error — see traceback below")
+        st.exception(exc)
 
 
 def _render_inner() -> None:

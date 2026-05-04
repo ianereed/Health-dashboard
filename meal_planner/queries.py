@@ -28,7 +28,7 @@ def list_recipes(
     with _db._get_conn(p) as conn:
         if tag is None:
             rows = conn.execute(
-                "SELECT * FROM recipes ORDER BY title"
+                "SELECT * FROM recipes ORDER BY title COLLATE NOCASE"
             ).fetchall()
         else:
             rows = conn.execute(
@@ -37,7 +37,7 @@ def list_recipes(
                 JOIN recipe_tags rt ON rt.recipe_id = r.id
                 JOIN tags t ON t.id = rt.tag_id
                 WHERE t.name = ?
-                ORDER BY r.title
+                ORDER BY r.title COLLATE NOCASE
                 """,
                 (tag,),
             ).fetchall()
@@ -71,6 +71,7 @@ def search_recipes(
     tags filters to recipes that have ALL listed tags.
     Both filters are AND-combined; empty values mean "no filter on that axis".
     """
+    tags = tuple(dict.fromkeys(tags))  # dedupe while preserving order
     p = path or _db.DB_PATH
     with _db._get_conn(p) as conn:
         if tags:
@@ -85,13 +86,13 @@ def search_recipes(
                     JOIN tags t ON t.id = rt.tag_id
                     WHERE rt.recipe_id = r.id AND t.name IN ({placeholders})
                   ) = ?
-                ORDER BY r.title
+                ORDER BY r.title COLLATE NOCASE
                 """,
                 (f"%{name_substring}%", *tags, len(tags)),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM recipes WHERE lower(title) LIKE lower(?) ORDER BY title",
+                "SELECT * FROM recipes WHERE lower(title) LIKE lower(?) ORDER BY title COLLATE NOCASE",
                 (f"%{name_substring}%",),
             ).fetchall()
     return [_row_to_recipe(r) for r in rows]
