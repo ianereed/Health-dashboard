@@ -30,4 +30,4 @@ export HOME_TOOLS_HTTP_TOKEN="$(security find-generic-password -a 'home-tools' -
 export RESTIC_PASSWORD_RESTIC_HOURLY="$(security find-generic-password -a 'password' -s 'restic-hourly-backup' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 export RESTIC_PASSWORD_RESTIC_DAILY="$(security find-generic-password -a 'password' -s 'restic-daily-backup' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 
-exec "$VENV/bin/huey_consumer" jobs.huey -w 2 -k thread
+exec "$VENV/bin/huey_consumer" jobs.huey -w 1 -k thread

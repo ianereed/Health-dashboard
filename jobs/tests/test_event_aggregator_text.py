@@ -14,7 +14,7 @@ def test_baseline_metric():
     bl = get_baseline(mod.event_aggregator_text)
     assert bl is not None
     assert bl.metric == "file-mtime:event-aggregator/run/event-aggregator-text-or-vision.last"
-    assert bl.divergence_window == "2h"
+    assert bl.divergence_window == "6h"
     assert bl.cadence == "2h"
 
 

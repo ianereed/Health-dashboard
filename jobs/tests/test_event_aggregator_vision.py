@@ -36,7 +36,6 @@ def test_subprocess_invocation(monkeypatch, tmp_path):
     from pathlib import Path
     monkeypatch.setattr(jobs.lib.RequiresSpec, "validate", lambda self: [])
     monkeypatch.setattr(jobs.lib._model_state, "_http_post", lambda *a, **kw: None)
-    monkeypatch.setattr(mod, "record_fire", lambda _name: None)
     monkeypatch.setattr(mod.subprocess, "run", _fake_run)
     monkeypatch.setattr(mod, "TOUCH_FILE", Path(tmp_path) / "ea-tv.last")
 

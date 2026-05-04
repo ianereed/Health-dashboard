@@ -95,6 +95,7 @@ def _print_kinds() -> int:
 
 
 def _enqueue(kind: str, params_json: str | None) -> int:
+    import inspect
     kinds = _registered_kinds()
     fn = kinds.get(kind)
     if fn is None:
@@ -110,7 +111,28 @@ def _enqueue(kind: str, params_json: str | None) -> int:
     if not isinstance(params, dict):
         print("--params must encode a JSON object", file=sys.stderr)
         return 2
-    result = fn(**params) if params else fn()
+    if params:
+        # Detect kinds that take a single positional dict (e.g. event_aggregator_text(job: dict)).
+        # For those, pass params as a positional arg instead of **kwargs to avoid TypeError.
+        try:
+            sig = inspect.signature(fn)
+            pos_params = [
+                p for p in sig.parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+                and p.default is p.empty
+            ]
+            uses_var_kwargs = any(
+                p.kind == p.VAR_KEYWORD for p in sig.parameters.values()
+            )
+        except (ValueError, TypeError):
+            pos_params = []
+            uses_var_kwargs = False
+        if len(pos_params) == 1 and not uses_var_kwargs:
+            result = fn(params)
+        else:
+            result = fn(**params)
+    else:
+        result = fn()
     # huey returns a Result wrapper for tasks; it's truthy.
     print(f"enqueued: {kind} → result_id={getattr(result, 'id', '?')}")
     return 0

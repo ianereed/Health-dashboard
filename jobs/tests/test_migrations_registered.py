@@ -20,6 +20,7 @@ EXPECTED_MIGRATIONS = {
     "restic_daily",
     "restic_prune",
     "event_aggregator_fetch",
+    "event_aggregator_text",  # carries @migrates_from("com.home-tools.event-aggregator.worker")
 }
 
 

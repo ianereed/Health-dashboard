@@ -4,7 +4,8 @@ Run this before or immediately after `jobs.cli migrate event_aggregator_text`
 to ensure any jobs that were queued in the old worker loop are picked up by
 the huey consumer instead of being silently dropped.
 
-Idempotent: safe to re-run if the consumer was stopped mid-cutover.
+Correctness guarantee: jobs are scheduled BEFORE state.json is cleared. If any
+schedule raises, state.json is left untouched so re-running this script is safe.
 
 Usage (on mini):
     cd ~/Home-Tools
@@ -62,16 +63,19 @@ def run(dry_run: bool = False) -> None:
                 print(f"  vision: file={j.get('file_path')}")
             return
 
-        # Clear queues atomically, then schedule.
+        # Schedule tasks inside the lock (quick SQLite writes) BEFORE saving the
+        # cleared state. If any schedule raises, the lock context exits without
+        # calling save() — state.json is left untouched, re-run is safe.
+        for job in text_jobs:
+            event_aggregator_text(job)
+            print(f"scheduled text task: source={job.get('source')} id={job.get('id')}")
+
+        for job in ocr_jobs:
+            event_aggregator_vision(job)
+            print(f"scheduled vision task: file={job.get('file_path')}")
+
+        # All schedules succeeded; now persist the cleared state.
         ea_state.save(state)
-
-    for job in text_jobs:
-        event_aggregator_text(job)
-        print(f"scheduled text task: source={job.get('source')} id={job.get('id')}")
-
-    for job in ocr_jobs:
-        event_aggregator_vision(job)
-        print(f"scheduled vision task: file={job.get('file_path')}")
 
     print(f"done: scheduled {len(text_jobs)} text + {len(ocr_jobs)} vision tasks")
 

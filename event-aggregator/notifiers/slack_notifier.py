@@ -850,12 +850,20 @@ def post_or_update_dashboard(
 
     import state as _state_mod
     today = tz_utils.today_user_str()
+    # Phase 12.8a: worker_status() replaced with live queue depths. The old
+    # worker.run_worker() loop that kept worker_status fresh is retired; reading
+    # it would return stale data forever. text_queue/ocr_queue are transient
+    # staging buffers still written by fetch_only() + enqueue-image.
+    live_queue_status = {
+        "text_queue": state.text_queue_depth(),
+        "ocr_queue": state.ocr_queue_depth(),
+    }
     blocks = build_dashboard_blocks(
         items,
         today,
         ollama_health=state.ollama_health(),
         recurring_notices=state.recurring_notices(),
-        worker_status=state.worker_status(),
+        worker_status=live_queue_status,
         swap_decisions=state._data.get("swap_decisions") or {},
         pending_confirmations=state.pending_confirmations(),
     )

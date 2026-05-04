@@ -261,16 +261,16 @@ class _ModelState:
     from the currently loaded model. No unload happens on return from the
     decorated function.
 
-    Batch hint: while _batch_kind is set (by requires_model("text",
-    batch_hint="drain")), calls to ensure() for the opposite kind are silently
-    deferred. The batch clears when the outer function returns, after which the
-    next opposite-kind call proceeds normally.
+    Batch hint: while _batch_kinds is non-empty (added by requires_model with
+    batch_hint="drain")), calls to ensure() for kinds NOT in _batch_kinds are
+    silently deferred. The batch entry clears when the outer function returns,
+    after which the next opposite-kind call proceeds normally.
     """
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._current: str | None = None
-        self._batch_kind: str | None = None
+        self._batch_kinds: set[str] = set()
 
     # ── config from env ────────────────────────────────────────────────────────
 
@@ -342,6 +342,7 @@ class _ModelState:
 
         ctx = self.text_ctx if kind == "text" else self.vision_ctx
         ka = self.text_keep_alive if kind == "text" else self.vision_keep_alive
+        warmup_ok = False
         try:
             self._http_post(
                 f"{self.ollama_url}/api/generate",
@@ -350,11 +351,14 @@ class _ModelState:
                 timeout=120,
             )
             logger.info("model_state: warmed %s (ctx=%d)", target, ctx)
+            warmup_ok = True
         except Exception as exc:
             logger.warning("model_state: warmup %s failed (best-effort): %s", target, exc)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
-        self._current = target
+        # Only commit the loaded-model cache on confirmed warmup success.
+        # On failure, set to None so the next ensure() retries instead of no-oping.
+        self._current = target if warmup_ok else None
         record_swap(from_model or "none", target, latency_ms)
 
     def ensure(self, kind: str) -> None:
@@ -365,7 +369,7 @@ class _ModelState:
         target = self.model_for(kind)
         if self._current == target:
             return
-        if self._batch_kind is not None and kind != self._batch_kind:
+        if self._batch_kinds and kind not in self._batch_kinds:
             return  # deferred; next ensure() after batch clears will swap
         self.swap_to(kind)
 
@@ -405,14 +409,14 @@ def requires_model(kind: str, batch_hint: str = "") -> Callable:
         def wrapper(*args, **kwargs):
             with _model_state._lock:
                 if batch_hint == "drain":
-                    _model_state._batch_kind = kind
+                    _model_state._batch_kinds.add(kind)
                 _model_state.ensure(kind)
             try:
                 return fn(*args, **kwargs)
             finally:
                 if batch_hint == "drain":
                     with _model_state._lock:
-                        _model_state._batch_kind = None
+                        _model_state._batch_kinds.discard(kind)
         return wrapper
     return deco
 

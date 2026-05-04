@@ -16,7 +16,7 @@ from pathlib import Path
 
 from huey import crontab
 
-from jobs import huey
+from jobs import huey, requires
 from jobs.kinds.event_aggregator_vision import event_aggregator_vision
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ def _pending_task_count_by_name(task_name: str) -> int:
 
 
 @huey.periodic_task(crontab(minute="*"))
+@requires(["fs:event-aggregator"])
 def event_aggregator_decision_poller() -> dict:
     """Drain ocr_queue + manage swap-decision UX."""
     ea_state = _load_ea_state()
@@ -53,32 +54,27 @@ def event_aggregator_decision_poller() -> dict:
     with ea_state.locked():
         state = ea_state.load()
 
-        # 1. Expire stale swap decisions.
-        bucket = state._data.get("swap_decisions", {})
+        # 1. Expire stale swap decisions using the public API.
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=_SWAP_DECISION_TIMEOUT_MIN)
-        for info in list(bucket.values()):
-            if info.get("decision") != "pending":
-                continue
-            try:
-                created = datetime.fromisoformat(info.get("created_at", ""))
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
-            except ValueError:
-                continue
-            if created < cutoff:
-                info["decision"] = "wait"
-                info["resolved_at"] = datetime.now(timezone.utc).isoformat()
-                info["auto_resolved"] = True
-                logger.info("decision-poller: swap decision auto-resolved to 'wait' (timeout)")
+        expired = state.expire_pending_decisions(cutoff)
+        if expired:
+            logger.info("decision-poller: auto-resolved %d swap decision(s) to 'wait' (timeout)", expired)
 
-        # 2. Check for interrupt decisions.
-        for info in bucket.values():
-            if info.get("decision") == "interrupt":
-                interrupt_found = True
-                info["decision"] = "consumed"
-                logger.info("decision-poller: consumed 'interrupt' decision (FIFO queue; vision runs after text drains)")
-            elif info.get("decision") == "wait":
-                wait_found = True
+        # 2. Consume interrupt decisions.
+        consumed_ids = state.consume_interrupt_decisions()
+        if consumed_ids:
+            interrupt_found = True
+            logger.info(
+                "decision-poller: consumed %d 'interrupt' decision(s) "
+                "(FIFO queue; vision runs after text drains)",
+                len(consumed_ids),
+            )
+
+        # Check for any remaining wait decisions.
+        wait_found = any(
+            info.get("decision") == "wait"
+            for _, info in state.iter_swap_decisions()
+        )
 
         # 3. Drain ocr_queue into huey vision tasks.
         while True:
@@ -105,22 +101,38 @@ def event_aggregator_decision_poller() -> dict:
     }
 
 
+def _load_ea_notifier():
+    """Load event-aggregator slack_notifier via importlib to avoid venv pollution."""
+    spec = importlib.util.spec_from_file_location(
+        "_ea_slack_notifier", PROJECT / "notifiers" / "slack_notifier.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_ea_tz_utils():
+    """Load event-aggregator tz_utils via importlib to avoid venv pollution."""
+    spec = importlib.util.spec_from_file_location("_ea_tz_utils", PROJECT / "tz_utils.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _post_swap_decision_if_needed(ea_state, text_pending: int, vision_pending: int) -> None:
     """Post a Slack swap-decision message if none is already pending."""
     try:
         with ea_state.locked():
             state = ea_state.load()
-            bucket = state._data.get("swap_decisions", {})
-            if any(info.get("decision") == "pending" for info in bucket.values()):
+            pending_decisions = list(state.iter_swap_decisions())
+            if any(info.get("decision") == "pending" for _, info in pending_decisions):
                 return  # already have a pending decision
             decision_id = state.add_swap_decision("(huey queue)", text_pending)
             ea_state.save(state)
 
         # Trigger a dashboard render so the buttons show up.
-        import sys
-        sys.path.insert(0, str(PROJECT))
-        import tz_utils
-        from notifiers import slack_notifier
+        tz_utils = _load_ea_tz_utils()
+        slack_notifier = _load_ea_notifier()
         with ea_state.locked():
             state2 = ea_state.load()
         today = tz_utils.today_user_str()

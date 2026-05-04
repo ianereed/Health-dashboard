@@ -50,9 +50,9 @@ def get_queues() -> dict:
             src: _parse_age(ts)
             for src, ts in data.get("last_run", {}).items()
         },
-        "worker_updated_age_sec": _parse_age(
-            data.get("worker_status", {}).get("updated_at")
-        ),
+        # Phase 12.8a: worker_status.updated_at is no longer updated (worker loop
+        # retired in Phase 12.7). Use state.json mtime as the freshness signal instead.
+        "worker_updated_age_sec": int(time.time() - p.stat().st_mtime),
         "last_event_written_age_sec": _parse_age(
             max(
                 (v.get("created_at", "") for v in written_events.values()),

@@ -14,7 +14,6 @@ import subprocess
 from pathlib import Path
 
 from jobs import huey, requires, requires_model
-from jobs.kinds._internal.migration_verifier import record_fire
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ VENV_PYTHON = PROJECT / ".venv" / "bin" / "python3"
 TOUCH_FILE = PROJECT / "run" / "event-aggregator-text-or-vision.last"
 
 
-@huey.task()
+@huey.task(retries=2, retry_delay=60)
 @requires_model("vision")
 @requires(["fs:event-aggregator"])
 def event_aggregator_vision(job: dict) -> dict:
@@ -34,14 +33,22 @@ def event_aggregator_vision(job: dict) -> dict:
     _run_ocr_job → cli._cmd_ingest_image (full OCR pipeline).
     """
     file_path = job.get("file_path", "")
-    proc = subprocess.run(
-        [str(VENV_PYTHON), "cli.py", "run-ocr-job", "--file", file_path],
-        cwd=str(PROJECT),
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    record_fire("event_aggregator_text")  # liveness signal for worker migration
+    try:
+        proc = subprocess.run(
+            [str(VENV_PYTHON), "cli.py", "run-ocr-job", "--file", file_path],
+            cwd=str(PROJECT),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "event-aggregator-vision: subprocess timed out (300s) file=%s",
+            file_path,
+        )
+        if exc.process is not None:
+            exc.process.kill()
+        raise  # re-raise so huey marks failed and retries
     if proc.returncode != 0:
         logger.warning(
             "event-aggregator-vision rc=%d file=%s stderr=%s",

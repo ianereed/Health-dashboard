@@ -147,10 +147,11 @@ class State:
     ) -> None:
         """Enqueue a RawMessage for text extraction.
 
-        Phase 12.7 deprecation: fetch_only() still writes here; event_aggregator_fetch
-        kind drains this queue into huey tasks after each subprocess call. Deleted in 12.8.
+        Transient staging buffer — do not delete. fetch_only() writes here;
+        event_aggregator_fetch kind drains this queue into huey tasks after each
+        subprocess call. Also called by the one-time migration script. Remains
+        load-bearing through Phase 12.8b and beyond.
         """
-        logger.debug("state.enqueue_text_job: deprecated in 12.7 (will be removed in 12.8)")
         # Dedup against in-flight queue: don't add if same source+id already queued.
         queue = self._data.setdefault("text_queue", [])
         for existing in queue:
@@ -228,6 +229,44 @@ class State:
 
     def get_swap_decision(self, decision_id: str) -> dict | None:
         return self._data.get("swap_decisions", {}).get(decision_id)
+
+    def iter_swap_decisions(self):
+        """Iterate over (decision_id, info_dict) for all swap decisions."""
+        return list(self._data.get("swap_decisions", {}).items())
+
+    def expire_pending_decisions(self, cutoff_dt) -> int:
+        """Auto-resolve pending decisions older than cutoff_dt to 'wait'.
+
+        Returns the number of decisions that were expired.
+        """
+        from datetime import datetime, timezone
+        bucket = self._data.get("swap_decisions", {})
+        expired = 0
+        for info in bucket.values():
+            if info.get("decision") != "pending":
+                continue
+            try:
+                created = datetime.fromisoformat(info.get("created_at", ""))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                continue
+            if created < cutoff_dt:
+                info["decision"] = "wait"
+                info["resolved_at"] = _utcnow().isoformat()
+                info["auto_resolved"] = True
+                expired += 1
+        return expired
+
+    def consume_interrupt_decisions(self) -> list[str]:
+        """Mark all 'interrupt' decisions as 'consumed'. Returns list of consumed IDs."""
+        bucket = self._data.get("swap_decisions", {})
+        consumed = []
+        for did, info in bucket.items():
+            if info.get("decision") == "interrupt":
+                info["decision"] = "consumed"
+                consumed.append(did)
+        return consumed
 
     # ── Dashboard burial tracking (Tier 3.2: repost when buried) ────────────
 

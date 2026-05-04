@@ -25,12 +25,12 @@ VENV_PYTHON = PROJECT / ".venv" / "bin" / "python3"
 TOUCH_FILE = PROJECT / "run" / "event-aggregator-text-or-vision.last"
 
 
-@huey.task()
+@huey.task(retries=2, retry_delay=60)
 @requires_model("text", batch_hint="drain")
 @requires(["fs:event-aggregator"])
 @baseline(
     metric="file-mtime:event-aggregator/run/event-aggregator-text-or-vision.last",
-    divergence_window="2h",
+    divergence_window="6h",
     cadence="2h",
 )
 @migrates_from("com.home-tools.event-aggregator.worker")
@@ -41,13 +41,23 @@ def event_aggregator_text(job: dict) -> dict:
     loaded before the subprocess runs. The subprocess makes Ollama API calls
     using the already-loaded model — no duplicate warmup.
     """
-    proc = subprocess.run(
-        [str(VENV_PYTHON), "cli.py", "run-text-job", "--job-json", json.dumps(job)],
-        cwd=str(PROJECT),
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    try:
+        proc = subprocess.run(
+            [str(VENV_PYTHON), "cli.py", "run-text-job", "--job-json", json.dumps(job)],
+            cwd=str(PROJECT),
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired as exc:
+        logger.warning(
+            "event-aggregator-text: subprocess timed out (300s) source=%s id=%s",
+            job.get("source", "?"),
+            job.get("id", "?"),
+        )
+        if exc.process is not None:
+            exc.process.kill()
+        raise  # re-raise so huey marks failed and retries
     record_fire("event_aggregator_text")
     if proc.returncode != 0:
         logger.warning(

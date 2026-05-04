@@ -19,10 +19,10 @@ from jobs.lib import _model_state, record_swap, requires_model
 def reset_model_state():
     """Each test starts with a clean singleton: no model loaded, no batch."""
     _model_state._current = None
-    _model_state._batch_kind = None
+    _model_state._batch_kinds = set()
     yield
     _model_state._current = None
-    _model_state._batch_kind = None
+    _model_state._batch_kinds = set()
 
 
 @pytest.fixture
@@ -110,7 +110,7 @@ def test_batch_hint_suppresses_opposite_kind_mid_batch(capture_posts, monkeypatc
 
 
 def test_batch_hint_clears_after_return(capture_posts, monkeypatch):
-    """After the batch_hint="drain" function returns, _batch_kind must be None."""
+    """After the batch_hint="drain" function returns, _batch_kinds must be empty."""
     monkeypatch.setenv("OLLAMA_MODEL", "qwen3:14b")
 
     @requires_model("text", batch_hint="drain")
@@ -118,7 +118,7 @@ def test_batch_hint_clears_after_return(capture_posts, monkeypatch):
         return "ok"
 
     do_text()
-    assert _model_state._batch_kind is None
+    assert len(_model_state._batch_kinds) == 0
 
 
 def test_record_swap_writes_jsonl(tmp_path, monkeypatch):
@@ -135,3 +135,73 @@ def test_record_swap_writes_jsonl(tmp_path, monkeypatch):
     assert row["to"] == "qwen2.5vl:7b"
     assert row["latency_ms"] == 4200
     assert "ts" in row
+
+
+# ── Fix 16: warmup-fail and unload-fail tests ─────────────────────────────────
+
+
+def test_warmup_failure_leaves_current_as_none(monkeypatch):
+    """When warmup HTTP raises, _current must be set to None (not the target model)."""
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:14b")
+    call_count = [0]
+
+    def _failing_post(url, payload, timeout=120):
+        call_count[0] += 1
+        # Allow the unload call but fail on warmup (keep_alive != 0 means warmup).
+        if payload.get("keep_alive") != 0 and payload.get("keep_alive") is not None:
+            raise ConnectionError("Ollama is down")
+
+    monkeypatch.setattr(_model_state, "_http_post", _failing_post)
+
+    @requires_model("text")
+    def do_text():
+        return "ran"
+
+    do_text()
+    assert _model_state._current is None, (
+        "_current must be None after warmup failure, not the target model"
+    )
+
+
+def test_warmup_success_sets_current(monkeypatch):
+    """When warmup succeeds, _current must be set to the target model name."""
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:14b")
+    monkeypatch.setattr(_model_state, "_http_post", lambda *a, **kw: None)
+
+    @requires_model("text")
+    def do_text():
+        return "ran"
+
+    do_text()
+    assert _model_state._current == "qwen3:14b"
+
+
+def test_unload_failure_does_not_block_swap(monkeypatch):
+    """Unload failure (best-effort) must not prevent the new model from being attempted."""
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:14b")
+    monkeypatch.setenv("LOCAL_VISION_MODEL", "qwen2.5vl:7b")
+
+    warmup_calls = []
+
+    def _selective_post(url, payload, timeout=120):
+        if payload.get("keep_alive") == 0:
+            raise ConnectionError("unload failed")
+        warmup_calls.append(payload.get("model"))
+
+    monkeypatch.setattr(_model_state, "_http_post", _selective_post)
+
+    @requires_model("text")
+    def do_text():
+        return "text"
+
+    @requires_model("vision")
+    def do_vision():
+        return "vision"
+
+    do_text()
+    # Text warmup should have succeeded.
+    assert "qwen3:14b" in warmup_calls
+
+    do_vision()
+    # Vision warmup should have been attempted even though unload failed.
+    assert "qwen2.5vl:7b" in warmup_calls

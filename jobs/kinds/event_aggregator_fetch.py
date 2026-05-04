@@ -68,10 +68,11 @@ def event_aggregator_fetch() -> dict:
 
     # Phase 12.7: drain state.text_queue into huey text tasks.
     # fetch_only() writes messages to state.text_queue; we pick them up here
-    # and schedule per-message event_aggregator_text tasks. Also call
-    # record_fire("event_aggregator_text") as a liveness proxy — if fetch fires
-    # (every 10min), the text migration's no-fire check stays green even on quiet
-    # days with no messages.
+    # and schedule per-message event_aggregator_text tasks.
+    # NOTE: record_fire("event_aggregator_text") is intentionally NOT called here.
+    # The honest liveness signal is the file-mtime baseline (TOUCH_FILE touched
+    # by event_aggregator_text only on successful subprocess). Forging a fire
+    # every 10 min regardless of whether any text task ran breaks the verifier.
     scheduled = 0
     try:
         ea_state = _load_ea_state()
@@ -90,7 +91,6 @@ def event_aggregator_fetch() -> dict:
     except Exception as exc:
         logger.warning("event-aggregator-fetch: failed to drain text_queue: %s", exc)
 
-    record_fire("event_aggregator_text")
     if scheduled:
         logger.info("event-aggregator-fetch: scheduled %d text task(s)", scheduled)
 

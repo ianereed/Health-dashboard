@@ -261,8 +261,9 @@ def _touch_baseline() -> None:
 def _cmd_run_text_job(job_json: str) -> int:
     """Run one text-extraction job. Called by the jobs consumer subprocess.
 
-    Loads state.json, runs _run_text_job, saves state, then touches the
-    baseline liveness file so the migration verifier sees activity.
+    Holds state.json lock across the entire load → run → save sequence to
+    prevent concurrent writers (dispatcher, fetch drain) from being silently
+    overwritten by the trailing save.
     """
     import state as state_module
     import worker
@@ -271,31 +272,41 @@ def _cmd_run_text_job(job_json: str) -> int:
     except json.JSONDecodeError as exc:
         print(f"run-text-job: bad --job-json: {exc}", file=sys.stderr)
         return 2
-    with state_module.locked():
-        state = state_module.load()
     try:
-        worker._run_text_job(state, job)
-    finally:
         with state_module.locked():
-            state_module.save(state)
+            state = state_module.load()
+            try:
+                worker._run_text_job(state, job)
+            finally:
+                state_module.save(state)
+    except Exception as exc:
+        print(f"run-text-job: error: {exc}", file=sys.stderr)
+        return 1
     _touch_baseline()
     return 0
 
 
 def _cmd_run_ocr_job(file: Path) -> int:
-    """Run one OCR job. Called by the jobs consumer subprocess."""
+    """Run one OCR job. Called by the jobs consumer subprocess.
+
+    Holds state.json lock across the entire load → run → save sequence (same
+    rationale as _cmd_run_text_job — prevents lost-update from concurrent writes).
+    """
     import state as state_module
     import worker
     if not file.exists():
         print(f"run-ocr-job: file not found: {file}", file=sys.stderr)
         return 2
-    with state_module.locked():
-        state = state_module.load()
     try:
-        worker._run_ocr_job(state, {"file_path": str(file)})
-    finally:
         with state_module.locked():
-            state_module.save(state)
+            state = state_module.load()
+            try:
+                worker._run_ocr_job(state, {"file_path": str(file)})
+            finally:
+                state_module.save(state)
+    except Exception as exc:
+        print(f"run-ocr-job: error: {exc}", file=sys.stderr)
+        return 1
     _touch_baseline()
     return 0
 

@@ -42,3 +42,10 @@ def _reset_huey_storage():
         huey.flush()
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _redirect_model_swap_log(tmp_path, monkeypatch):
+    """Redirect _MODEL_SWAP_LOG to tmp_path so tests don't pollute the real log."""
+    import jobs.lib
+    monkeypatch.setattr(jobs.lib, "_MODEL_SWAP_LOG", tmp_path / "model_swaps.jsonl")
