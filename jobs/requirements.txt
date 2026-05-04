@@ -6,3 +6,8 @@ slack-sdk>=3.0
 
 # meal_planner_send_to_todoist kind — consolidation.py uses requests
 requests>=2.31
+
+# jobs/adapters/todoist.py reuses event-aggregator/writers/todoist_writer.py,
+# which imports event-aggregator/config.py — that file uses python-dotenv
+# at import time. Adding here so the consumer venv can load the chain.
+python-dotenv>=1.0
