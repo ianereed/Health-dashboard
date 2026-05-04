@@ -31,11 +31,16 @@ export RESTIC_PASSWORD_RESTIC_HOURLY="$(security find-generic-password -a 'passw
 export RESTIC_PASSWORD_RESTIC_DAILY="$(security find-generic-password -a 'password' -s 'restic-daily-backup' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
 
 # Load meal-planner config (TODOIST_SECTIONS, GEMINI_API_KEY, TODOIST_PROJECT_ID, etc.).
+# Use line-by-line read instead of `source` to avoid bash brace-expanding JSON values.
 if [ -f "$(pwd)/meal_planner/.env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "$(pwd)/meal_planner/.env"
-    set +a
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${_line// }" ]] && continue
+        _key="${_line%%=*}"
+        _val="${_line#*=}"
+        export "$_key=$_val"
+    done < "$(pwd)/meal_planner/.env"
+    unset _line _key _val
 fi
 
 exec "$VENV/bin/huey_consumer" jobs.huey -w 1 -k thread
