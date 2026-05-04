@@ -138,7 +138,8 @@ Backup target is the iananny NAS (192.168.4.39) Share1 already mounted at
   - `com.home-tools.restic-hourly` — every :17, backs up `health.db`
   - `com.home-tools.restic-daily` — 03:30 daily, backs up state.json +
     event_log.jsonl + .env + finance.db + nas-intake/state.json +
-    login.keychain-db + incidents.jsonl
+    login.keychain-db + incidents.jsonl + meal_planner/recipes.db +
+    meal_planner/seed_progress.json
   - `com.home-tools.restic-prune` — Sun 04:00 weekly, runs
     `restic prune` against both repos
 - **Recovery secrets** in 1Password Secure Note "Mac mini home server
