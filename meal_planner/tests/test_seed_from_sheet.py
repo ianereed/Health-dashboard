@@ -188,3 +188,35 @@ def test_multiple_recipes_in_one_tab(db_path: Path) -> None:
     count = conn.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
     conn.close()
     assert count == 2
+
+
+def test_single_transaction_no_orphan_on_batch_failure(db_path: Path) -> None:
+    """If _insert_ingredients_batch raises, no recipe row should land (A2 regression)."""
+    ws = _make_worksheet("Asian", [["Teriyaki Chicken"], ["2 tbsp soy sauce"]])
+    spreadsheet = _make_spreadsheet([ws])
+
+    with (
+        patch("meal_planner.seed_from_sheet._open_sheet", return_value=spreadsheet),
+        patch("meal_planner.seed_from_sheet._parse_ingredients", return_value=_canned_parsed_ingredients()),
+        patch(
+            "meal_planner.seed_from_sheet._insert_ingredients_batch",
+            side_effect=RuntimeError("simulated batch failure"),
+        ),
+    ):
+        seeded, skipped = seed(
+            sheet_id="FAKE",
+            service_account_path="/fake/creds.json",
+            api_key="FAKE",
+            section_names=_SECTIONS,
+            delay=0,
+            db_path=db_path,
+            progress_path=db_path.parent / "seed_progress.json",
+        )
+
+    assert seeded == 0
+    assert skipped == 1
+
+    conn = sqlite3.connect(str(db_path))
+    recipe_count = conn.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
+    conn.close()
+    assert recipe_count == 0, "orphaned recipe row must not persist after batch failure"

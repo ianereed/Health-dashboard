@@ -107,3 +107,41 @@ def test_cascade_delete(db_path: Path) -> None:
         "SELECT COUNT(*) FROM recipe_tags WHERE recipe_id = ?", (rid,)
     ).fetchone()[0] == 0
     conn.close()
+
+
+def test_insert_recipe_external_conn_not_visible_until_commit(db_path: Path) -> None:
+    """insert_recipe with conn= must not be visible on other connections before commit."""
+    conn = _get_conn(db_path)
+    try:
+        insert_recipe(title="Isolation Test", base_servings=4, conn=conn)
+        # Fresh independent connection — should see nothing yet
+        check = sqlite3.connect(str(db_path))
+        count = check.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
+        check.close()
+        assert count == 0, "uncommitted write leaked to another connection"
+        conn.commit()
+        check = sqlite3.connect(str(db_path))
+        count = check.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
+        check.close()
+        assert count == 1
+    finally:
+        conn.close()
+
+
+def test_add_recipe_tag_external_conn_not_visible_until_commit(db_path: Path) -> None:
+    """add_recipe_tag with conn= must not be visible on other connections before commit."""
+    rid = insert_recipe(title="Tag Isolation", base_servings=4, path=db_path)
+    conn = _get_conn(db_path)
+    try:
+        add_recipe_tag(rid, "italian", conn=conn)
+        check = sqlite3.connect(str(db_path))
+        count = check.execute("SELECT COUNT(*) FROM tags WHERE name = 'italian'").fetchone()[0]
+        check.close()
+        assert count == 0, "uncommitted tag write leaked to another connection"
+        conn.commit()
+        check = sqlite3.connect(str(db_path))
+        count = check.execute("SELECT COUNT(*) FROM tags WHERE name = 'italian'").fetchone()[0]
+        check.close()
+        assert count == 1
+    finally:
+        conn.close()

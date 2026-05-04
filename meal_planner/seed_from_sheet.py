@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -326,19 +327,29 @@ def seed(
                 skipped += 1
                 continue
 
-            recipe_id = insert_recipe(
-                title=title,
-                base_servings=base_servings,
-                path=p_db,
-            )
-            add_recipe_tag(recipe_id, tag, path=p_db)
-
-            ing_count = _insert_ingredients_batch(
-                recipe_id=recipe_id,
-                parsed=parsed,
-                base_servings=base_servings,
-                path=p_db,
-            )
+            conn = _db._get_conn(p_db)
+            try:
+                recipe_id = insert_recipe(
+                    title=title,
+                    base_servings=base_servings,
+                    path=p_db,
+                    conn=conn,
+                )
+                add_recipe_tag(recipe_id, tag, path=p_db, conn=conn)
+                ing_count = _insert_ingredients_batch(
+                    recipe_id=recipe_id,
+                    parsed=parsed,
+                    base_servings=base_servings,
+                    path=p_db,
+                    conn=conn,
+                )
+                conn.commit()
+            except Exception as exc:
+                print(f"  recipe failed: {exc} — skipping")
+                skipped += 1
+                continue
+            finally:
+                conn.close()
 
             done.add(key)
             _save_progress(done, p_progress)
@@ -354,10 +365,17 @@ def _insert_ingredients_batch(
     parsed: list[dict],
     base_servings: int,
     path: Path,
+    conn: sqlite3.Connection | None = None,
 ) -> int:
-    """Insert all parsed ingredients for a recipe in one connection. Returns count inserted."""
-    p = path or _db.DB_PATH
-    conn = _db._get_conn(p)
+    """Insert all parsed ingredients for a recipe. Returns count inserted.
+
+    When conn is passed, uses it without committing or closing (caller owns
+    the transaction). When conn is None, opens, commits, and closes its own.
+    """
+    owned = conn is None
+    if owned:
+        p = path or _db.DB_PATH
+        conn = _db._get_conn(p)
     try:
         count = 0
         for sort_order, item in enumerate(parsed):
@@ -389,10 +407,12 @@ def _insert_ingredients_batch(
             )
             if cur.rowcount == 1:
                 count += 1
-        conn.commit()
+        if owned:
+            conn.commit()
         return count
     finally:
-        conn.close()
+        if owned:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------

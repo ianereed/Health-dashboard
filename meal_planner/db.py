@@ -76,21 +76,28 @@ def insert_recipe(
     source: str | None = None,
     photo_path: str | None = None,
     path: Path | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> int:
-    """Insert a recipe row and return its new id."""
+    """Insert a recipe row and return its new id.
+
+    When conn is passed, uses it without committing or closing (caller owns the
+    transaction). When conn is None, opens and commits its own connection.
+    """
     now = datetime.now(timezone.utc).isoformat()
+    sql = """
+        INSERT INTO recipes
+          (title, base_servings, instructions, cook_time_min,
+           source, photo_path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+    params = (title, base_servings, instructions, cook_time_min,
+              source, photo_path, now, now)
+    if conn is not None:
+        cur = conn.execute(sql, params)
+        return cur.lastrowid  # type: ignore[return-value]
     p = path or DB_PATH
-    with _get_conn(p) as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO recipes
-              (title, base_servings, instructions, cook_time_min,
-               source, photo_path, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (title, base_servings, instructions, cook_time_min,
-             source, photo_path, now, now),
-        )
+    with _get_conn(p) as c:
+        cur = c.execute(sql, params)
         return cur.lastrowid  # type: ignore[return-value]
 
 
@@ -120,24 +127,35 @@ def insert_ingredient(
         return cur.lastrowid  # type: ignore[return-value]
 
 
-def add_recipe_tag(recipe_id: int, tag: str, *, path: Path | None = None) -> None:
+def add_recipe_tag(
+    recipe_id: int,
+    tag: str,
+    *,
+    path: Path | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
     """Insert tag if new, then link to the recipe. Idempotent.
 
     Tag names are case-folded to lowercase on write; queries do not need to fold.
+    When conn is passed, uses it without committing or closing (caller owns the
+    transaction). When conn is None, opens and commits its own connection.
     """
     tag = tag.strip().lower()
-    p = path or DB_PATH
-    with _get_conn(p) as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,)
-        )
-        conn.execute(
+    def _run(c: sqlite3.Connection) -> None:
+        c.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,))
+        c.execute(
             """
             INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id)
             SELECT ?, id FROM tags WHERE name = ?
             """,
             (recipe_id, tag),
         )
+    if conn is not None:
+        _run(conn)
+        return
+    p = path or DB_PATH
+    with _get_conn(p) as c:
+        _run(c)
 
 
 # ---------------------------------------------------------------------------
