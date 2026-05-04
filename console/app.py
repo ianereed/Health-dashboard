@@ -2,16 +2,16 @@
 Mini Ops — Streamlit console at :8503.
 
 Ian's ops surface for the Home-Tools mini. NOT a joint surface for Anny;
-that's Phase 13's meal-planner expansion (see Plan tab placeholder).
+that's the meal-planner expansion (Phase 14+).
 
-Tab order (left → right):
+Tab order (left → right, default):
   Jobs      — queue depth, recent runs, kinds list
   Decisions — cards.jsonl feed (approve/reject/dismiss)
-  Ask       — free-form prompt to local LLM (Phase 12 just wires it; the
-              real model selection belongs in a future commit)
+  Ask       — free-form prompt to local LLM
   Intake    — paste/upload files for nas-intake-style processing
-  Plan      — placeholder for Phase 13 meal-planner
+  Recipes   — meal-planner V0 (Phase 14)
 
+Deep-link: ?tab=<key> opens directly on the named tab (no Jobs flicker).
 Sidebar: Settings (status panel, not editable in v1) — TC2.
 """
 from __future__ import annotations
@@ -34,6 +34,33 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+_TAB_ORDER = ["jobs", "decisions", "ask", "intake", "recipes"]
+_TAB_LABELS = {
+    "jobs":      ":racing_car: Jobs",
+    "decisions": ":card_index: Decisions",
+    "ask":       ":speech_balloon: Ask",
+    "intake":    ":inbox_tray: Intake",
+    "recipes":   ":memo: Recipes",
+}
+_TAB_RENDERERS = {
+    "jobs":      jobs.render,
+    "decisions": decisions.render,
+    "ask":       ask.render,
+    "intake":    intake.render,
+    "recipes":   plan.render,  # module is still console.tabs.plan
+}
+
+# Deep-link: rotate so the requested tab is index 0 (Streamlit opens tab 0 visually).
+# st.tabs does not expose which tab is selected as a Python value; tab-switching
+# is client-side only. Rotating on load satisfies the "no Jobs flicker" exit gate.
+# The URL is for deep-linking only — no write-back inside tab blocks (that would
+# execute for all tabs simultaneously and clobber with the last key).
+requested = st.query_params.get("tab", "jobs")
+if requested not in _TAB_ORDER:
+    requested = "jobs"
+pivot = _TAB_ORDER.index(requested)
+ordered = _TAB_ORDER[pivot:] + _TAB_ORDER[:pivot]
+
 st.markdown(
     "<h2 style='margin: 0; padding: 0'>Mini Ops</h2>"
     "<p style='color: #888; margin-top: 0'>Home-Tools mini · Ian's ops surface</p>",
@@ -44,18 +71,8 @@ st.markdown(
 with st.sidebar:
     settings.render()
 
-# Tabs — Jobs lands here (TC3).
-tab_jobs, tab_decisions, tab_ask, tab_intake, tab_plan = st.tabs(
-    [":racing_car: Jobs", ":card_index: Decisions", ":speech_balloon: Ask", ":inbox_tray: Intake", ":memo: Plan"]
-)
-
-with tab_jobs:
-    jobs.render()
-with tab_decisions:
-    decisions.render()
-with tab_ask:
-    ask.render()
-with tab_intake:
-    intake.render()
-with tab_plan:
-    plan.render()
+# Tabs — active tab is always index 0 (rotated per ?tab= query param).
+tabs = st.tabs([_TAB_LABELS[k] for k in ordered])
+for key, tab in zip(ordered, tabs):
+    with tab:
+        _TAB_RENDERERS[key]()

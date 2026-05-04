@@ -1,4 +1,4 @@
-"""Plan tab — Recipes view with Send-to-Todoist (Phase 14.5).
+"""Recipes tab — recipe browser with Send-to-Todoist (Phase 14.6).
 
 Renders a recipe browser with a scale slider and a "Send to Todoist" button
 that enqueues the meal_planner_send_to_todoist Job kind.
