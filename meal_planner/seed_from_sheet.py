@@ -246,13 +246,26 @@ def _get_recipes_from_worksheet(ws) -> list[tuple[str, int, list[str]]]:
         if not title:
             continue
         ingredients = []
-        for row in data_rows:
+        truncated_at: int | None = None
+        for row_idx, row in enumerate(data_rows):
             if col_idx >= len(row):
                 break
             cell = row[col_idx].strip()
             if not cell:
+                truncated_at = row_idx
                 break
             ingredients.append(cell)
+        if truncated_at is not None:
+            dropped = sum(
+                1 for row in data_rows[truncated_at + 1:]
+                if col_idx < len(row) and row[col_idx].strip()
+            )
+            if dropped > 0:
+                print(
+                    f"WARN: {title!r} truncated at row {truncated_at + 2};"
+                    f" {dropped} non-empty cell(s) below dropped",
+                    file=sys.stderr,
+                )
         recipes.append((title, col_idx, ingredients))
 
     return recipes
