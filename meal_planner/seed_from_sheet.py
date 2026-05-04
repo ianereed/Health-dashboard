@@ -46,7 +46,7 @@ import requests
 from dotenv import load_dotenv
 
 from meal_planner import db as _db
-from meal_planner.db import add_recipe_tag, init_db, insert_ingredient, insert_recipe
+from meal_planner.db import add_recipe_tag, init_db, insert_recipe
 
 # ---------------------------------------------------------------------------
 # Constants
