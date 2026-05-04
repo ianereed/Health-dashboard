@@ -3,3 +3,6 @@ huey>=3.0
 
 # Slack adapter (lazy-imported)
 slack-sdk>=3.0
+
+# meal_planner_send_to_todoist kind — consolidation.py uses requests
+requests>=2.31
