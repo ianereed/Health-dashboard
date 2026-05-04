@@ -57,6 +57,8 @@ PROFILES: dict[str, dict] = {
             HOME / "Home-Tools" / "nas-intake" / "state.json",
             HOME / "Library" / "Keychains" / "login.keychain-db",
             HOME / "Home-Tools" / "logs" / "incidents.jsonl",
+            HOME / "Home-Tools" / "meal_planner" / "recipes.db",
+            HOME / "Home-Tools" / "meal_planner" / "seed_progress.json",
         ],
         "forget_args": [
             "--keep-daily", "30",
