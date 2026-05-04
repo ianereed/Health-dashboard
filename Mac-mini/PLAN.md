@@ -18,7 +18,7 @@ number is retired and only the new Phase number is used.
 
 ---
 
-## Quick status (as of 2026-05-01)
+## Quick status (as of 2026-05-04)
 
 **Phase 7 NAS backup LIVE on the mini** (commit `5f806aa`, 2026-05-01):
 two restic repos at `~/Share1/mac-mini-backups/{restic-hourly,restic-daily}`
@@ -50,31 +50,23 @@ tails) for every loaded `com.home-tools.*` and `com.health-dashboard.*` agent.
 
 ## Resume from here
 
-**Phase 12 v3 LANDED 2026-05-01** (commits f2df5e9 → eb4d3bf → 814961c
-→ d83f74d → this commit). 12 cron-style LaunchAgents migrated to
-`@huey.periodic_task` Job kinds in `jobs/kinds/`. Mini Ops console live
-at `homeserver:8503`. HTTP enqueue at `homeserver:8504`. The
-`migration_verifier` Job runs hourly with auto-rollback on baseline
-divergence. Operator runbook at `Mac-mini/PHASE12.md`.
+**Phase 12.5 DONE 2026-05-04 ✅** (commits `028dd0d` → `95e3d0a` →
+`0cf1b7b` → `df12304` → `4873d8f` → `7927bf0` → `79fdfef` → `a242e30`
+→ `748cb09`). Event-aggregator fetch + worker migrated to huey kinds;
+legacy worker loop retired. Both migrations promoted. Full record in
+`Mac-mini/PHASE12.md` "Phase 12.5 follow-up" section.
 
-**Next single action**: deploy + cutover on the mini.
+**Phase 13 architecting DONE 2026-05-01 ✅** — approved design at
+`~/.gstack/projects/ianereed-Home-Tools/ianereed-main-design-20260501-132248.md`.
+Approach C2 (fills Phase 12's reserved Plan slot). Locked decisions in
+`project_meal_planner_expansion_priority.md` memory.
 
-```bash
-ssh homeserver@homeserver '
-  cd ~/Home-Tools && git pull
-  bash jobs/install.sh                # consumer + http
-  bash console/install.sh             # :8503
-  bash jobs/install.sh migrate-all    # cut over all 12
-  python3 Mac-mini/scripts/preflight.py
-'
-```
-
-After that, the verifier auto-soaks for 72h. Phase 6's daily-digest at
-07:00 surfaces `migration_promoted` and `migration_rollback` incidents.
-After all 12 promote: `bash jobs/install.sh cleanup-soaked`.
-
-Then Phase 12.5 (event-aggregator fetch+worker migration) and Phase 13
-(meal-planner expansion).
+**Next phase: Phase 14 — Meal-planner V0.** Recipe DB + Recipes tab in
+console + send-to-Todoist Job kind + sheet seed + `console/app.py`
+deep-link refactor. Entry checklist:
+1. Rollback-marker commit first
+2. `git mv meal-planner meal_planner`
+3. Implement per the approved Phase 13 design
 
 Pre-flight (confirm health before starting new work):
 
@@ -240,50 +232,26 @@ Plan source (v3): `~/.claude/plans/phase-12-mini-jobs-queue.md`
 Deferred to Phase 12.5: `event-aggregator.fetch` + worker (the queue +
 model-swap state machine doesn't decouple cleanly from fetch).
 
-## Phase 12.5 — Event-aggregator on the Jobs framework (IN PROGRESS — 12.8b is next)
+## Phase 12.5 — Event-aggregator on the Jobs framework (DONE 2026-05-04 ✅)
 
-**Status as of 2026-05-03 evening:**
-- ✅ **12.5** — fetch migrated to `@huey.periodic_task` (commit `028dd0d`, soak ran)
-- ✅ **12.6** — `@requires_model("text"|"vision", batch_hint=...)` primitive in `jobs/lib.py`; worker.py shimmed (commit `95e3d0a`)
-- ✅ **12.7** — worker decomposed into `event_aggregator_text` / `event_aggregator_vision` / `event_aggregator_decision_poller` huey kinds; `state.text_queue` / `state.ocr_queue` are now transient staging buffers (commits `0cf1b7b` + `df12304`)
-- ✅ **12.8a** — 18 pre-promote bug fixes (commit `4873d8f`)
-- ✅ **12.8a follow-up** — 4 additional fixes from independent review: fetch.py crash-loss (schedule-before-save), fetch.py TimeoutExpired handler, `jobs/lib.py` concurrency invariant doc, `slack_notifier.py` direct-`_data`-access cleanup (commit `7927bf0`)
-- ⏭️ **12.8b — manual promote + cleanup** — next session. Plan file: `~/.claude/plans/lets-scope-phase-12-5-groovy-whale.md`. Verbatim kickoff prompt is in `project_next_steps.md`.
+All sub-phases complete. Full record in `Mac-mini/PHASE12.md` "Phase 12.5
+follow-up" section.
 
-**Why no 72h soak before promote:** the verifier signal between 12.7 and 12.8a was forged — `event_aggregator_fetch` was calling `record_fire("event_aggregator_text")` unconditionally every 10 min, satisfying the verifier's no-fire check regardless of whether any text task ran. Fix 7 removed the proxy; the file-mtime baseline (`run/event-aggregator-text-or-vision.last`) is now the honest signal. Manual promote in 12.8b is the right call.
+- ✅ **12.5** — fetch → `@huey.periodic_task` (commit `028dd0d`)
+- ✅ **12.6** — `@requires_model` primitive in `jobs/lib.py` (commit `95e3d0a`)
+- ✅ **12.7** — worker decomposed into 3 huey kinds (commits `0cf1b7b`, `df12304`)
+- ✅ **12.8a** — 22 pre-promote fixes (commits `4873d8f`, `7927bf0`)
+- ✅ **12.8b** — promote + worker loop retired (commits `79fdfef`, `a242e30`, `748cb09`)
 
-**Deferred until after 12.8b** (logged in `project_next_steps.md`): F (importlib leak), G (decision_poller cross-lock), H (3 pre-existing `test_proposals.py` failures).
+**Deferred** (logged in PHASE12.md): F (importlib exec_module leak), G
+(decision_poller cross-lock), H (3 pre-existing `test_proposals.py` failures).
 
-## Phase 13 — Meal-planner overhaul: architecting (one sitting via gstack review pipeline)
+## Phase 13 — Meal-planner overhaul: architecting (DONE 2026-05-01 ✅)
 
-**Decided 2026-05-01.** Anny + Ian agreed the meal-planner overhaul is the
-most valuable next feature after Phase 12.5. Two stated capabilities the
-build will need to deliver:
-
-- **Real iPhone actions** — tap a tile, get a result. Adds to weekly meal
-  plan, captures a recipe photo, queries the pantry, etc. Likely uses the
-  Apple Shortcuts → mini HTTP endpoint pattern (the `:8504` jobs-http
-  endpoint from Phase 12 is the door).
-- **Windows-laptop weekly planning collaboration with Claude** — sit down,
-  talk through the week's meals with Claude in the loop, end up with a
-  populated Sheet + grocery list + Todoist. Not a static UI; a real
-  conversation surface.
-
-**This Phase is the architecting sitting only.** Output is a plan, not
-code. Run the full gstack review pipeline (`/office-hours` →
-`/plan-ceo-review` → `/plan-eng-review` or `/autoplan`) to lock the design
-before any build chunks start.
-
-Existing scaffolding to lean on: `meal-planner/` (Apps Script frontend +
-Gemini batch sidecar), the model-swap pattern from
-`event-aggregator/worker.py`, and Phase 12's Job framework + adapters
-layer (`jobs/adapters/{slack,gcal,todoist,card,nas,sheet}.py`). The `sheet`
-adapter is currently a strict NotImplementedError stub — Phase 14+ will
-fill it in.
-
-This Phase subsumes the meal-planner Gemini → local migration and reuses
-the Apple Shortcuts → mini HTTP endpoint groundwork. Reference memory
-`project_meal_planner_expansion_priority.md` carries the verbatim user ask.
+Design approved via /office-hours + gstack review pipeline. Approach C2
+(meal-planner fills Phase 12's reserved Plan slot). Locked decisions in
+memory: `project_meal_planner_expansion_priority.md`. Approved design doc:
+`~/.gstack/projects/ianereed-Home-Tools/ianereed-main-design-20260501-132248.md`.
 
 ## Phase 14+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
 

@@ -4,7 +4,7 @@ A precise, file-cited description of how the tool currently behaves.
 Use this as the entry point when picking up the project after a long
 gap or onboarding a new collaborator.
 
-Last verified against code: 2026-04-28 (Tier 2 — Intake Audit + Status enum).
+Last verified against code: 2026-05-04 (Phase 12.8b — worker loop retired, huey kinds).
 
 ---
 
@@ -23,7 +23,9 @@ Eight connectors registered in `main.py:_CONNECTOR_REGISTRY`:
 | **Messenger / Instagram** | macOS NotificationCenter SQLite | hard-coded bundle filter | notifications truncate to ~80 chars |
 
 Image intake is event-driven: dispatcher routes `#ian-image-intake` uploads
-to `cli enqueue-image --file <path>` (or directly to `state.ocr_queue`).
+to `cli enqueue-image --file <path>`, which calls `state.enqueue_ocr_job()`
+as a transient staging buffer; `event_aggregator_fetch` picks it up via
+huey on the next tick.
 
 ## 2. Information monitored for
 
@@ -118,17 +120,25 @@ codes, missing-config keys, count summaries.
 
 ## 5. What triggers the LLM
 
-Two queues consumed by a long-running worker (Tier 2.4):
+After Phase 12.5–12.8b the fetch loop and per-item processing run as huey
+kinds under the `jobs/` framework (no separate LaunchAgents):
 
-- **Producer**: `main.py fetch-only` (cron every 10 min) calls each
-  connector and `state.enqueue_text_job(...)`. Cheap, no LLM calls.
-- **Producer (events)**: dispatcher writes file paths into
-  `state.ocr_queue` when an image lands in `#ian-image-intake`.
-- **Consumer**: `main.py worker` (long-running, KeepAlive plist).
-  Loop: pop a job, run it, persist. Idle-sleeps 30 s when both queues
-  are empty.
+- **`event_aggregator_fetch`** (`@huey.periodic_task` every 10 min): calls
+  each connector; enqueues text jobs into `state.text_queue` (transient
+  staging buffer) and schedules `event_aggregator_text` huey tasks.
+- **`event_aggregator_text`** (`@huey.task`, `@requires_model("text")`):
+  runs one text-extraction job via `worker._run_text_job`. Retries=2.
+- **`event_aggregator_vision`** (`@huey.task`, `@requires_model("vision")`):
+  runs one OCR job via `worker._run_ocr_job`. Retries=2.
+- **`event_aggregator_decision_poller`** (`@huey.periodic_task` every 1 min):
+  checks for pending vision tasks while text is in flight; posts/refreshes
+  the Slack [Wait]/[Interrupt] swap-decision message.
 
-Per-text-job pipeline:
+`@requires_model("text"/"vision")` (in `jobs/lib.py`) enforces
+one-at-a-time model loading via a process-wide singleton. The huey consumer
+runs with `-w 1 -k thread` so model swaps are always serial.
+
+Per-text-job pipeline (inside `worker._run_text_job`):
 1. **Pre-classifier** (Tier 2.5): cheap qwen3 call at 2 k ctx —
    "yes/no/maybe contains an event/todo?". "no" → mark seen, skip.
 2. **Calendar context refresh** (per job — handles drift between fetch
@@ -140,7 +150,7 @@ Per-text-job pipeline:
    - Todo candidates → kind:"todo" proposal item (propose mode) or
      auto-create (auto mode).
 
-Per-OCR-job pipeline: see `worker._run_ocr_job` → `cli._cmd_ingest_image`.
+Per-OCR-job pipeline: `worker._run_ocr_job` → `cli._cmd_ingest_image`.
 Pages rasterized via `pypdfium2`; each page → vision call; results
 merged → calendar-detect text call; CandidateEvents flow through the
 same proposal path as text-extracted events.
@@ -256,9 +266,8 @@ Atomic writes via tempfile + `os.replace`.
 
 | Key | Purpose | Pruning |
 |---|---|---|
-| `text_queue[]`, `ocr_queue[]` | worker queues | drained by worker |
-| `worker_status{}` | dashboard footer | overwritten each loop |
-| `swap_decisions{}` | `[Wait]/[Interrupt]` lifecycle | auto-resolve to "wait" after 5 min |
+| `text_queue[]`, `ocr_queue[]` | transient staging buffer between fetch and huey tasks | drained by fetch/enqueue-image → huey schedule |
+| `swap_decisions{}` | `[Wait]/[Interrupt]` lifecycle | auto-resolve to "wait" after 5 min (decision_poller) |
 | `pending_proposals[]` | dashboard items (event/merge/fuzzy_event/todo) | actioned + 72 h |
 | `proposal_counter` / `_date` | daily-resetting numeric ID | midnight UTC |
 | `proposal_dashboard{date: ts}` | Slack message ts per day | 7 d |
@@ -307,22 +316,25 @@ Conflict-warning dedup: `state.warned_conflict_ids[fp] = date`, 30 d window.
 
 ## 12. Run cadence
 
-Production runtime is **fetch-only timer + worker daemon** (Tier 2.4):
+After Phase 12.5–12.8b, **all periodic work runs as huey kinds** under the
+`jobs/` framework consumer. No event-aggregator–specific LaunchAgents remain
+loaded. The `com.home-tools.event-aggregator.fetch.plist` and
+`com.home-tools.event-aggregator.worker.plist` are retired (promoted and
+deleted).
 
-- `com.home-tools.event-aggregator.fetch.plist` — `StartInterval=600`,
-  `RunAtLoad=false`. Runs `main.py fetch-only` every 10 min.
-- `com.home-tools.event-aggregator.worker.plist` — `KeepAlive=true`,
-  `RunAtLoad=true`, `ThrottleInterval=10`. Runs `main.py worker`.
+Active kinds registered in `jobs/kinds/`:
+- `event_aggregator_fetch` — `crontab(minute="*/10")` — every 10 min
+- `event_aggregator_decision_poller` — `crontab(minute="*")` — every 1 min
+- `event_aggregator_text` — `@huey.task` (on-demand, scheduled by fetch)
+- `event_aggregator_vision` — `@huey.task` (on-demand, scheduled by fetch)
 
-Log files land in `~/Library/Logs/home-tools/` (persistent across reboots):
-- `event-aggregator-worker.log` — worker stdout + stderr (combined)
-- `event-aggregator-fetch.log` — fetch stdout + stderr (combined)
+Logs land in `~/Home-Tools/logs/jobs-consumer.err.log` (consumer stderr) and
+`~/Library/Logs/home-tools/jobs-consumer.log`.
 
-To tail live: `tail -f ~/Library/Logs/home-tools/event-aggregator-worker.log`
-
-Legacy single-plist mode (`main.py` no-args, full inline run) still
-works for backward compat and is what the original
-`com.home-tools.event-aggregator.plist` invokes.
+Legacy single-plist mode (`main.py` no-args, full inline run) still works for
+backward compat and is what the original
+`com.home-tools.event-aggregator.plist.disabled` invokes (disabled, kept for
+reference).
 
 ---
 
@@ -331,8 +343,10 @@ works for backward compat and is what the original
 | Concern | Files |
 |---|---|
 | Run-loop legacy | `main.py:main()` |
-| Fetch loop | `main.py:fetch_only()` |
-| Worker | `worker.py` |
+| Fetch loop | `main.py:fetch_only()`, `jobs/kinds/event_aggregator_fetch.py` |
+| Per-item job runners | `worker.py:_run_text_job`, `_run_ocr_job` |
+| Huey kinds | `jobs/kinds/event_aggregator_{text,vision,decision_poller}.py` |
+| Model-swap primitive | `jobs/lib.py:requires_model`, `_ModelState` |
 | Connectors | `connectors/{gmail,google_calendar,slack,imessage,whatsapp,discord_conn,notifications}.py` |
 | LLM extraction | `extractor.py`, `models.py` |
 | Vision pipeline | `analyzers/image_analyzer.py`, `image_pipeline.py` |
@@ -345,7 +359,7 @@ works for backward compat and is what the original
 | CLI subcommands | `cli.py` |
 | Audit log | `logs/event_log.py`, `event_log.jsonl` |
 | Config | `config.py`, `.env` |
-| Tests | `tests/` (120 pass, 4 skip Ollama-live) |
+| Tests | `tests/` (126+ pass, 4 skip Ollama-live, 3 pre-existing failures in test_proposals.py) |
 
 ---
 

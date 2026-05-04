@@ -213,3 +213,45 @@ IP detection, set `JOBS_HTTP_HOST=127.0.0.1` to force loopback temporarily.
   Ops Jobs tab.
 - Sheet adapter — strict NotImplementedError stub. Phase 13.
 - Per-user views (Anny mode) — Phase 13's Plan tab.
+
+---
+
+## Phase 12.5 follow-up — Event-aggregator migration + worker retirement (2026-05-04)
+
+Phase 12 left the event-aggregator's two LaunchAgents unmitigated. Phase
+12.5–12.8b finished the migration. Summary:
+
+### What shipped
+
+| Phase | Commits | Description |
+|-------|---------|-------------|
+| 12.5 | `028dd0d` | `event_aggregator_fetch` → huey `@periodic_task` (every 10 min) |
+| 12.6 | `95e3d0a` | `@requires_model` primitive in `jobs/lib.py`; worker.py shim |
+| 12.7 | `0cf1b7b`, `df12304` | Worker decomposed: `event_aggregator_text`, `event_aggregator_vision`, `event_aggregator_decision_poller` kinds |
+| 12.8a | `4873d8f`, `7927bf0` | 22 pre-promote bug fixes (18 from /review + 4 from independent follow-up) |
+| 12.8b | `79fdfef`, `a242e30`, `748cb09` | promote subcommand, TaskWrapper fix, worker loop retired |
+
+### Key design decisions
+
+- **`@requires_model` primitive** (`jobs/lib.py`): process-wide singleton
+  enforces serial model loading. Consumer runs `-w 1 -k thread`. A kind
+  opting into concurrency must implement its own per-kind locking.
+- **Transient staging queues**: `state.text_queue` / `state.ocr_queue`
+  remain in state.py as staging buffers between `fetch_only()` / `enqueue-image`
+  CLI and the huey task schedule. Not deprecated — load-bearing.
+- **Honest soak signal**: the `record_fire("event_aggregator_text")` proxy
+  in fetch was removed (12.8a Fix 7). Soak relies solely on the
+  `event-aggregator-text-or-vision.last` file mtime, touched only on
+  successful subprocess execution.
+- **Manual promote**: the 72h soak was skipped because the proxy forged
+  the signal. `python3 -m jobs.cli promote <kind>` added as a CLI command.
+- **Smoke Test E finding**: `inspect.signature(TaskWrapper)` returns
+  `(*args, **kwargs)` — must unwrap via `TaskWrapper.func` + `inspect.unwrap`
+  to see the inner function's signature. Fixed in `jobs/cli.py:_enqueue`.
+
+### Deferred (do not chase)
+
+- **F**: `_load_ea_state` / `_load_ea_notifier` / `_load_ea_tz_utils`
+  `exec_module` on every fire — slow leak in long-running consumer. Memoize.
+- **G**: `_post_swap_decision_if_needed` cross-lock window (pre-existing 12.7).
+- **H**: 3 pre-existing `test_proposals.py` failures predate this work.
