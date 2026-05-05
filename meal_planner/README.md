@@ -38,7 +38,7 @@ Use the explicit `?tab=recipes` parameter — tab clicks don't update the URL
 
 ## Status
 
-**V0 live (Phase 14.10, 2026-05-05).** 16 recipes seeded from the existing
+**V0 live (Phase 14.11, 2026-05-05).** 16 recipes seeded from the existing
 Sheet. Multi-recipe grid (st.data_editor): check one or more recipes, adjust
 servings, click "Send checked recipes to Todoist". Creates one Todoist task
 per scaled ingredient under the `meal-planner` label. Ingredients are NOT
@@ -46,6 +46,8 @@ merged across recipes — duplicates appear as separate tasks, each tagged with
 `(Recipe Name)` so you can tell them apart. No Gemini call on send; Gemini
 consolidation is available in `consolidation.py` for a future opt-in phase.
 "Clear all meal-planner items from Todoist" button available for cleanup.
+Tag filter (Phase 14.11) — `st.pills` of every tag in the DB plus AND/OR
+toggle, above the grid. Empty selection = show all.
 
 Phase 15+ direction: `Mac-mini/PLAN.md`.
 

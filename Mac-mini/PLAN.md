@@ -80,8 +80,13 @@ per recipe (commit `090bb69`). Kind no longer calls Gemini. Each ingredient
 emits as a separate Todoist task with `(Recipe Name)` suffix. 143/143 tests
 pass.
 
-**Next: Phase 14.11 — Tag filter on Recipes tab** (Option B: `st.pills` +
-AND/OR toggle above the grid). Entry gate: Phase 14.10 deployed to mini.
+**Phase 14.11 DONE 2026-05-05 ✅** — Tag filter on Recipes tab (commit
+`1c165e8`). `st.pills` multi-select + AND/OR radio above the grid. `list_all_tags()`
+helper added; `search_recipes()` extended with `tag_logic` param. 148/148 tests
+pass.
+
+**Next: Phase 15 — Recipe-photo-LLM bake-off** (gated on Anny's full SC
+walkthrough, SC1–SC6 including SC3 now resolved by Phase 14.11).
 
 Pre-flight (confirm health before starting new work):
 
@@ -350,13 +355,21 @@ Shipped in commit `090bb69`:
   no Gemini mocks. 143/143 tests pass.
 - `consolidation.py` left on disk untouched.
 
-## Phase 14.11 — Recipes tab: tag filter (next)
+## Phase 14.11 — Recipes tab: tag filter (DONE 2026-05-05 ✅)
 
-Add a tag filter above the recipe grid. Option B: `st.pills` multi-select
-showing all distinct tags from the DB, plus an AND/OR radio toggle.
-Grid filters live (no page reload needed — Streamlit re-renders on widget change).
+Tag filter above the multi-recipe grid on the Recipes tab. Resolves SC3.
 
-Entry gate: Phase 14.10 deployed to mini.
+- `meal_planner/queries.py` — added `list_all_tags(*, path)` helper (returns
+  sorted distinct tags linked to ≥1 recipe, orphan tags excluded via JOIN).
+- `meal_planner/queries.py` — extended `search_recipes()` with
+  `tag_logic: str = "and"` param. OR mode uses EXISTS/IN subquery. Raises
+  `ValueError` on unrecognized logic value.
+- `console/tabs/plan.py` — renders `st.pills` (Streamlit 1.57 on mini, well above
+  the 1.40 requirement) + `st.radio("Match", ["AND","OR"])` above the grid.
+  Empty selection = all recipes. Filter-active empty-state message distinguished
+  from DB-empty message.
+- `meal_planner/tests/test_queries.py` — 5 new tests: orphan exclusion, OR union,
+  AND intersection, empty tags = all, invalid logic raises. 148/148 tests pass.
 
 ## Phase 15 — Recipe-photo-LLM bake-off
 
@@ -364,7 +377,7 @@ Research only — no production code. Compare Gemini-flash, Gemini-flash-lite,
 Claude Haiku-4.5, GPT-4o-mini, local qwen2.5-vl on recipe photo extraction.
 Output: `meal_planner/MODEL_CHOICE.md`.
 
-Entry gate: Anny's Phase 14.7 walkthrough passes end-to-end (SC6).
+Entry gate: Anny's full SC walkthrough (SC1–SC6) passes; SC3 now resolved by Phase 14.11.
 
 **Open question — API quota visibility.** Google's Gemini API has no
 programmatic quota-check endpoint; the only signals are 429s at request time,
