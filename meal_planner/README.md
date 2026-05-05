@@ -111,3 +111,4 @@ This hits the live Google Sheet and has a Gemini API cost. Don't run in CI.
 - `Mac-mini/PLAN.md` — Phase 15+ roadmap
 - Memory: `project_meal_planner.md`, `project_meal_planner_expansion_priority.md`
 - Design doc: `~/.gstack/projects/ianereed-Home-Tools/ianereed-main-design-20260501-132248.md`
+- LLM bake-off (Phase 15): [`meal_planner/eval/README.md`](eval/README.md)

@@ -47,3 +47,11 @@ nas-intake/locks/
 # gstack local artifacts: review logs, security reports, learnings, plan files.
 # Stay local — never commit security findings to a public repo.
 .gstack/
+
+# Phase 15 bake-off — recipe photos + golden files are gitignored (hand-labeled,
+# not for public repo). summary.json and runs.jsonl DO commit.
+meal_planner/eval/recipe_photos/*.png
+meal_planner/eval/recipe_photos/*.jpg
+meal_planner/eval/recipe_photos/*.jpeg
+meal_planner/eval/recipe_photos/*.golden.json
+meal_planner/eval/results/*/raw/
