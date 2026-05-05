@@ -78,7 +78,13 @@ pass.
 **Phase 14.10 DONE 2026-05-05 ✅** — Bypass consolidation; raw scaled lines
 per recipe (commit `090bb69`). Kind no longer calls Gemini. Each ingredient
 emits as a separate Todoist task with `(Recipe Name)` suffix. 143/143 tests
-pass.
+pass. **Live-verified 2026-05-05 11:30** — task `4d66f94b` produced 14
+Todoist tasks with `(Broccoli & Lemon Risotto)` suffix on every line.
+First dogfood (task `4d267f5b`) ran on a stale consumer process from
+before the merge — required `launchctl bootout`/`bootstrap` on
+`com.home-tools.jobs-consumer` to reload the kind module. Lesson:
+git pull is not deploy; the huey worker must be kickstarted/restarted
+after merging changes to any `jobs/kinds/*.py` file.
 
 **Phase 14.11 DONE 2026-05-05 ✅** — Tag filter on Recipes tab (commit
 `1c165e8`). `st.pills` multi-select + AND/OR radio above the grid. `list_all_tags()`
