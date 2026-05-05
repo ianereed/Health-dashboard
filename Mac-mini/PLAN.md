@@ -70,6 +70,11 @@ pending.
 `952f4a2`). Dogfood: 12 tasks created → clear job fired → 0 meal-planner
 tasks remain, 40 event-aggregator tasks untouched.
 
+**Phase 14.9 DONE 2026-05-04 ✅** — Multi-recipe grid shipped (commit
+`94c2259`). Dogfood: 2 recipes selected → 18 consolidated grocery tasks
+created → 0 after clear. Event-aggregator 40 tasks untouched. All 142 tests
+pass.
+
 **Next: Phase 15 — Recipe-photo-LLM bake-off** (research only, entry gate:
 Anny's SC6 walkthrough). Ian may insert a new phase before Phase 15 — ask him
 for scope before starting.
@@ -298,6 +303,23 @@ Shipped in commit `952f4a2`:
 
 Dogfood 2026-05-05: 12 meal-planner tasks created, clear job fired, 0 tasks remaining,
 40 event-aggregator tasks untouched. Exit gate: all 10 items passed.
+
+## Phase 14.9 — Recipes tab: multi-recipe grid (DONE 2026-05-04 ✅)
+
+Replaced single-recipe selectbox + slider + ingredient table with a `st.data_editor`
+multi-recipe grid. Three columns: Send (CheckboxColumn), Recipe (TextColumn,
+disabled), Servings (NumberColumn, min=1, max=20, step=1, default=base_servings).
+
+Shipped in commit `94c2259`:
+- `console/tabs/plan.py` — `_render_inner()` replaced with grid + Send button.
+  `_render_clear_button()` unchanged.
+
+Dogfood 2026-05-04: 2 recipes selected (Anny's Ji dan ×4 + Broccoli & Lemon Risotto ×6),
+18 consolidated grocery tasks created. Clear confirmed 0 remaining.
+Event-aggregator count 40 — untouched. 142/142 tests pass.
+
+Next UI iteration (not yet scoped): ingredient-edit view so the user can adjust
+quantities per recipe from the console before sending.
 
 ## Phase 15 — Recipe-photo-LLM bake-off
 

@@ -38,10 +38,12 @@ Use the explicit `?tab=recipes` parameter — tab clicks don't update the URL
 
 ## Status
 
-**V0 live (Phase 14.7, 2026-05-04).** 16 recipes seeded from the existing
-Sheet. Send-to-Todoist button enqueues a huey job; the consumer runs the
+**V0 live (Phase 14.9, 2026-05-04).** 16 recipes seeded from the existing
+Sheet. Multi-recipe grid (st.data_editor): check one or more recipes, adjust
+servings, click "Send checked recipes to Todoist". The consumer runs the
 Gemini consolidation pass and creates one Todoist task per grocery line under
-the `meal-planner` label.
+the `meal-planner` label. "Clear all meal-planner items from Todoist" button
+available for cleanup.
 
 Phase 15+ direction: `Mac-mini/PLAN.md`.
 
