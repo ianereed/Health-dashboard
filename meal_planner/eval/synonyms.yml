@@ -1,0 +1,24 @@
+# Synonym groups for ingredient normalization.
+# Each entry is canonical name first, then alternates, semicolon-separated.
+# Used by _normalize_ingredient_name() in bake_off.py to prevent scoring bias
+# against models that echo source phrasing vs. canonical names.
+
+synonyms:
+  - "scallion; green onion; spring onion"
+  - "cilantro; coriander; coriander leaves"
+  - "chickpea; garbanzo; garbanzo bean"
+  - "bell pepper; capsicum; sweet pepper"
+  - "eggplant; aubergine"
+  - "zucchini; courgette"
+  - "arugula; rocket"
+
+unicode_fractions:
+  "¼": 0.25
+  "½": 0.5
+  "¾": 0.75
+  "⅓": 0.333
+  "⅔": 0.667
+  "⅛": 0.125
+  "⅜": 0.375
+  "⅝": 0.625
+  "⅞": 0.875
