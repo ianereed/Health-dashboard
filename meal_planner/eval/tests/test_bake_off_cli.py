@@ -17,14 +17,6 @@ def _run(*args: str, **kwargs) -> subprocess.CompletedProcess:
     )
 
 
-def test_preflight_stub_message():
-    """In C1 the preflight is a stub that exits 0 with 'preflight skeleton' on stderr.
-    C3 will replace this with a real preflight and update the test."""
-    result = _run("preflight")
-    assert result.returncode == 0
-    assert "preflight skeleton" in result.stderr
-
-
 def test_run_rejects_unknown_provider():
     result = _run("run", "--corpus", "/tmp", "--models", "foobar:1b")
     assert result.returncode != 0

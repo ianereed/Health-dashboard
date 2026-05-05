@@ -17,15 +17,19 @@ Known Ollama vision tags: qwen2.5vl:7b, qwen2.5vl:3b, llama3.2-vision:11b, minic
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import pathlib
 import re
 import statistics
+import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from typing import Optional
 
+import requests
 import yaml
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
@@ -495,6 +499,148 @@ def _summarize(out_dir: pathlib.Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Ollama vision adapter
+# ---------------------------------------------------------------------------
+
+_PROMPT_PATH = pathlib.Path(__file__).parent / "recipe_extraction_prompt.txt"
+_PROMPT_TEXT: str | None = None
+
+
+def _load_prompt() -> str:
+    global _PROMPT_TEXT
+    if _PROMPT_TEXT is None:
+        _PROMPT_TEXT = _PROMPT_PATH.read_text(encoding="utf-8").strip()
+    return _PROMPT_TEXT
+
+
+def _unload_ollama(model: str, base_url: str) -> None:
+    """Unload model from GPU. Mirrors Mac-mini/benchmark_models.py:_unload (line 142)."""
+    try:
+        requests.post(
+            f"{base_url}/api/generate",
+            json={"model": model, "keep_alive": 0},
+            timeout=10,
+        )
+    except Exception:
+        pass
+    time.sleep(2)
+
+
+def _call_ollama_vision(
+    model: str,
+    image_path: pathlib.Path,
+    prompt: str,
+    base_url: str = "http://localhost:11434",
+) -> tuple[dict | None, dict]:
+    """Call Ollama vision API with a single image. Returns (parsed_json_or_None, metadata).
+
+    metadata keys: latency_s, cold_load_s (set by _cold_call_ollama), eval_count,
+    raw_response (the full Ollama response body text).
+
+    HTTP errors (including 429) are never collapsed into a parsed result — they always
+    return (None, metadata). This is the regression gate for the 2026-05-04 incident
+    where a 429 with empty body silently produced {}.
+    """
+    with image_path.open("rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode("ascii")
+
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+        "images": [image_b64],
+        "keep_alive": "10s",
+        "options": {"temperature": 0.1},
+    }
+
+    metadata: dict = {
+        "latency_s": None,
+        "cold_load_s": None,
+        "eval_count": None,
+        "raw_response": None,
+    }
+
+    t0 = time.monotonic()
+    try:
+        r = requests.post(f"{base_url}/api/generate", json=body, timeout=180)
+    except requests.RequestException as exc:
+        metadata["latency_s"] = round(time.monotonic() - t0, 3)
+        metadata["raw_response"] = str(exc)
+        return None, metadata
+
+    metadata["latency_s"] = round(time.monotonic() - t0, 3)
+
+    if r.status_code != 200:
+        # Do NOT attempt to parse non-200 responses as JSON.
+        metadata["raw_response"] = f"HTTP {r.status_code}: {r.text[:1000]}"
+        return None, metadata
+
+    raw_text = r.text
+    metadata["raw_response"] = raw_text
+
+    try:
+        resp_json = r.json()
+    except ValueError:
+        return None, metadata
+
+    metadata["eval_count"] = resp_json.get("eval_count")
+    response_text = resp_json.get("response", "")
+
+    try:
+        parsed = json.loads(response_text)
+    except (json.JSONDecodeError, ValueError):
+        return None, metadata
+
+    if not isinstance(parsed, dict):
+        return None, metadata
+
+    return parsed, metadata
+
+
+def _cold_call_ollama(
+    model: str,
+    image_path: pathlib.Path,
+    prompt: str,
+    base_url: str = "http://localhost:11434",
+) -> tuple[dict | None, dict]:
+    """Unload model then call — measures cold-start latency.
+
+    Mirrors Mac-mini/benchmark_models.py:_cold_load (line 243).
+    cold_load_s includes the 2s sleep from _unload_ollama plus inference time.
+    """
+    t0 = time.monotonic()
+    _unload_ollama(model, base_url)
+    parsed, metadata = _call_ollama_vision(model, image_path, prompt, base_url)
+    metadata["cold_load_s"] = round(time.monotonic() - t0, 3)
+    return parsed, metadata
+
+
+# ---------------------------------------------------------------------------
+# Preflight helpers
+# ---------------------------------------------------------------------------
+
+def _parse_df_avail_gb(df_output: str) -> float | None:
+    """Parse available GB from `df -h` stdout. Returns None if unparseable."""
+    lines = df_output.strip().splitlines()
+    for line in lines[1:]:  # skip header
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        avail = parts[3]
+        try:
+            if avail.endswith("Gi") or avail.endswith("G"):
+                return float(avail.rstrip("GiB"))
+            if avail.endswith("Ti") or avail.endswith("T"):
+                return float(avail.rstrip("TiB")) * 1024
+            if avail.endswith("Mi") or avail.endswith("M"):
+                return float(avail.rstrip("MiB")) / 1024
+        except ValueError:
+            pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # CLI commands
 # ---------------------------------------------------------------------------
 
@@ -514,8 +660,123 @@ def _validate_models(models: list[str]) -> list[str]:
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
-    print("preflight skeleton (not implemented)", file=sys.stderr)
+    ssh_host = args.ssh_host
+    models_to_check = [m.strip() for m in args.models_to_check.split(",") if m.strip()]
+    failed = False
+
+    # 1. Disk check: ~/.ollama volume must have >=35GB free
+    r = subprocess.run(
+        ["ssh", ssh_host, "df -h ~/.ollama"],
+        capture_output=True, text=True, timeout=20,
+    )
+    if r.returncode != 0:
+        print(f"preflight FAIL: df -h ~/.ollama failed: {r.stderr.strip()}", file=sys.stderr)
+        failed = True
+    else:
+        avail_gb = _parse_df_avail_gb(r.stdout)
+        if avail_gb is None or avail_gb < 35:
+            gb_str = f"{avail_gb:.0f}GB" if avail_gb is not None else "unknown"
+            print(
+                f"preflight FAIL: disk space too low ({gb_str} available, need >=35GB). "
+                "Free space on the ~/.ollama volume before running.",
+                file=sys.stderr,
+            )
+            failed = True
+
+    # 2. Shared workers must be unloaded before the bench
+    _WORKER_LABELS = (
+        "com.home-tools.jobs-consumer",
+        "com.home-tools.dispatcher",
+    )
+    loaded_workers = []
+    for label in _WORKER_LABELS:
+        r = subprocess.run(
+            ["ssh", ssh_host, f"launchctl print gui/501/{label}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0:
+            loaded_workers.append(label)
+
+    if loaded_workers:
+        print(
+            "preflight FAIL: shared workers are loaded. Run these commands on the mini first:",
+            file=sys.stderr,
+        )
+        for label in loaded_workers:
+            print(f"  launchctl bootout gui/501/{label}", file=sys.stderr)
+        failed = True
+
+    # 3. Memory pressure must be Normal
+    r = subprocess.run(
+        ["ssh", ssh_host, "memory_pressure"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if r.returncode != 0 or "Normal" not in r.stdout:
+        print(
+            "preflight FAIL: memory pressure is not Normal. "
+            "Wait for other processes to finish before running the bench.",
+            file=sys.stderr,
+        )
+        failed = True
+
+    # 4. Ollama model tags must be present
+    r = subprocess.run(
+        ["ssh", ssh_host, "ollama list"],
+        capture_output=True, text=True, timeout=20,
+    )
+    if r.returncode != 0:
+        print(f"preflight FAIL: could not list Ollama models: {r.stderr.strip()}", file=sys.stderr)
+        failed = True
+    else:
+        missing = [m for m in models_to_check if m not in r.stdout]
+        if missing:
+            print("preflight FAIL: missing Ollama models. Pull them first:", file=sys.stderr)
+            for m in missing:
+                print(f"  ollama pull {m}", file=sys.stderr)
+            failed = True
+
+    # 5. Gemini version stash (C5 will use this; skip if no --out or no API key)
+    gemini_key = __import__("os").environ.get("GEMINI_API_KEY", "")
+    if args.out and gemini_key:
+        try:
+            gr = requests.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash"
+                f"?key={gemini_key}",
+                timeout=10,
+            )
+            gemini_info = gr.json() if gr.status_code == 200 else {"error": gr.status_code}
+        except Exception as exc:
+            gemini_info = {"error": str(exc)}
+        out_dir = pathlib.Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "gemini_versions.json").write_text(
+            json.dumps(gemini_info, indent=2), encoding="utf-8"
+        )
+
+    if failed:
+        return 1
+
+    print("preflight OK: all checks passed.", file=sys.stderr)
     return 0
+
+
+def _dispatch_provider(
+    model: str,
+    photo_path: pathlib.Path,
+    prompt: str,
+    ollama_base_url: str = "http://localhost:11434",
+) -> tuple[dict | None, dict]:
+    """Route model string to the correct provider and return (parsed, metadata)."""
+    if model.startswith("ollama:"):
+        tag = model[len("ollama:"):]
+        return _cold_call_ollama(tag, photo_path, prompt, ollama_base_url)
+    if model in _KNOWN_OLLAMA_VISION_TAGS:
+        return _cold_call_ollama(model, photo_path, prompt, ollama_base_url)
+    if model.startswith("gemini-"):
+        raise NotImplementedError("gemini lands in C5")
+    if model == "llama-3.2-90b-vision-preview":
+        raise NotImplementedError("groq deferred")
+    raise ValueError(f"unknown provider: {model}")
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -535,7 +796,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     # Verify synonyms.yml parses before any provider calls.
-    _load_synonyms()
+    synonyms = _load_synonyms()
+    fractions = synonyms.get("unicode_fractions", {})
 
     out = pathlib.Path(args.out) if args.out else (
         _RESULTS_ROOT / str(date.today())
@@ -543,6 +805,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     pairs = _load_corpus(corpus)
+
+    # Apply --corpus-glob filter
+    if args.corpus_glob:
+        import fnmatch
+        pairs = [(p, g) for p, g in pairs if fnmatch.fnmatch(p.name, args.corpus_glob)]
+
     if not pairs:
         print("no photo+golden pairs found in corpus", file=sys.stderr)
         return 1
@@ -553,28 +821,105 @@ def cmd_run(args: argparse.Namespace) -> int:
         resume_dir = _resolve_resume_dir(args.resume_from, _RESULTS_ROOT)
         already_done = _resume_from(resume_dir)
         if resume_dir != out:
-            # Copy existing runs.jsonl into the new out dir so we can append
             import shutil
             existing = resume_dir / "runs.jsonl"
             if existing.exists():
                 shutil.copy(existing, out / "runs.jsonl")
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    prompt = _load_prompt()
+
+    raw_dir = out / "raw"
 
     for model in models:
-        for photo_path, _golden in pairs:
+        for photo_path, golden in pairs:
             photo_basename = photo_path.name
             if (model, photo_basename) in already_done:
+                print(f"skip (already done): {model} {photo_basename}", file=sys.stderr)
                 continue
-            row = RunRow(
-                model=model,
-                photo=photo_basename,
-                status="pending",
-                started_at=now_iso,
-            )
-            _append_row(out, row)
 
-    print(f"pending rows written to {out / 'runs.jsonl'}", file=sys.stderr)
+            started_at = datetime.now(timezone.utc).isoformat()
+
+            # pending row
+            _append_row(out, RunRow(
+                model=model, photo=photo_basename, status="pending", started_at=started_at,
+            ))
+
+            # calling row
+            _append_row(out, RunRow(
+                model=model, photo=photo_basename, status="calling",
+            ))
+
+            try:
+                parsed, metadata = _dispatch_provider(
+                    model, photo_path, prompt, args.ollama_base_url,
+                )
+            except NotImplementedError as exc:
+                ended_at = datetime.now(timezone.utc).isoformat()
+                _append_row(out, RunRow(
+                    model=model, photo=photo_basename, status="provider_error",
+                    error=str(exc), ended_at=ended_at,
+                ))
+                print(f"provider_error: {model} {photo_basename}: {exc}", file=sys.stderr)
+                continue
+            except Exception as exc:
+                ended_at = datetime.now(timezone.utc).isoformat()
+                _append_row(out, RunRow(
+                    model=model, photo=photo_basename, status="provider_error",
+                    error=str(exc), ended_at=ended_at,
+                ))
+                print(f"provider_error: {model} {photo_basename}: {exc}", file=sys.stderr)
+                continue
+
+            ended_at = datetime.now(timezone.utc).isoformat()
+
+            if parsed is None:
+                raw_dir.mkdir(exist_ok=True)
+                safe_model = re.sub(r"[^a-zA-Z0-9._-]", "_", model)
+                raw_file = raw_dir / f"{photo_path.stem}-{safe_model}.txt"
+                raw_file.write_text(metadata.get("raw_response") or "", encoding="utf-8")
+                _append_row(out, RunRow(
+                    model=model, photo=photo_basename, status="parse_fail",
+                    latency_s=metadata.get("latency_s"),
+                    cold_load_s=metadata.get("cold_load_s"),
+                    error=f"parse_fail: raw at {raw_file}",
+                    ended_at=ended_at,
+                ))
+                print(
+                    f"parse_fail: {model} {photo_basename}; raw response at {raw_file}",
+                    file=sys.stderr,
+                )
+                continue
+
+            # parsed_ok row
+            _append_row(out, RunRow(
+                model=model, photo=photo_basename, status="parsed_ok",
+                latency_s=metadata.get("latency_s"),
+                cold_load_s=metadata.get("cold_load_s"),
+                tokens_used=metadata.get("eval_count"),
+                extracted=parsed,
+                ended_at=ended_at,
+            ))
+
+            # scored row
+            score = _score(parsed, golden, synonyms, fractions)
+            _append_row(out, RunRow(
+                model=model, photo=photo_basename, status="scored",
+                latency_s=metadata.get("latency_s"),
+                cold_load_s=metadata.get("cold_load_s"),
+                tokens_used=metadata.get("eval_count"),
+                extracted=parsed,
+                score=score,
+                ended_at=ended_at,
+            ))
+
+            f1 = score.get("ingredient_f1", 0.0)
+            print(
+                f"scored: {model} {photo_basename} f1={f1:.3f} "
+                f"lat={metadata.get('latency_s', '?')}s cold={metadata.get('cold_load_s', '?')}s",
+                file=sys.stderr,
+            )
+
+    print(f"run complete: {out / 'runs.jsonl'}", file=sys.stderr)
     return 0
 
 
@@ -586,7 +931,21 @@ def main() -> None:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("preflight", help="Check mini readiness before running the bench.")
+    pf_p = sub.add_parser("preflight", help="Check mini readiness before running the bench.")
+    pf_p.add_argument(
+        "--ssh-host", default="homeserver@homeserver", metavar="USER@HOST",
+        help="SSH target for mini checks (default: homeserver@homeserver).",
+    )
+    pf_p.add_argument(
+        "--models-to-check",
+        default="qwen2.5vl:7b,qwen2.5vl:3b,llama3.2-vision:11b,minicpm-v:8b",
+        metavar="CSV",
+        help="Comma-separated Ollama tags to verify are pulled (default: all 4 vision models).",
+    )
+    pf_p.add_argument(
+        "--out", metavar="PATH",
+        help="Output directory for stash files (e.g. gemini_versions.json). Optional.",
+    )
 
     run_p = sub.add_parser("run", help="Run the bake-off.")
     run_p.add_argument("--corpus", required=True, metavar="PATH",
@@ -601,6 +960,11 @@ def main() -> None:
                        help="Output directory (default: meal_planner/eval/results/<today>/).")
     run_p.add_argument("--corpus-glob", metavar="STR",
                        help="Glob pattern to subset the corpus (e.g. '*.png').")
+    run_p.add_argument(
+        "--ollama-base-url", default="http://localhost:11434", metavar="URL",
+        help="Ollama API base URL (default: http://localhost:11434). "
+             "Use with SSH tunnel when running from laptop.",
+    )
 
     args = parser.parse_args()
 
