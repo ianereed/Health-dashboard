@@ -318,8 +318,18 @@ Dogfood 2026-05-04: 2 recipes selected (Anny's Ji dan ×4 + Broccoli & Lemon Ris
 18 consolidated grocery tasks created. Clear confirmed 0 remaining.
 Event-aggregator count 40 — untouched. 142/142 tests pass.
 
-Next UI iteration (not yet scoped): ingredient-edit view so the user can adjust
-quantities per recipe from the console before sending.
+Next UI iterations (not yet scoped):
+
+- **Ingredient-edit view** — adjust per-recipe quantities from the console
+  before sending.
+- **End-to-end success indication on the Recipes tab.** Today the
+  "Job enqueued — task ID: …" toast paints green regardless of what happens
+  inside the kind. The 2026-05-04 quota incident produced a green toast even
+  though 0 Todoist tasks were created. The UI should show the actual outcome
+  of the run: full success (N items sent), partial (M of N), or failure
+  (consolidation 429, Todoist auth, etc.). Likely needs the kind to write
+  its result where the tab can poll (huey result store, or a
+  `meal_planner_runs` table), then a status block on the Recipes tab.
 
 ## Phase 15 — Recipe-photo-LLM bake-off
 
@@ -328,6 +338,25 @@ Claude Haiku-4.5, GPT-4o-mini, local qwen2.5-vl on recipe photo extraction.
 Output: `meal_planner/MODEL_CHOICE.md`.
 
 Entry gate: Anny's Phase 14.7 walkthrough passes end-to-end (SC6).
+
+**Open question — API quota visibility.** Google's Gemini API has no
+programmatic quota-check endpoint; the only signals are 429s at request time,
+the AI Studio dashboard (manual UI), or GCP Console (if linked). On 2026-05-04
+a `meal_planner_send_to_todoist` run silently produced 0 Todoist tasks because
+free-tier `gemini-2.5-flash-lite` RPD (20/day) was exceeded — AI Studio
+showed 24/20. The retry loop in `consolidation.py:_call_gemini` ran 4 attempts,
+each got 429, and RPD is a 24h rolling window so retries can't recover. The
+kind then returned an empty grocery list, the UI showed a green "Job enqueued"
+toast, and we only noticed because Todoist was empty. If Gemini wins the
+bake-off, we need a local API counter (per-key, per-day, per-model) so we can
+tell when the daily limit is closing in before users hit silent failures.
+Whichever provider wins should get the same treatment.
+
+Bonus side-fix surfaced by this incident: the error log line at
+`consolidation.py:77-83` prints `Gemini HTTP ?: <empty>` for any 4xx/5xx
+response, because `if resp` evaluates `Response.__bool__` which returns
+`self.ok` (False for 4xx/5xx). Should print `resp.status_code` and
+`resp.text[:200]` unconditionally. One-line fix; do whenever convenient.
 
 ## Phase 16+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
 
