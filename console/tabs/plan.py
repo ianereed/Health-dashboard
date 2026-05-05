@@ -1,17 +1,18 @@
-"""Recipes tab — recipe browser with Send-to-Todoist (Phase 14.6).
+"""Recipes tab — multi-recipe grid with Send-to-Todoist (Phase 14.9).
 
-Renders a recipe browser with a scale slider and a "Send to Todoist" button
-that enqueues the meal_planner_send_to_todoist Job kind.
-Tab label stays "Plan" until Phase 14.6 renames it to "Recipes".
+Renders an editable grid of all recipes. Each row has a Send checkbox and a
+Servings input. Clicking "Send checked recipes to Todoist" consolidates the
+selected recipes via Gemini and creates one Todoist task per grocery line.
 """
 from __future__ import annotations
 
 import time
 
+import pandas as pd
 import streamlit as st
 
 from meal_planner import db as _db
-from meal_planner import queries, scaling
+from meal_planner import queries
 
 _CONFIRM_CLEAR_TTL = 10  # seconds before the confirm state resets
 
@@ -33,52 +34,56 @@ def _render_inner() -> None:
         )
         return
 
-    recipes = queries.list_recipes()
+    recipes = queries.list_recipes()  # already sorted alphabetically by title
     if not recipes:
         st.info("Recipe database exists but contains no recipes yet.")
         return
 
-    recipe_map = {r.title: r for r in recipes}
-    chosen_title = st.selectbox("Recipe", list(recipe_map.keys()))
-    recipe = recipe_map[chosen_title]
+    recipe_ids = [r.id for r in recipes]
+    df = pd.DataFrame({
+        "Send": [False] * len(recipes),
+        "Recipe": [r.title for r in recipes],
+        "Servings": [r.base_servings for r in recipes],
+    })
 
-    col_slider, col_btn = st.columns([3, 1])
-    with col_slider:
-        target = st.slider(
-            "Servings",
-            min_value=1,
-            max_value=20,
-            value=recipe.base_servings,
-        )
-    with col_btn:
-        st.write("")  # vertical alignment spacer
-        send_clicked = st.button("Send to Todoist", type="primary")
+    edited_df = st.data_editor(
+        df,
+        column_config={
+            "Send": st.column_config.CheckboxColumn("Send"),
+            "Recipe": st.column_config.TextColumn("Recipe"),
+            "Servings": st.column_config.NumberColumn(
+                "Servings", min_value=1, max_value=20, step=1
+            ),
+        },
+        disabled=["Recipe"],
+        num_rows="fixed",
+        use_container_width=True,
+        hide_index=True,
+    )
 
-    st.caption(f"Base: {recipe.base_servings} servings → scaling to {target}")
+    if st.button(
+        "Send checked recipes to Todoist", type="primary", use_container_width=True
+    ):
+        checked = [
+            [recipe_ids[i], int(row["Servings"])]
+            for i, row in edited_df.iterrows()
+            if row["Send"]
+        ]
+        if not checked:
+            st.warning("No recipes selected. Check at least one box.")
+        else:
+            try:
+                from jobs.kinds.meal_planner_send_to_todoist import (
+                    meal_planner_send_to_todoist,
+                )
 
-    if send_clicked:
-        try:
-            from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
-            result = meal_planner_send_to_todoist([[recipe.id, target]])
-            st.success(f"Job enqueued — task ID: {getattr(result, 'id', '?')}")
-        except Exception as exc:
-            st.error(f"Failed to enqueue: {exc}")
+                result = meal_planner_send_to_todoist(checked)
+                st.success(f"Job enqueued — task ID: {getattr(result, 'id', '?')}")
+            except Exception as exc:
+                st.error(f"Failed to enqueue: {exc}")
 
     st.divider()
     _render_clear_button()
-
-    ingredients = scaling.scale_ingredients(recipe, target)
-    if not ingredients:
-        st.write("No ingredients recorded for this recipe.")
-        return
-
-    rows = []
-    for ing in ingredients:
-        qty_str = f"{ing.qty_per_serving:.2g}" if ing.qty_per_serving is not None else "—"
-        unit_str = ing.unit or ""
-        rows.append({"Ingredient": ing.name, "Qty": qty_str, "Unit": unit_str})
-
-    st.table(rows)
 
 
 def _render_clear_button() -> None:
