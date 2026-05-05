@@ -75,9 +75,13 @@ tasks remain, 40 event-aggregator tasks untouched.
 created → 0 after clear. Event-aggregator 40 tasks untouched. All 142 tests
 pass.
 
-**Next: Phase 15 — Recipe-photo-LLM bake-off** (research only, entry gate:
-Anny's SC6 walkthrough). Ian may insert a new phase before Phase 15 — ask him
-for scope before starting.
+**Phase 14.10 DONE 2026-05-05 ✅** — Bypass consolidation; raw scaled lines
+per recipe (commit `090bb69`). Kind no longer calls Gemini. Each ingredient
+emits as a separate Todoist task with `(Recipe Name)` suffix. 143/143 tests
+pass.
+
+**Next: Phase 14.11 — Tag filter on Recipes tab** (Option B: `st.pills` +
+AND/OR toggle above the grid). Entry gate: Phase 14.10 deployed to mini.
 
 Pre-flight (confirm health before starting new work):
 
@@ -331,6 +335,29 @@ Next UI iterations (not yet scoped):
   its result where the tab can poll (huey result store, or a
   `meal_planner_runs` table), then a status block on the Recipes tab.
 
+## Phase 14.10 — Recipes tab: bypass consolidation (DONE 2026-05-05 ✅)
+
+`meal_planner_send_to_todoist` no longer calls Gemini consolidation.
+Shipped in commit `090bb69`:
+- `jobs/kinds/meal_planner_send_to_todoist.py` — removed `consolidate_for_grocery`
+  import and `GEMINI_API_KEY` env read. For each `(recipe, target_servings)` pair,
+  calls `scale_ingredients()` and emits one Todoist task per ingredient.
+  Title format: `"{qty:.4g} {unit} {name} ({Recipe.title})"` (unit omitted if None,
+  qty omitted if None). Section routing uses `Ingredient.todoist_section` directly;
+  unknown/None section falls back to first key in `TODOIST_SECTIONS`.
+  `source_id` per task is `f"recipes:{recipe.id}"`.
+- `jobs/tests/test_meal_planner_send_to_todoist.py` — rewritten with 5 tests,
+  no Gemini mocks. 143/143 tests pass.
+- `consolidation.py` left on disk untouched.
+
+## Phase 14.11 — Recipes tab: tag filter (next)
+
+Add a tag filter above the recipe grid. Option B: `st.pills` multi-select
+showing all distinct tags from the DB, plus an AND/OR radio toggle.
+Grid filters live (no page reload needed — Streamlit re-renders on widget change).
+
+Entry gate: Phase 14.10 deployed to mini.
+
 ## Phase 15 — Recipe-photo-LLM bake-off
 
 Research only — no production code. Compare Gemini-flash, Gemini-flash-lite,
@@ -352,12 +379,6 @@ bake-off, we need a local API counter (per-key, per-day, per-model) so we can
 tell when the daily limit is closing in before users hit silent failures.
 Whichever provider wins should get the same treatment.
 
-Bonus side-fix surfaced by this incident: the error log line at
-`consolidation.py:77-83` prints `Gemini HTTP ?: <empty>` for any 4xx/5xx
-response, because `if resp` evaluates `Response.__bool__` which returns
-`self.ok` (False for 4xx/5xx). Should print `resp.status_code` and
-`resp.text[:200]` unconditionally. One-line fix; do whenever convenient.
-
 ## Phase 16+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
 
 Each chunk gets the next sequential Phase number when claimed.
@@ -365,6 +386,15 @@ Numbers are not pre-allocated.
 
 ## Long-term future scope (re-evaluate later)
 
+- **Re-enable recipe consolidation as an opt-in feature** — V0 sends raw
+  scaled lines per recipe (Phase 14.10). Future phase: add a `Consolidate`
+  checkbox on the Recipes tab; when set, call
+  `meal_planner.consolidation.consolidate_for_grocery` with proper success
+  indication, quota awareness, and partial-failure UX. Side-fix the
+  `if resp` `Response.__bool__` bug in `consolidation.py:77-83` at the same
+  time (prints `Gemini HTTP ?: <empty>` for 4xx/5xx because `if resp` returns
+  False for non-2xx; should print `resp.status_code` and `resp.text[:200]`
+  unconditionally).
 - **Tier-2 LLM orchestrator** — design at `future-architecture-upgrade.md`.
   CEO-approved 2026-04-30 but **demoted to long-term scope on 2026-05-01.**
   Phase 12's `Job` framework already absorbs most of its plumbing (typed

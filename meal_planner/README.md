@@ -15,7 +15,7 @@ in the Mini Ops console with a Send-to-Todoist grocery list flow.
   console/tabs/plan.py  (Streamlit Recipes tab at :8503/?tab=recipes)
         │
         ▼
-  meal_planner_send_to_todoist Job kind → Gemini consolidation → Todoist tasks
+  meal_planner_send_to_todoist Job kind → scale_ingredients() → Todoist tasks (one per ingredient)
 ```
 
 Phase 14 introduced the Python package (renamed from `meal-planner/`) and
@@ -38,12 +38,14 @@ Use the explicit `?tab=recipes` parameter — tab clicks don't update the URL
 
 ## Status
 
-**V0 live (Phase 14.9, 2026-05-04).** 16 recipes seeded from the existing
+**V0 live (Phase 14.10, 2026-05-05).** 16 recipes seeded from the existing
 Sheet. Multi-recipe grid (st.data_editor): check one or more recipes, adjust
-servings, click "Send checked recipes to Todoist". The consumer runs the
-Gemini consolidation pass and creates one Todoist task per grocery line under
-the `meal-planner` label. "Clear all meal-planner items from Todoist" button
-available for cleanup.
+servings, click "Send checked recipes to Todoist". Creates one Todoist task
+per scaled ingredient under the `meal-planner` label. Ingredients are NOT
+merged across recipes — duplicates appear as separate tasks, each tagged with
+`(Recipe Name)` so you can tell them apart. No Gemini call on send; Gemini
+consolidation is available in `consolidation.py` for a future opt-in phase.
+"Clear all meal-planner items from Todoist" button available for cleanup.
 
 Phase 15+ direction: `Mac-mini/PLAN.md`.
 
