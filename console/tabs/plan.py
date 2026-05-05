@@ -34,8 +34,28 @@ def _render_inner() -> None:
         )
         return
 
-    recipes = queries.list_recipes()  # already sorted alphabetically by title
+    all_tags = queries.list_all_tags()
+    if all_tags:
+        selected_tags = st.pills(
+            "Filter by tag", options=all_tags, selection_mode="multi"
+        )
+        tag_logic = st.radio(
+            "Match", ["AND", "OR"], horizontal=True, index=0
+        )
+    else:
+        selected_tags = []
+        tag_logic = "AND"
+
+    recipes = queries.search_recipes(
+        tags=tuple(selected_tags), tag_logic=tag_logic.lower()
+    )
     if not recipes:
+        if selected_tags:
+            st.info(
+                "No recipes match the current tag filter. "
+                "Adjust selection above."
+            )
+            return
         st.info("Recipe database exists but contains no recipes yet.")
         return
 

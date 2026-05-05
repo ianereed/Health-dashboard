@@ -59,37 +59,77 @@ def get_recipe(recipe_id: int, *, path: Path | None = None) -> Recipe:
     return _row_to_recipe(row)
 
 
+def list_all_tags(*, path: Path | None = None) -> list[str]:
+    """Return tags linked to ≥1 recipe, sorted alphabetically.
+
+    Tags with no recipe links are excluded so the filter UI never shows
+    pills the user can't usefully click.
+    """
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT t.name
+            FROM tags t
+            JOIN recipe_tags rt ON rt.tag_id = t.id
+            ORDER BY t.name
+            """
+        ).fetchall()
+    return [r["name"] for r in rows]
+
+
 def search_recipes(
     *,
     name_substring: str = "",
     tags: tuple[str, ...] = (),
+    tag_logic: str = "and",
     path: Path | None = None,
 ) -> list[Recipe]:
-    """Return recipes matching name_substring AND all given tags, ordered by title.
+    """Return recipes matching name_substring and the given tag filter.
 
     name_substring is a case-insensitive LIKE match on the title.
-    tags filters to recipes that have ALL listed tags.
-    Both filters are AND-combined; empty values mean "no filter on that axis".
+    tags filters to recipes based on tag_logic:
+      "and" — recipes that have ALL listed tags (default).
+      "or"  — recipes that have ANY listed tag.
+    Both filters are AND-combined; empty tags means no tag filter.
+    Raises ValueError for unrecognized tag_logic.
     """
+    if tag_logic not in ("and", "or"):
+        raise ValueError(f"tag_logic must be 'and' or 'or', got {tag_logic!r}")
     tags = tuple(dict.fromkeys(tags))  # dedupe while preserving order
     p = path or _db.DB_PATH
     with _db._get_conn(p) as conn:
         if tags:
             placeholders = ",".join("?" * len(tags))
-            rows = conn.execute(
-                f"""
-                SELECT r.* FROM recipes r
-                WHERE lower(r.title) LIKE lower(?)
-                  AND (
-                    SELECT COUNT(DISTINCT t.name)
-                    FROM recipe_tags rt
-                    JOIN tags t ON t.id = rt.tag_id
-                    WHERE rt.recipe_id = r.id AND t.name IN ({placeholders})
-                  ) = ?
-                ORDER BY r.title COLLATE NOCASE
-                """,
-                (f"%{name_substring}%", *tags, len(tags)),
-            ).fetchall()
+            if tag_logic == "and":
+                rows = conn.execute(
+                    f"""
+                    SELECT r.* FROM recipes r
+                    WHERE lower(r.title) LIKE lower(?)
+                      AND (
+                        SELECT COUNT(DISTINCT t.name)
+                        FROM recipe_tags rt
+                        JOIN tags t ON t.id = rt.tag_id
+                        WHERE rt.recipe_id = r.id AND t.name IN ({placeholders})
+                      ) = ?
+                    ORDER BY r.title COLLATE NOCASE
+                    """,
+                    (f"%{name_substring}%", *tags, len(tags)),
+                ).fetchall()
+            else:  # or
+                rows = conn.execute(
+                    f"""
+                    SELECT r.* FROM recipes r
+                    WHERE lower(r.title) LIKE lower(?)
+                      AND EXISTS (
+                        SELECT 1 FROM recipe_tags rt
+                        JOIN tags t ON t.id = rt.tag_id
+                        WHERE rt.recipe_id = r.id AND t.name IN ({placeholders})
+                      )
+                    ORDER BY r.title COLLATE NOCASE
+                    """,
+                    (f"%{name_substring}%", *tags),
+                ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT * FROM recipes WHERE lower(title) LIKE lower(?) ORDER BY title COLLATE NOCASE",

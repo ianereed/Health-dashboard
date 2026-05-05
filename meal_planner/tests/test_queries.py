@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from meal_planner.db import add_recipe_tag, init_db, insert_ingredient, insert_recipe
-from meal_planner.queries import get_recipe, list_recipes, search_recipes
+from meal_planner.queries import get_recipe, list_all_tags, list_recipes, search_recipes
 
 
 @pytest.fixture
@@ -98,6 +98,54 @@ def test_search_recipes_tags_dedup(seeded_db: Path) -> None:
     deduped = search_recipes(tags=("asian", "asian"), path=seeded_db)
     single = search_recipes(tags=("asian",), path=seeded_db)
     assert {r.id for r in deduped} == {r.id for r in single}
+
+
+def test_list_all_tags_returns_sorted_distinct_linked_tags(db_path: Path) -> None:
+    """Orphan tags (no recipe_tags row) are excluded; result is sorted."""
+    import sqlite3 as _sqlite3
+
+    r1 = insert_recipe(title="A", base_servings=2, path=db_path)
+    r2 = insert_recipe(title="B", base_servings=2, path=db_path)
+    add_recipe_tag(r1, "soup", path=db_path)
+    add_recipe_tag(r1, "asian", path=db_path)
+    add_recipe_tag(r2, "hearty", path=db_path)
+
+    # Insert orphan tag directly — no recipe_tags row
+    conn = _sqlite3.connect(db_path)
+    conn.execute("INSERT OR IGNORE INTO tags (name) VALUES ('orphan')")
+    conn.commit()
+    conn.close()
+
+    tags = list_all_tags(path=db_path)
+    assert tags == ["asian", "hearty", "soup"]
+    assert "orphan" not in tags
+
+
+def test_search_recipes_tag_logic_or_returns_union(seeded_db: Path) -> None:
+    """OR logic returns all recipes that have ANY of the listed tags."""
+    # Chicken Soup: asian, soup; Beef Stew: hearty; Veggie Stir Fry: asian, vegetarian
+    results = search_recipes(tags=("soup", "vegetarian"), tag_logic="or", path=seeded_db)
+    titles = {r.title for r in results}
+    assert titles == {"Chicken Soup", "Veggie Stir Fry"}
+
+
+def test_search_recipes_tag_logic_and_returns_intersection(seeded_db: Path) -> None:
+    """AND logic returns only recipes that have ALL listed tags."""
+    results = search_recipes(tags=("asian", "vegetarian"), tag_logic="and", path=seeded_db)
+    assert [r.title for r in results] == ["Veggie Stir Fry"]
+
+
+def test_search_recipes_empty_tags_returns_all_regardless_of_logic(seeded_db: Path) -> None:
+    """Empty tags tuple returns all recipes for both AND and OR logic."""
+    and_results = search_recipes(tags=(), tag_logic="and", path=seeded_db)
+    or_results = search_recipes(tags=(), tag_logic="or", path=seeded_db)
+    assert len(and_results) == 3
+    assert len(or_results) == 3
+
+
+def test_search_recipes_invalid_tag_logic_raises(seeded_db: Path) -> None:
+    with pytest.raises(ValueError, match="tag_logic"):
+        search_recipes(tags=("asian",), tag_logic="xor", path=seeded_db)
 
 
 def test_get_recipe_roundtrip_all_fields(db_path: Path) -> None:
