@@ -66,9 +66,13 @@ at `http://homeserver:8503/?tab=recipes`. SC6 verified by Ian dogfood
 (11 consolidated tasks landed in Todoist correctly); Anny walkthrough still
 pending.
 
-**Next: Phase 14.8 — V0 polish.** Add "Clear all meal-planner items from
-Todoist" button on the Recipes tab (one Job kind + UI button + two-click
-confirm). Then Phase 15 — Recipe-photo-LLM bake-off (research only).
+**Phase 14.8 DONE 2026-05-05 ✅** — Clear-all Todoist button shipped (commit
+`952f4a2`). Dogfood: 12 tasks created → clear job fired → 0 meal-planner
+tasks remain, 40 event-aggregator tasks untouched.
+
+**Next: Phase 15 — Recipe-photo-LLM bake-off** (research only, entry gate:
+Anny's SC6 walkthrough). Ian may insert a new phase before Phase 15 — ask him
+for scope before starting.
 
 Pre-flight (confirm health before starting new work):
 
@@ -279,26 +283,21 @@ Success Criteria status: SC1 ✅ deep-link works, SC2 16 recipes (dataset
 ceiling), SC3 tags TBD post-Anny-walkthrough, SC4 ✅ dropdown+slider+button
 render, SC5 ✅ kind registered in huey, SC6 deferred to Anny walkthrough.
 
-## Phase 14.8 — Recipes tab: "Clear all meal-planner items from Todoist" button (next)
+## Phase 14.8 — Recipes tab: "Clear all meal-planner items from Todoist" button (DONE 2026-05-05 ✅)
 
-V0 polish. Add a "Clear all meal-planner items from Todoist" button below the
-Send-to-Todoist button on the Recipes tab. One-click cleanup of test/dogfood
-runs and accumulated grocery items.
+V0 polish. "Clear all meal-planner items from Todoist" button below Send-to-Todoist.
 
-Scope:
-- New Job kind `jobs/kinds/meal_planner_clear_todoist.py` — lists tasks via
-  `GET /api/v1/tasks?label=meal-planner`, then `DELETE` each. Returns
-  `{"deleted": N, "failed": M}`.
-- UI in `console/tabs/plan.py` — secondary button with two-click confirmation
-  pattern (first click sets "are you sure?" state, second click fires the job).
-- Safety: scope-by-label only — never touches event-aggregator or
-  finance-monitor tasks. The `?label=meal-planner` filter is the load-bearing
-  guarantee.
+Shipped in commit `952f4a2`:
+- `jobs/kinds/meal_planner_clear_todoist.py` — lists via `GET /api/v1/tasks?label=meal-planner`
+  (paginated via next_cursor), deletes per-task, collects failures, returns
+  `{"deleted": N, "failed": M, "failed_ids": [...]}`. `LABEL = "meal-planner"` is
+  a module-level constant (safety boundary).
+- `jobs/tests/test_meal_planner_clear_todoist.py` — 7 tests; all pass.
+- `console/tabs/plan.py` — two-click confirm button (st.session_state timestamp pattern).
+- `meal_planner/README.md` — note that label is a code constant, not an env var.
 
-Out of scope: undo, soft-delete grace period, per-recipe clear. V2 territory.
-
-Reference: `reference_todoist_read_api.md` has the verified v1 API recipe
-(`/rest/v2/` is deprecated as of 2026 — use `/api/v1/`).
+Dogfood 2026-05-05: 12 meal-planner tasks created, clear job fired, 0 tasks remaining,
+40 event-aggregator tasks untouched. Exit gate: all 10 items passed.
 
 ## Phase 15 — Recipe-photo-LLM bake-off
 

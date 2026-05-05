@@ -71,7 +71,13 @@ meal_planner/
 apps-script/          — legacy Google Apps Script source (read-only fallback)
 ```
 
-Job kind: `jobs/kinds/meal_planner_send_to_todoist.py`
+Job kinds:
+- `jobs/kinds/meal_planner_send_to_todoist.py` — creates grocery tasks in Todoist
+- `jobs/kinds/meal_planner_clear_todoist.py` — deletes all tasks labeled `meal-planner`
+
+The Todoist label (`meal-planner`) is a **code constant** in `meal_planner_clear_todoist.py`,
+not an env var. This is intentional — the label is the safety boundary that prevents the
+clear job from touching event-aggregator or finance-monitor tasks.
 
 ## Env vars (meal_planner/.env on mini)
 
