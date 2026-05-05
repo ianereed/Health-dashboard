@@ -62,10 +62,13 @@ Approach C2 (fills Phase 12's reserved Plan slot). Locked decisions in
 `project_meal_planner_expansion_priority.md` memory.
 
 **Phase 14 DONE 2026-05-04 ✅** — Meal-planner V0 shipped. Recipes tab live
-at `http://homeserver:8503/?tab=recipes`. Anny walkthrough pending (SC6).
+at `http://homeserver:8503/?tab=recipes`. SC6 verified by Ian dogfood
+(11 consolidated tasks landed in Todoist correctly); Anny walkthrough still
+pending.
 
-**Next phase: Phase 15 — Recipe-photo-LLM bake-off.** Research only,
-output `meal_planner/MODEL_CHOICE.md`. Entry gate: Anny walkthrough passes.
+**Next: Phase 14.8 — V0 polish.** Add "Clear all meal-planner items from
+Todoist" button on the Recipes tab (one Job kind + UI button + two-click
+confirm). Then Phase 15 — Recipe-photo-LLM bake-off (research only).
 
 Pre-flight (confirm health before starting new work):
 
@@ -276,7 +279,28 @@ Success Criteria status: SC1 ✅ deep-link works, SC2 16 recipes (dataset
 ceiling), SC3 tags TBD post-Anny-walkthrough, SC4 ✅ dropdown+slider+button
 render, SC5 ✅ kind registered in huey, SC6 deferred to Anny walkthrough.
 
-## Phase 15 — Recipe-photo-LLM bake-off (next)
+## Phase 14.8 — Recipes tab: "Clear all meal-planner items from Todoist" button (next)
+
+V0 polish. Add a "Clear all meal-planner items from Todoist" button below the
+Send-to-Todoist button on the Recipes tab. One-click cleanup of test/dogfood
+runs and accumulated grocery items.
+
+Scope:
+- New Job kind `jobs/kinds/meal_planner_clear_todoist.py` — lists tasks via
+  `GET /api/v1/tasks?label=meal-planner`, then `DELETE` each. Returns
+  `{"deleted": N, "failed": M}`.
+- UI in `console/tabs/plan.py` — secondary button with two-click confirmation
+  pattern (first click sets "are you sure?" state, second click fires the job).
+- Safety: scope-by-label only — never touches event-aggregator or
+  finance-monitor tasks. The `?label=meal-planner` filter is the load-bearing
+  guarantee.
+
+Out of scope: undo, soft-delete grace period, per-recipe clear. V2 territory.
+
+Reference: `reference_todoist_read_api.md` has the verified v1 API recipe
+(`/rest/v2/` is deprecated as of 2026 — use `/api/v1/`).
+
+## Phase 15 — Recipe-photo-LLM bake-off
 
 Research only — no production code. Compare Gemini-flash, Gemini-flash-lite,
 Claude Haiku-4.5, GPT-4o-mini, local qwen2.5-vl on recipe photo extraction.
