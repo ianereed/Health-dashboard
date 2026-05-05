@@ -408,6 +408,29 @@ Numbers are not pre-allocated.
   time (prints `Gemini HTTP ?: <empty>` for 4xx/5xx because `if resp` returns
   False for non-2xx; should print `resp.status_code` and `resp.text[:200]`
   unconditionally).
+- **Job priority tiers (huey queue overhaul)** — Surfaced 2026-05-05 when
+  a meal-planner test job sat behind a `nas_intake_scan` (~360s) on a
+  single-worker consumer. User-initiated jobs should not wait minutes
+  behind background scans. Three tiers to introduce:
+  - **Highest / preempt** — interrupts whatever is running and executes
+    the desired job immediately. Reserved for user-initiated foreground
+    actions (e.g. `meal_planner_send_to_todoist`,
+    `meal_planner_clear_todoist`, dispatcher commands). Implementation
+    likely needs a second worker or a cooperative-cancel hook in
+    long-running kinds — huey doesn't preempt natively.
+  - **High / jump-to-front** — does not interrupt the current task but
+    moves to position 0 of pending so it runs the moment Worker-1 frees
+    up. Good fit for chat-triggered jobs that are tolerant of seconds-
+    not-minutes of latency.
+  - **Always-last / starvable** — continuously bumped to the bottom of
+    pending as long as anything else is queued. Fits jobs that should
+    only run when the system is otherwise idle (deep NAS scans, large
+    photo OCR backfills, restic prune). Implies the consumer needs to
+    re-rank pending on each pop, not just FIFO drain.
+  Map every existing kind to a tier as part of the phase. Open question:
+  is this a huey configuration change (priorities + multiple workers),
+  a custom dispatcher in front of huey, or a switch to a different queue
+  backend? Decide during the phase.
 - **Tier-2 LLM orchestrator** — design at `future-architecture-upgrade.md`.
   CEO-approved 2026-04-30 but **demoted to long-term scope on 2026-05-01.**
   Phase 12's `Job` framework already absorbs most of its plumbing (typed
