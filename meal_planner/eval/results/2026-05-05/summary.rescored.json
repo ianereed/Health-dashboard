@@ -1,0 +1,32 @@
+{
+  "models": {
+    "qwen2.5vl:7b": {
+      "n": 11,
+      "orig_f1": 0.38711284901216253,
+      "rescored_f1": 0.6979160462310036,
+      "orig_title": 0.7272727272727273,
+      "rescored_title": 0.7272727272727273
+    },
+    "qwen2.5vl:3b": {
+      "n": 10,
+      "orig_f1": 0.4195197860872918,
+      "rescored_f1": 0.7683007915044529,
+      "orig_title": 0.8,
+      "rescored_title": 0.8
+    },
+    "llama3.2-vision:11b": {
+      "n": 10,
+      "orig_f1": 0.33270485636302727,
+      "rescored_f1": 0.6420829098437794,
+      "orig_title": 0.8,
+      "rescored_title": 0.8
+    },
+    "minicpm-v:8b": {
+      "n": 12,
+      "orig_f1": 0.29557338559896107,
+      "rescored_f1": 0.5165083024741122,
+      "orig_title": 0.8333333333333334,
+      "rescored_title": 0.875
+    }
+  }
+}

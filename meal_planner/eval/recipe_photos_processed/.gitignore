@@ -1,0 +1,8 @@
+# Personal recipe photos — excluded from version control (same policy as recipe_photos/)
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.png
+*.PNG
+*.golden.json

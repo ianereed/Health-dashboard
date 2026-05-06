@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "git_commit": "bcbbd7a6f478af1b2e85b6247d7bfd2a90d165df",
+  "corpus_checksum": "cf316574e0e54e2a58526d24ceaf4283e10bcbbaa3e346a8e836a9d481063cdd",
+  "ran_at": "2026-05-05T23:57:38.836457+00:00",
+  "ollama_model_digests": {
+    "minicpm-v:8b": "c92bfad01205",
+    "llama3.2-vision:11b": "6f2f9757ae97",
+    "qwen2.5vl:3b": "fb90415cde1e",
+    "qwen2.5vl:7b": "5ced39dfa4ba"
+  },
+  "models": [
+    {
+      "model": "qwen2.5vl:7b",
+      "n_scored": 11,
+      "title_accuracy_mean": 0.7272727272727273,
+      "ingredient_f1_mean": 0.38711284901216253,
+      "parse_correctness_mean": 0.475,
+      "structural_validity_rate": 0.8181818181818182,
+      "latency_p50_warm": 74.78,
+      "latency_p95_warm": 79.414,
+      "cold_load_p50": 78.815,
+      "cold_load_p95": 97.227,
+      "latency_gates": {
+        "phone_strict_30s": false,
+        "phone_90s": false,
+        "nas_600s": true
+      },
+      "n_retries_total": 6,
+      "peak_rss_gb": 12.803,
+      "errors": [
+        {
+          "photo": "IMG_9965.JPG",
+          "error": "parse_fail: raw at meal_planner/eval/results/2026-05-05/raw/IMG_9965-qwen2.5vl_7b.txt"
+        }
+      ]
+    },
+    {
+      "model": "qwen2.5vl:3b",
+      "n_scored": 10,
+      "title_accuracy_mean": 0.8,
+      "ingredient_f1_mean": 0.4195197860872918,
+      "parse_correctness_mean": 0.3908333333333333,
+      "structural_validity_rate": 0.9,
+      "latency_p50_warm": 56.929,
+      "latency_p95_warm": 61.583,
+      "cold_load_p50": 59.994,
+      "cold_load_p95": 68.418,
+      "latency_gates": {
+        "phone_strict_30s": false,
+        "phone_90s": true,
+        "nas_600s": true
+      },
+      "n_retries_total": 3,
+      "peak_rss_gb": 10.406,
+      "errors": [
+        {
+          "photo": "IMG_9957.JPG",
+          "error": "parse_fail: raw at meal_planner/eval/results/2026-05-05/raw/IMG_9957-qwen2.5vl_3b.txt"
+        },
+        {
+          "photo": "IMG_9965.JPG",
+          "error": "parse_fail: raw at meal_planner/eval/results/2026-05-05/raw/IMG_9965-qwen2.5vl_3b.txt"
+        }
+      ]
+    },
+    {
+      "model": "llama3.2-vision:11b",
+      "n_scored": 10,
+      "title_accuracy_mean": 0.8,
+      "ingredient_f1_mean": 0.33270485636302727,
+      "parse_correctness_mean": 0.31,
+      "structural_validity_rate": 0.9,
+      "latency_p50_warm": 50.707,
+      "latency_p95_warm": 69.861,
+      "cold_load_p50": 52.873,
+      "cold_load_p95": 85.012,
+      "latency_gates": {
+        "phone_strict_30s": false,
+        "phone_90s": true,
+        "nas_600s": true
+      },
+      "n_retries_total": 4,
+      "peak_rss_gb": 8.477,
+      "errors": [
+        {
+          "photo": "IMG_9956.JPG",
+          "error": "parse_fail: raw at meal_planner/eval/results/2026-05-05/raw/IMG_9956-llama3.2-vision_11b.txt"
+        },
+        {
+          "photo": "IMG_9960.JPG",
+          "error": "parse_fail: raw at meal_planner/eval/results/2026-05-05/raw/IMG_9960-llama3.2-vision_11b.txt"
+        }
+      ]
+    },
+    {
+      "model": "minicpm-v:8b",
+      "n_scored": 12,
+      "title_accuracy_mean": 0.8333333333333334,
+      "ingredient_f1_mean": 0.29557338559896107,
+      "parse_correctness_mean": 0.09375,
+      "structural_validity_rate": 1.0,
+      "latency_p50_warm": 23.62,
+      "latency_p95_warm": 27.531,
+      "cold_load_p50": 25.7455,
+      "cold_load_p95": 29.641,
+      "latency_gates": {
+        "phone_strict_30s": true,
+        "phone_90s": true,
+        "nas_600s": true
+      },
+      "n_retries_total": 2,
+      "peak_rss_gb": 4.24,
+      "errors": []
+    }
+  ]
+}

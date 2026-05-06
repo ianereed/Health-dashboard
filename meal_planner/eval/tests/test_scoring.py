@@ -200,3 +200,122 @@ def test_title_casefold_apostrophe():
     }
     result = _score(extracted, golden, synonyms, fractions)
     assert result["title_accuracy"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Bipartite matching tests
+# ---------------------------------------------------------------------------
+
+def test_bipartite_jaccard_basic():
+    """'salt' vs 'kosher salt' and 'garlic' vs 'minced garlic' both match via bipartite."""
+    from bake_off import _match_bipartite  # noqa: F401 (already imported via _score)
+    synonyms = _synonyms()
+    extracted = [
+        {"qty": None, "unit": None, "name": "salt"},
+        {"qty": None, "unit": None, "name": "garlic"},
+    ]
+    golden = [
+        {"qty": None, "unit": None, "name": "kosher salt"},
+        {"qty": None, "unit": None, "name": "minced garlic"},
+    ]
+    result = _score(
+        {"title": "T", "ingredients": extracted, "tags": []},
+        {"title": "T", "ingredients": golden, "tags": []},
+        synonyms,
+        _fractions(),
+    )
+    assert result["ingredient_f1"] == 1.0
+
+
+def test_bipartite_no_double_match():
+    """Each golden can be matched at most once — 2 'salt' extracted vs 3 'salt' golden → 2 matches."""
+    synonyms = _synonyms()
+    extracted = [
+        {"qty": None, "unit": None, "name": "salt"},
+        {"qty": None, "unit": None, "name": "salt"},
+    ]
+    golden = [
+        {"qty": None, "unit": None, "name": "salt for eggs"},
+        {"qty": None, "unit": None, "name": "salt for cooking"},
+        {"qty": None, "unit": None, "name": "kosher salt"},
+    ]
+    result = _score(
+        {"title": "T", "ingredients": extracted, "tags": []},
+        {"title": "T", "ingredients": golden, "tags": []},
+        synonyms,
+        _fractions(),
+    )
+    # 2 extracted, 3 golden, 2 matched → precision=1.0, recall=2/3
+    assert result["ingredient_precision"] == 1.0
+    assert abs(result["ingredient_recall"] - 2 / 3) < 1e-9
+
+
+def test_bipartite_chicken_thigh_vs_breast_miss():
+    """'chicken thigh' must NOT match 'chicken breast' (Jaccard < 0.5)."""
+    synonyms = _synonyms()
+    result = _score(
+        {"title": "T", "ingredients": [{"qty": None, "unit": None, "name": "chicken thigh"}], "tags": []},
+        {"title": "T", "ingredients": [{"qty": None, "unit": None, "name": "chicken breast"}], "tags": []},
+        synonyms,
+        _fractions(),
+    )
+    assert result["ingredient_f1"] == 0.0
+
+
+def test_long_golden_short_extracted_match():
+    """'short-grain white rice' extracted matches long golden name with parens+post-comma descriptor."""
+    synonyms = _synonyms()
+    result = _score(
+        {
+            "title": "T",
+            "ingredients": [{"qty": "7.5", "unit": "oz", "name": "short-grain white rice"}],
+            "tags": [],
+        },
+        {
+            "title": "T",
+            "ingredients": [
+                {
+                    "qty": "7.5",
+                    "unit": "oz",
+                    "name": "short-grain white rice (about 7 1/2 oz), rinsed until water runs clear",
+                }
+            ],
+            "tags": [],
+        },
+        synonyms,
+        _fractions(),
+    )
+    assert result["ingredient_f1"] == 1.0
+
+
+def test_title_three_tier():
+    """3-tier title: exact=1.0, near-match=0.5, different=0.0."""
+    synonyms = _synonyms()
+    fractions = _fractions()
+
+    # Tier 1: exact (casefold) match
+    r = _score(
+        {"title": "Marinated Chicken Drumsticks", "ingredients": [], "tags": []},
+        {"title": "marinated chicken drumsticks", "ingredients": [], "tags": []},
+        synonyms, fractions,
+    )
+    assert r["title_accuracy"] == 1.0
+
+    # Tier 2: token Jaccard ≥ 0.7 → 0.5
+    # "Marinated Chicken Drumsticks" vs "Mom's Marinated Chicken Drumsticks"
+    # tokens: {marinated, chicken, drumsticks} vs {moms, marinated, chicken, drumsticks}
+    # jaccard = 3/4 = 0.75 ≥ 0.7
+    r = _score(
+        {"title": "Marinated Chicken Drumsticks", "ingredients": [], "tags": []},
+        {"title": "Mom's Marinated Chicken Drumsticks", "ingredients": [], "tags": []},
+        synonyms, fractions,
+    )
+    assert r["title_accuracy"] == 0.5
+
+    # Tier 3: completely different → 0.0
+    r = _score(
+        {"title": "Beef Stew", "ingredients": [], "tags": []},
+        {"title": "Chocolate Cake", "ingredients": [], "tags": []},
+        synonyms, fractions,
+    )
+    assert r["title_accuracy"] == 0.0

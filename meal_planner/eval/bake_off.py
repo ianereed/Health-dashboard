@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import pathlib
 import re
@@ -44,6 +45,31 @@ _KNOWN_OLLAMA_VISION_TAGS = frozenset({
 })
 
 _SYNONYMS: dict | None = None
+
+_F1_MATCH_THRESHOLD = 0.5
+_STOPWORDS_DROP = {
+    "fresh", "large", "medium", "small", "chopped", "sliced", "minced",
+    "roughly", "finely", "packed", "lightly", "tightly", "about", "of",
+    "the", "a", "an", "with", "for", "into", "optional", "dairy", "free",
+}
+_IDENTITY_KEEP = {
+    "smoked", "kosher", "boneless", "skinless", "unsalted", "dark",
+    "semisweet", "bittersweet", "whole", "coarse", "short-grain", "low-sodium",
+}
+
+_NUM_CTX_TABLE: dict[tuple[str, str], int] = {
+    ("minicpm-v:8b", "vision"): 4096,
+    ("qwen2.5vl:3b", "vision"): 6144,
+    ("qwen2.5vl:7b", "vision"): 4096,
+    ("llama3.2-vision:11b", "vision"): 4096,
+    ("qwen2.5:3b", "text"): 6144,
+    ("qwen2.5:7b", "text"): 4096,
+    ("llama3.1:8b", "text"): 4096,
+}
+
+
+def _ollama_default_ctx_for(model: str, role: str = "vision") -> int:
+    return _NUM_CTX_TABLE.get((model, role), 4096)
 
 
 def _load_synonyms() -> dict:
@@ -87,9 +113,100 @@ def _normalize_ingredient_name(name: str, synonyms: Optional[dict] = None) -> st
     return mapping.get(normalized, normalized)
 
 
+def _tokenize_ingredient_name(name: str, synonyms: dict) -> set[str]:
+    """Return a set of canonical tokens for bipartite Jaccard matching.
+
+    Strips parentheticals, post-comma descriptors, stopwords, and maps
+    full-name synonyms before tokenizing.
+    """
+    # Strip parentheticals
+    name = re.sub(r"\([^)]*\)", " ", name)
+
+    # Strip post-comma descriptor when head has ≥2 tokens
+    if "," in name:
+        head = name.split(",", 1)[0]
+        if len(head.strip().split()) >= 2:
+            name = head
+
+    # Lowercase + strip non-word punctuation
+    name = name.lower()
+    name = re.sub(r"[^\w\s]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+
+    # Build normalized synonym map (keys lowercased + punct-stripped for lookup)
+    syn_map_raw = _build_synonym_map(synonyms)
+    syn_map: dict[str, str] = {}
+    for k, v in syn_map_raw.items():
+        k_norm = re.sub(r"[^\w\s]", " ", k.lower())
+        k_norm = re.sub(r"\s+", " ", k_norm).strip()
+        syn_map[k_norm] = v
+
+    # Try full-name synonym lookup; on hit, replace with canonical
+    canonical = syn_map.get(name)
+    if canonical:
+        name = canonical.lower()
+        name = re.sub(r"[^\w\s]", " ", name)
+        name = re.sub(r"\s+", " ", name).strip()
+
+    # Tokenize, filter stopwords, apply per-token synonym lookup
+    tokens = name.split()
+    result: set[str] = set()
+    for token in tokens:
+        if token in _STOPWORDS_DROP and token not in _IDENTITY_KEEP:
+            continue
+        token = syn_map.get(token, token)
+        result.add(token)
+
+    return result if result else {name}
+
+
+def _match_bipartite(
+    extracted: list, golden: list, synonyms: dict
+) -> tuple[float, float, float, list]:
+    """Greedy bipartite Jaccard matching for ingredient lists.
+
+    Returns (precision, recall, f1, matched_pairs) where
+    matched_pairs = [(extracted_idx, golden_idx, jaccard_score), ...].
+    """
+    if not extracted and not golden:
+        return 1.0, 1.0, 1.0, []
+
+    e_tokens = [_tokenize_ingredient_name(item["name"], synonyms) for item in extracted]
+    g_tokens = [_tokenize_ingredient_name(item["name"], synonyms) for item in golden]
+
+    used_golden: set[int] = set()
+    matched_pairs: list[tuple[int, int, float]] = []
+
+    for ei, et in enumerate(e_tokens):
+        best_score = -1.0
+        best_gi = -1
+        for gi, gt in enumerate(g_tokens):
+            if gi in used_golden:
+                continue
+            if not et and not gt:
+                j = 1.0
+            elif not et or not gt:
+                j = 0.0
+            else:
+                j = len(et & gt) / len(et | gt)
+            if j >= _F1_MATCH_THRESHOLD and j > best_score:
+                best_score = j
+                best_gi = gi
+        if best_gi >= 0:
+            used_golden.add(best_gi)
+            matched_pairs.append((ei, best_gi, best_score))
+
+    n_matched = len(matched_pairs)
+    precision = n_matched / len(extracted) if extracted else 0.0
+    recall = n_matched / len(golden) if golden else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return precision, recall, f1, matched_pairs
+
+
 def _casefold_strip_punct(s: str) -> str:
     """Casefold and strip all non-word punctuation for title comparison."""
-    return re.sub(r"[^\w\s]", "", s).casefold().strip()
+    s = re.sub(r"[^\w\s]", "", s).casefold()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _normalize_qty(q: Optional[str], unicode_fractions: dict) -> Optional[str]:
@@ -217,6 +334,32 @@ def _normalize_unit(u: Optional[str]) -> Optional[str]:
     return _UNIT_MAP.get(s, s)
 
 
+def _validate_schema(d: dict | None) -> tuple[bool, list[str]]:
+    """Check structural validity. Returns (is_valid, errors)."""
+    errors: list[str] = []
+    if not isinstance(d, dict):
+        errors.append("not_a_dict")
+        return False, errors
+    if not isinstance(d.get("title"), str) and d.get("title") is not None:
+        errors.append("title_not_str")
+        return False, errors
+    if not isinstance(d.get("ingredients"), list):
+        errors.append("ingredients_not_list")
+        return False, errors
+    if not isinstance(d.get("tags"), list):
+        errors.append("tags_not_list")
+        return False, errors
+    for item in d["ingredients"]:
+        if not isinstance(item, dict):
+            errors.append("ingredient_item_not_dict")
+            return False, errors
+        for k in ("qty", "unit", "name"):
+            if k not in item:
+                errors.append(f"ingredient_missing_key_{k}")
+                return False, errors
+    return True, errors
+
+
 def _score(extracted: dict, golden: dict, synonyms: dict, unicode_fractions: dict) -> dict:
     """Score extracted recipe output against golden.
 
@@ -224,32 +367,15 @@ def _score(extracted: dict, golden: dict, synonyms: dict, unicode_fractions: dic
         title_accuracy, ingredient_f1, ingredient_precision, ingredient_recall,
         parse_correctness, structural_validity, errors
     """
-    errors: list[str] = []
+    is_valid, errors = _validate_schema(extracted)
+    # _score historically required title to be a non-null string for downstream comparisons.
+    # _validate_schema allows title=null (matches the "not a recipe" sentinel in the prompt);
+    # for scoring purposes we still treat title=null as structurally invalid.
+    if is_valid and not isinstance(extracted.get("title"), str):
+        is_valid = False
+        errors.append("title_not_str")
 
-    # Structural validity check
-    def _is_valid_structure(d: dict) -> bool:
-        if not isinstance(d, dict):
-            return False
-        if not isinstance(d.get("title"), str):
-            errors.append("title_not_str")
-            return False
-        if not isinstance(d.get("ingredients"), list):
-            errors.append("ingredients_not_list")
-            return False
-        if not isinstance(d.get("tags"), list):
-            errors.append("tags_not_list")
-            return False
-        for item in d["ingredients"]:
-            if not isinstance(item, dict):
-                errors.append("ingredient_item_not_dict")
-                return False
-            for k in ("qty", "unit", "name"):
-                if k not in item:
-                    errors.append(f"ingredient_missing_key_{k}")
-                    return False
-        return True
-
-    if not _is_valid_structure(extracted):
+    if not is_valid:
         return {
             "title_accuracy": 0.0,
             "ingredient_f1": 0.0,
@@ -260,48 +386,30 @@ def _score(extracted: dict, golden: dict, synonyms: dict, unicode_fractions: dic
             "errors": errors,
         }
 
-    # Title accuracy
-    title_accuracy = (
-        1.0
-        if _casefold_strip_punct(extracted["title"]) == _casefold_strip_punct(golden["title"])
-        else 0.0
+    # 3-tier title scoring
+    et_clean = _casefold_strip_punct(extracted["title"])
+    gt_clean = _casefold_strip_punct(golden["title"])
+    if et_clean == gt_clean:
+        title_accuracy = 1.0
+    else:
+        et_tokens = set(et_clean.split())
+        gt_tokens = set(gt_clean.split())
+        if et_tokens and gt_tokens:
+            jaccard = len(et_tokens & gt_tokens) / len(et_tokens | gt_tokens)
+        else:
+            jaccard = 0.0
+        title_accuracy = 0.5 if jaccard >= 0.7 else 0.0
+
+    # Bipartite Jaccard ingredient matching
+    precision, recall, f1, matched_pairs = _match_bipartite(
+        extracted["ingredients"], golden["ingredients"], synonyms
     )
 
-    # Build normalized name sets (set-F1: dedupe by name)
-    def _name_set(ingredients: list[dict]) -> set[str]:
-        return {_normalize_ingredient_name(item["name"], synonyms) for item in ingredients}
-
-    e_names = _name_set(extracted["ingredients"])
-    g_names = _name_set(golden["ingredients"])
-
-    overlap = e_names & g_names
-
-    if len(e_names) == 0 and len(g_names) == 0:
-        precision = 1.0
-        recall = 1.0
-    else:
-        precision = len(overlap) / len(e_names) if e_names else 0.0
-        recall = len(overlap) / len(g_names) if g_names else 0.0
-
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
-
-    # Parse correctness: for each matched name, compare qty+unit
+    # Parse correctness: for each matched pair, compare qty+unit
     parse_scores: list[float] = []
-    for name in overlap:
-        # Find first matching ingredient in each (set-dedup means one representative)
-        e_item = next(
-            (i for i in extracted["ingredients"]
-             if _normalize_ingredient_name(i["name"], synonyms) == name),
-            None,
-        )
-        g_item = next(
-            (i for i in golden["ingredients"]
-             if _normalize_ingredient_name(i["name"], synonyms) == name),
-            None,
-        )
-        if e_item is None or g_item is None:
-            continue
-
+    for ei, gi, _j in matched_pairs:
+        e_item = extracted["ingredients"][ei]
+        g_item = golden["ingredients"][gi]
         qty_match = _qty_matches(e_item.get("qty"), g_item.get("qty"), unicode_fractions)
         unit_match = _normalize_unit(e_item.get("unit")) == _normalize_unit(g_item.get("unit"))
         parse_scores.append((float(qty_match) + float(unit_match)) / 2.0)
@@ -367,6 +475,9 @@ class RunRow:
     extracted: Optional[dict] = None
     error: Optional[str] = None
     score: Optional[dict] = None
+    n_retries: Optional[int] = None
+    retry_latency_s: Optional[float] = None
+    is_warm: Optional[bool] = None
 
 
 def _append_row(out_dir: pathlib.Path, row: RunRow) -> None:
@@ -426,7 +537,14 @@ def _resolve_resume_dir(arg: str, results_root: pathlib.Path) -> pathlib.Path:
     return p
 
 
-def _summarize(out_dir: pathlib.Path) -> dict:
+def _summarize(
+    out_dir: pathlib.Path,
+    *,
+    pairs: list | None = None,
+    ran_at: str | None = None,
+    peak_rss_by_model: dict | None = None,
+    ollama_base_url: str = "http://localhost:11434",
+) -> dict:
     """Read runs.jsonl, compute per-model stats, write summary.json."""
     runs_path = out_dir / "runs.jsonl"
     rows: list[dict] = []
@@ -441,6 +559,8 @@ def _summarize(out_dir: pathlib.Path) -> dict:
     for row in rows:
         m = row["model"]
         by_model.setdefault(m, []).append(row)
+
+    rss = peak_rss_by_model or {}
 
     model_stats: list[dict] = []
     for model, model_rows in by_model.items():
@@ -474,6 +594,24 @@ def _summarize(out_dir: pathlib.Path) -> dict:
             if n_scored else None
         )
 
+        cold_p95 = _p95(cold_loads)
+        # Latency gates by channel:
+        #   phone_strict_30s: informational only — original aspirational target
+        #   phone_90s: gate for the "snap photo → Todoist" path
+        #   nas_600s: gate for the "drop file in intake folder" path
+        latency_gates = {
+            "phone_strict_30s": (cold_p95 is not None and cold_p95 <= 30.0),
+            "phone_60s": (cold_p95 is not None and cold_p95 <= 60.0),
+            "phone_90s": (cold_p95 is not None and cold_p95 <= 90.0),
+            "nas_600s": (cold_p95 is not None and cold_p95 <= 600.0),
+        } if cold_p95 is not None else None
+
+        n_retries_total = sum(
+            r.get("n_retries") or 0
+            for r in model_rows
+            if r.get("status") in ("scored", "parsed_ok", "parse_fail")
+        )
+
         model_stats.append({
             "model": model,
             "n_scored": n_scored,
@@ -481,20 +619,182 @@ def _summarize(out_dir: pathlib.Path) -> dict:
             "ingredient_f1_mean": _mean_key("ingredient_f1"),
             "parse_correctness_mean": _mean_key("parse_correctness"),
             "structural_validity_rate": validity_rate,
-            "latency_p50": _p50(latencies),
-            "latency_p95": _p95(latencies),
+            "latency_p50_warm": _p50(latencies),
+            "latency_p95_warm": _p95(latencies),
             "cold_load_p50": _p50(cold_loads),
-            "cold_load_p95": _p95(cold_loads),
+            "cold_load_p95": cold_p95,
+            "latency_gates": latency_gates,
+            "n_retries_total": n_retries_total,
+            "peak_rss_gb": rss.get(model),
             "errors": errors,
         })
 
+    # Bench-level metadata
+    git_commit: str | None = None
+    try:
+        git_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=_REPO_ROOT,
+        )
+        if git_result.returncode == 0:
+            git_commit = git_result.stdout.strip()
+    except Exception:
+        pass
+
+    corpus_checksum: str | None = None
+    if pairs:
+        all_files: list[pathlib.Path] = []
+        for photo_path, golden_path in pairs:
+            all_files.append(photo_path)
+            all_files.append(golden_path)
+        all_files.sort(key=lambda p: p.name)
+        h = hashlib.sha256()
+        for fp in all_files:
+            h.update(fp.name.encode())
+            h.update(fp.read_bytes())
+        corpus_checksum = h.hexdigest()
+
+    ollama_model_digests: dict | None = None
+    exercised = set(by_model.keys())
+    if exercised:
+        try:
+            ol_result = subprocess.run(
+                ["ollama", "list"],
+                capture_output=True, text=True,
+            )
+            if ol_result.returncode == 0:
+                digests: dict[str, str] = {}
+                for line in ol_result.stdout.splitlines()[1:]:  # skip header
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[0] in exercised:
+                        digests[parts[0]] = parts[1]
+                if digests:
+                    ollama_model_digests = digests
+        except Exception:
+            pass
+
     summary = {
         "schema_version": _RUNS_SCHEMA_VERSION,
+        "git_commit": git_commit,
+        "corpus_checksum": corpus_checksum,
+        "ran_at": ran_at,
+        "ollama_model_digests": ollama_model_digests,
         "models": model_stats,
     }
     summary_path = out_dir / "summary.json"
     with summary_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
+    return summary
+
+
+def _summarize_warm(
+    out_dir: pathlib.Path,
+    *,
+    model: str,
+    pairs: list | None = None,
+    ran_at: str | None = None,
+    ollama_base_url: str = "http://localhost:11434",
+) -> dict:
+    """Read runs.jsonl for a warm-reuse run, compute warm-specific stats, write summary.json."""
+    runs_path = out_dir / "runs.jsonl"
+    rows: list[dict] = []
+    with runs_path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+
+    scored = [r for r in rows if r.get("status") == "scored" and r.get("score")]
+    cold_rows = [r for r in scored if r.get("is_warm") is False or r.get("cold_load_s") is not None]
+    warm_rows = [r for r in scored if r.get("is_warm") is True]
+
+    cold_load_s_val = cold_rows[0].get("cold_load_s") if cold_rows else None
+    warm_latencies = sorted([r["latency_s"] for r in warm_rows if r.get("latency_s") is not None])
+
+    def _p50(vals: list) -> Optional[float]:
+        return statistics.median(vals) if vals else None
+
+    def _p95(vals: list) -> Optional[float]:
+        if not vals:
+            return None
+        idx = max(0, int(len(vals) * 0.95) - 1)
+        return sorted(vals)[idx]
+
+    warm_p50 = _p50(warm_latencies)
+    warm_p95 = _p95(warm_latencies)
+    warm_max = max(warm_latencies) if warm_latencies else None
+    total_wall_s = None
+    if cold_load_s_val is not None and warm_latencies:
+        total_wall_s = round(cold_load_s_val + sum(warm_latencies), 3)
+
+    def _mean_key(key: str) -> Optional[float]:
+        vals = [r["score"][key] for r in scored if r.get("score", {}).get(key) is not None]
+        return statistics.mean(vals) if vals else None
+
+    n_scored = len(scored)
+    validity_rate = (
+        sum(1 for r in scored if r.get("score", {}).get("structural_validity")) / n_scored
+        if n_scored else None
+    )
+
+    latency_gates: dict = {}
+    if total_wall_s is not None:
+        latency_gates["nas_3600s"] = total_wall_s <= 3600
+    if warm_max is not None:
+        latency_gates["warm_max_120s"] = warm_max <= 120
+
+    git_commit: str | None = None
+    try:
+        git_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=_REPO_ROOT,
+        )
+        if git_result.returncode == 0:
+            git_commit = git_result.stdout.strip()
+    except Exception:
+        pass
+
+    corpus_checksum: str | None = None
+    if pairs:
+        all_files: list[pathlib.Path] = []
+        for photo_path, golden_path in pairs:
+            all_files.append(photo_path)
+            if isinstance(golden_path, pathlib.Path) and golden_path.exists():
+                all_files.append(golden_path)
+        all_files.sort(key=lambda p: p.name)
+        h = hashlib.sha256()
+        for fp in all_files:
+            h.update(fp.name.encode())
+            if fp.exists():
+                h.update(fp.read_bytes())
+        corpus_checksum = h.hexdigest()
+
+    model_entry = {
+        "model": model,
+        "n_scored": n_scored,
+        "n_cold": len(cold_rows),
+        "n_warm": len(warm_rows),
+        "cold_load_s": cold_load_s_val,
+        "warm_latency_p50": warm_p50,
+        "warm_latency_p95": warm_p95,
+        "warm_latency_max": warm_max,
+        "total_wall_s": total_wall_s,
+        "ingredient_f1_mean": _mean_key("ingredient_f1"),
+        "title_accuracy_mean": _mean_key("title_accuracy"),
+        "structural_validity_rate": validity_rate,
+        "latency_gates": latency_gates,
+    }
+
+    summary = {
+        "schema_version": _RUNS_SCHEMA_VERSION,
+        "ran_at": ran_at,
+        "git_commit": git_commit,
+        "corpus_checksum": corpus_checksum,
+        "models": [model_entry],
+    }
+
+    summary_path = out_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 
 
@@ -526,76 +826,143 @@ def _unload_ollama(model: str, base_url: str) -> None:
     time.sleep(2)
 
 
-def _call_ollama_vision(
+_OLLAMA_HTTP_TIMEOUT_S = 600
+
+
+def _ollama_one_call(
     model: str,
-    image_path: pathlib.Path,
+    image_b64: str,
     prompt: str,
-    base_url: str = "http://localhost:11434",
-) -> tuple[dict | None, dict]:
-    """Call Ollama vision API with a single image. Returns (parsed_json_or_None, metadata).
+    base_url: str,
+    num_ctx: int,
+    keep_alive: str | int = "10s",
+) -> tuple[dict | None, dict, str]:
+    """Single Ollama call. Returns (parsed_dict_or_None, per_call_metadata, raw_response_text).
 
-    metadata keys: latency_s, cold_load_s (set by _cold_call_ollama), eval_count,
-    raw_response (the full Ollama response body text).
-
-    HTTP errors (including 429) are never collapsed into a parsed result — they always
-    return (None, metadata). This is the regression gate for the 2026-05-04 incident
-    where a 429 with empty body silently produced {}.
+    per_call_metadata keys: latency_s, eval_count, raw_response, http_status.
     """
-    with image_path.open("rb") as f:
-        image_b64 = base64.b64encode(f.read()).decode("ascii")
-
     body = {
         "model": model,
         "prompt": prompt,
         "stream": False,
         "format": "json",
         "images": [image_b64],
-        "keep_alive": "10s",
-        "options": {"temperature": 0.1},
+        "keep_alive": keep_alive,
+        "options": {"temperature": 0.1, "num_ctx": num_ctx},
     }
+    md: dict = {"latency_s": None, "eval_count": None, "raw_response": None, "http_status": None}
+
+    t0 = time.monotonic()
+    try:
+        r = requests.post(f"{base_url}/api/generate", json=body, timeout=_OLLAMA_HTTP_TIMEOUT_S)
+    except requests.RequestException as exc:
+        md["latency_s"] = round(time.monotonic() - t0, 3)
+        md["raw_response"] = str(exc)
+        return None, md, str(exc)
+
+    md["latency_s"] = round(time.monotonic() - t0, 3)
+    md["http_status"] = r.status_code
+
+    if r.status_code != 200:
+        md["raw_response"] = f"HTTP {r.status_code}: {r.text[:1000]}"
+        return None, md, md["raw_response"]
+
+    raw_text = r.text
+    md["raw_response"] = raw_text
+
+    try:
+        resp_json = r.json()
+    except ValueError:
+        return None, md, raw_text
+
+    md["eval_count"] = resp_json.get("eval_count")
+    response_text = resp_json.get("response", "") or ""
+
+    try:
+        parsed = json.loads(response_text)
+    except (json.JSONDecodeError, ValueError):
+        return None, md, response_text
+
+    if not isinstance(parsed, dict):
+        return None, md, response_text
+
+    return parsed, md, response_text
+
+
+def _call_ollama_vision(
+    model: str,
+    image_path: pathlib.Path,
+    prompt: str,
+    base_url: str = "http://localhost:11434",
+    num_ctx: int | None = None,
+    keep_alive: str | int = "10s",
+) -> tuple[dict | None, dict]:
+    """Call Ollama vision API with a single image. Returns (parsed_json_or_None, metadata).
+
+    Retries once on schema validation failure (parse-fail or schema-fail), feeding back the
+    malformed response to the model with an explicit "your output failed validation" prompt.
+
+    metadata keys: latency_s (first call only), cold_load_s (set by _cold_call_ollama),
+    eval_count (first call), raw_response (final response body), n_retries (0 or 1),
+    retry_latency_s (None if no retry).
+
+    HTTP errors (including 429) are never collapsed into a parsed result — they always
+    return (None, metadata). This is the regression gate for the 2026-05-04 incident
+    where a 429 with empty body silently produced {}.
+    """
+    if num_ctx is None:
+        num_ctx = _ollama_default_ctx_for(model, "vision")
+
+    with image_path.open("rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode("ascii")
 
     metadata: dict = {
         "latency_s": None,
         "cold_load_s": None,
         "eval_count": None,
         "raw_response": None,
+        "n_retries": 0,
+        "retry_latency_s": None,
     }
 
-    t0 = time.monotonic()
-    try:
-        r = requests.post(f"{base_url}/api/generate", json=body, timeout=180)
-    except requests.RequestException as exc:
-        metadata["latency_s"] = round(time.monotonic() - t0, 3)
-        metadata["raw_response"] = str(exc)
+    parsed, md1, raw1 = _ollama_one_call(model, image_b64, prompt, base_url, num_ctx, keep_alive)
+    metadata["latency_s"] = md1["latency_s"]
+    metadata["eval_count"] = md1["eval_count"]
+    metadata["raw_response"] = md1["raw_response"]
+
+    # Decide whether to retry: HTTP non-200 is unrecoverable; otherwise, validate the parsed
+    # output against the schema. Retry only when first call returned a parseable-but-malformed
+    # response (parse fail or schema fail) — not when the model is unreachable / rate-limited.
+    if md1.get("http_status") and md1["http_status"] != 200:
         return None, metadata
 
-    metadata["latency_s"] = round(time.monotonic() - t0, 3)
+    is_valid, schema_errors = _validate_schema(parsed)
+    if is_valid:
+        return parsed, metadata
 
-    if r.status_code != 200:
-        # Do NOT attempt to parse non-200 responses as JSON.
-        metadata["raw_response"] = f"HTTP {r.status_code}: {r.text[:1000]}"
+    # Retry: same image, augmented prompt with the malformed response and explicit error list.
+    err_summary = ", ".join(schema_errors) if schema_errors else "could not parse as JSON"
+    truncated_raw = (raw1 or "")[:1500]
+    retry_prompt = (
+        f"{prompt}\n\n"
+        f"---\n"
+        f"Your previous response failed schema validation: {err_summary}.\n"
+        f"Previous response was:\n{truncated_raw}\n\n"
+        f"Return ONLY valid JSON matching the schema above. "
+        f"Every ingredient must have qty, unit, AND name keys."
+    )
+    parsed2, md2, _raw2 = _ollama_one_call(model, image_b64, retry_prompt, base_url, num_ctx, keep_alive)
+    metadata["n_retries"] = 1
+    metadata["retry_latency_s"] = md2.get("latency_s")
+    if parsed2 is None:
         return None, metadata
 
-    raw_text = r.text
-    metadata["raw_response"] = raw_text
-
-    try:
-        resp_json = r.json()
-    except ValueError:
-        return None, metadata
-
-    metadata["eval_count"] = resp_json.get("eval_count")
-    response_text = resp_json.get("response", "")
-
-    try:
-        parsed = json.loads(response_text)
-    except (json.JSONDecodeError, ValueError):
-        return None, metadata
-
-    if not isinstance(parsed, dict):
-        return None, metadata
-
-    return parsed, metadata
+    # Replace raw_response with the retry's body so the parsed_ok row reflects what we used.
+    # If parsed2 is parseable but still schema-invalid, surface it anyway — _score will mark
+    # structural_validity=False, which is more useful signal than dropping it as parse_fail.
+    metadata["raw_response"] = md2.get("raw_response")
+    metadata["eval_count"] = md2.get("eval_count")
+    return parsed2, metadata
 
 
 def _cold_call_ollama(
@@ -603,15 +970,18 @@ def _cold_call_ollama(
     image_path: pathlib.Path,
     prompt: str,
     base_url: str = "http://localhost:11434",
+    num_ctx: int | None = None,
 ) -> tuple[dict | None, dict]:
     """Unload model then call — measures cold-start latency.
 
     Mirrors Mac-mini/benchmark_models.py:_cold_load (line 243).
     cold_load_s includes the 2s sleep from _unload_ollama plus inference time.
     """
+    if num_ctx is None:
+        num_ctx = _ollama_default_ctx_for(model, "vision")
     t0 = time.monotonic()
     _unload_ollama(model, base_url)
-    parsed, metadata = _call_ollama_vision(model, image_path, prompt, base_url)
+    parsed, metadata = _call_ollama_vision(model, image_path, prompt, base_url, num_ctx)
     metadata["cold_load_s"] = round(time.monotonic() - t0, 3)
     return parsed, metadata
 
@@ -769,9 +1139,11 @@ def _dispatch_provider(
     """Route model string to the correct provider and return (parsed, metadata)."""
     if model.startswith("ollama:"):
         tag = model[len("ollama:"):]
-        return _cold_call_ollama(tag, photo_path, prompt, ollama_base_url)
+        num_ctx = _ollama_default_ctx_for(tag, "vision")
+        return _cold_call_ollama(tag, photo_path, prompt, ollama_base_url, num_ctx)
     if model in _KNOWN_OLLAMA_VISION_TAGS:
-        return _cold_call_ollama(model, photo_path, prompt, ollama_base_url)
+        num_ctx = _ollama_default_ctx_for(model, "vision")
+        return _cold_call_ollama(model, photo_path, prompt, ollama_base_url, num_ctx)
     if model.startswith("gemini-"):
         raise NotImplementedError("gemini lands in C5")
     if model == "llama-3.2-90b-vision-preview":
@@ -780,6 +1152,8 @@ def _dispatch_provider(
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    ran_at = datetime.now(timezone.utc).isoformat()
+
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     invalid = _validate_models(models)
     if invalid:
@@ -828,7 +1202,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     prompt = _load_prompt()
 
+    # Log num_ctx for each model so bench output is self-documenting
+    for model in models:
+        tag = model[len("ollama:"):] if model.startswith("ollama:") else model
+        if tag in _KNOWN_OLLAMA_VISION_TAGS or model.startswith("ollama:"):
+            ctx = _ollama_default_ctx_for(tag, "vision")
+            print(f"num_ctx: {model} → {ctx}", file=sys.stderr)
+
     raw_dir = out / "raw"
+    peak_rss_by_model: dict[str, float | None] = {}
 
     for model in models:
         for photo_path, golden in pairs:
@@ -881,11 +1263,14 @@ def cmd_run(args: argparse.Namespace) -> int:
                     model=model, photo=photo_basename, status="parse_fail",
                     latency_s=metadata.get("latency_s"),
                     cold_load_s=metadata.get("cold_load_s"),
+                    n_retries=metadata.get("n_retries"),
+                    retry_latency_s=metadata.get("retry_latency_s"),
                     error=f"parse_fail: raw at {raw_file}",
                     ended_at=ended_at,
                 ))
                 print(
-                    f"parse_fail: {model} {photo_basename}; raw response at {raw_file}",
+                    f"parse_fail: {model} {photo_basename}; raw response at {raw_file} "
+                    f"(retries={metadata.get('n_retries', 0)})",
                     file=sys.stderr,
                 )
                 continue
@@ -896,6 +1281,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                 latency_s=metadata.get("latency_s"),
                 cold_load_s=metadata.get("cold_load_s"),
                 tokens_used=metadata.get("eval_count"),
+                n_retries=metadata.get("n_retries"),
+                retry_latency_s=metadata.get("retry_latency_s"),
                 extracted=parsed,
                 ended_at=ended_at,
             ))
@@ -907,10 +1294,28 @@ def cmd_run(args: argparse.Namespace) -> int:
                 latency_s=metadata.get("latency_s"),
                 cold_load_s=metadata.get("cold_load_s"),
                 tokens_used=metadata.get("eval_count"),
+                n_retries=metadata.get("n_retries"),
+                retry_latency_s=metadata.get("retry_latency_s"),
                 extracted=parsed,
                 score=score,
                 ended_at=ended_at,
             ))
+
+            # Record peak VRAM once per model (after first scored row)
+            if model not in peak_rss_by_model:
+                rss_gb: float | None = None
+                try:
+                    ps_resp = requests.get(f"{args.ollama_base_url}/api/ps", timeout=10)
+                    if ps_resp.status_code == 200:
+                        for m_info in ps_resp.json().get("models", []):
+                            tag = m_info.get("name") or m_info.get("model", "")
+                            if tag == model or tag.startswith(model):
+                                size = m_info.get("size_vram") or m_info.get("size") or 0
+                                rss_gb = round(size / (1024 ** 3), 3)
+                                break
+                except Exception:
+                    pass
+                peak_rss_by_model[model] = rss_gb
 
             f1 = score.get("ingredient_f1", 0.0)
             print(
@@ -919,6 +1324,179 @@ def cmd_run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
+    # _summarize expects (Path, Path) pairs; _load_corpus returns (Path, dict)
+    path_pairs = [
+        (photo_path, photo_path.parent / f"{photo_path.stem}.golden.json")
+        for photo_path, _ in pairs
+    ]
+    _summarize(
+        out,
+        pairs=path_pairs,
+        ran_at=ran_at,
+        peak_rss_by_model=peak_rss_by_model,
+        ollama_base_url=args.ollama_base_url,
+    )
+    print(f"run complete: {out / 'runs.jsonl'}", file=sys.stderr)
+    return 0
+
+
+def cmd_run_warm(args: argparse.Namespace) -> int:
+    """Run a single model over the corpus using warm-reuse: unload once, then hold model warm."""
+    ran_at = datetime.now(timezone.utc).isoformat()
+    model = args.model.strip()
+
+    corpus = pathlib.Path(args.corpus)
+    if not corpus.exists():
+        print(f"corpus path does not exist: {corpus}", file=sys.stderr)
+        return 1
+
+    synonyms = _load_synonyms()
+    fractions = synonyms.get("unicode_fractions", {})
+
+    out = pathlib.Path(args.out) if args.out else (_RESULTS_ROOT / str(date.today()))
+    out.mkdir(parents=True, exist_ok=True)
+
+    pairs = _load_corpus(corpus)
+    if not pairs:
+        print("no photo+golden pairs found in corpus", file=sys.stderr)
+        return 1
+
+    # Resume: skip already-terminal (model, photo) pairs
+    already_done: set[tuple[str, str]] = set()
+    runs_path = out / "runs.jsonl"
+    if runs_path.exists():
+        with runs_path.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("status") in _TERMINAL_STATUSES:
+                    already_done.add((row["model"], row["photo"]))
+
+    num_ctx = args.num_ctx if args.num_ctx else _ollama_default_ctx_for(model, "vision")
+    keep_alive = f"{args.keep_alive_seconds}s"
+    base_url = args.ollama_base_url
+
+    print(f"num_ctx: {model} → {num_ctx}", file=sys.stderr)
+    print(f"keep_alive: {keep_alive}", file=sys.stderr)
+
+    prompt = _load_prompt()
+
+    # Unload once before the batch so the first call is a true cold start
+    _unload_ollama(model, base_url)
+
+    photo_index = 0
+    for photo_path, golden in pairs:
+        photo_basename = photo_path.name
+        if (model, photo_basename) in already_done:
+            print(f"skip (already done): {model} {photo_basename}", file=sys.stderr)
+            photo_index += 1
+            continue
+
+        started_at = datetime.now(timezone.utc).isoformat()
+        is_first = (photo_index == 0)
+
+        _append_row(out, RunRow(
+            model=model, photo=photo_basename, status="pending", started_at=started_at,
+        ))
+        _append_row(out, RunRow(
+            model=model, photo=photo_basename, status="calling",
+        ))
+
+        try:
+            parsed, metadata = _call_ollama_vision(
+                model, photo_path, prompt, base_url, num_ctx, keep_alive=keep_alive,
+            )
+        except Exception as exc:
+            ended_at = datetime.now(timezone.utc).isoformat()
+            _append_row(out, RunRow(
+                model=model, photo=photo_basename, status="provider_error",
+                error=str(exc), ended_at=ended_at, is_warm=not is_first,
+            ))
+            print(f"provider_error: {model} {photo_basename}: {exc}", file=sys.stderr)
+            photo_index += 1
+            continue
+
+        ended_at = datetime.now(timezone.utc).isoformat()
+
+        # Photo 0 (first call after unload): cold_load_s = latency, latency_s = None
+        # Photos 1+ (warm): latency_s = latency, cold_load_s = None
+        if is_first:
+            row_latency_s = None
+            row_cold_load_s = metadata.get("latency_s")
+            row_is_warm = False
+        else:
+            row_latency_s = metadata.get("latency_s")
+            row_cold_load_s = None
+            row_is_warm = True
+
+        if parsed is None:
+            raw_dir = out / "raw"
+            raw_dir.mkdir(exist_ok=True)
+            safe_model = re.sub(r"[^a-zA-Z0-9._-]", "_", model)
+            raw_file = raw_dir / f"{photo_path.stem}-{safe_model}.txt"
+            raw_file.write_text(metadata.get("raw_response") or "", encoding="utf-8")
+            _append_row(out, RunRow(
+                model=model, photo=photo_basename, status="parse_fail",
+                latency_s=row_latency_s,
+                cold_load_s=row_cold_load_s,
+                n_retries=metadata.get("n_retries"),
+                retry_latency_s=metadata.get("retry_latency_s"),
+                error=f"parse_fail: raw at {raw_file}",
+                ended_at=ended_at,
+                is_warm=row_is_warm,
+            ))
+            print(f"parse_fail: {model} {photo_basename} warm={row_is_warm}", file=sys.stderr)
+            photo_index += 1
+            continue
+
+        _append_row(out, RunRow(
+            model=model, photo=photo_basename, status="parsed_ok",
+            latency_s=row_latency_s,
+            cold_load_s=row_cold_load_s,
+            tokens_used=metadata.get("eval_count"),
+            n_retries=metadata.get("n_retries"),
+            retry_latency_s=metadata.get("retry_latency_s"),
+            extracted=parsed,
+            ended_at=ended_at,
+            is_warm=row_is_warm,
+        ))
+
+        score = _score(parsed, golden, synonyms, fractions)
+        _append_row(out, RunRow(
+            model=model, photo=photo_basename, status="scored",
+            latency_s=row_latency_s,
+            cold_load_s=row_cold_load_s,
+            tokens_used=metadata.get("eval_count"),
+            n_retries=metadata.get("n_retries"),
+            retry_latency_s=metadata.get("retry_latency_s"),
+            extracted=parsed,
+            score=score,
+            ended_at=ended_at,
+            is_warm=row_is_warm,
+        ))
+
+        f1 = score.get("ingredient_f1", 0.0)
+        warm_label = "cold" if is_first else "warm"
+        lat_val = row_cold_load_s if is_first else row_latency_s
+        print(
+            f"scored: {model} {photo_basename} f1={f1:.3f} lat={lat_val}s ({warm_label})",
+            file=sys.stderr,
+        )
+        photo_index += 1
+
+    path_pairs = [
+        (photo_path, photo_path.parent / f"{photo_path.stem}.golden.json")
+        for photo_path, _ in pairs
+    ]
+    _summarize_warm(
+        out,
+        model=model,
+        pairs=path_pairs,
+        ran_at=ran_at,
+        ollama_base_url=base_url,
+    )
     print(f"run complete: {out / 'runs.jsonl'}", file=sys.stderr)
     return 0
 
@@ -966,12 +1544,28 @@ def main() -> None:
              "Use with SSH tunnel when running from laptop.",
     )
 
+    warm_p = sub.add_parser("run-warm", help="Warm-reuse bench: unload once, process all photos warm.")
+    warm_p.add_argument("--corpus", required=True, metavar="PATH",
+                        help="Directory of recipe photos + golden.json files.")
+    warm_p.add_argument("--model", required=True, metavar="MODEL",
+                        help="Single Ollama model tag to bench.")
+    warm_p.add_argument("--out", metavar="PATH",
+                        help="Output directory (default: meal_planner/eval/results/<today>/).")
+    warm_p.add_argument("--ollama-base-url", default="http://localhost:11434", metavar="URL",
+                        help="Ollama API base URL (default: http://localhost:11434).")
+    warm_p.add_argument("--num-ctx", type=int, default=None, metavar="INT",
+                        help="Override num_ctx (default: per-model table).")
+    warm_p.add_argument("--keep-alive-seconds", type=int, default=300, metavar="INT",
+                        help="Seconds to keep model warm between photos (default: 300).")
+
     args = parser.parse_args()
 
     if args.command == "preflight":
         sys.exit(cmd_preflight(args))
     elif args.command == "run":
         sys.exit(cmd_run(args))
+    elif args.command == "run-warm":
+        sys.exit(cmd_run_warm(args))
     else:
         parser.print_help()
         sys.exit(1)

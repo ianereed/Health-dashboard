@@ -69,6 +69,80 @@ def test_call_ollama_handles_invalid_json(monkeypatch, tmp_path):
     assert "Sorry" in metadata["raw_response"]
 
 
+def test_retry_on_schema_fail_recovers(monkeypatch, tmp_path):
+    """First response is missing the 'name' key on an ingredient; retry returns valid JSON.
+
+    Asserts the function makes 2 calls, returns the valid retry result, and records
+    n_retries=1 + retry_latency_s in metadata.
+    """
+    photo = tmp_path / "recipe.jpg"
+    photo.write_bytes(b"\xff\xd8\xff")
+
+    bad = {
+        "title": "Test Recipe",
+        "ingredients": [{"qty": "1", "unit": "cup"}],  # missing 'name' key
+        "tags": [],
+    }
+    good = {
+        "title": "Test Recipe",
+        "ingredients": [{"qty": "1", "unit": "cup", "name": "flour"}],
+        "tags": ["baking"],
+    }
+
+    call_count = 0
+
+    def mock_post(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        body = bad if call_count == 1 else good
+        ollama_body = {"model": "qwen2.5vl:3b", "response": json.dumps(body), "eval_count": 11}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = json.dumps(ollama_body)
+        mock_resp.json.return_value = ollama_body
+        return mock_resp
+
+    monkeypatch.setattr(requests, "post", mock_post)
+
+    parsed, metadata = _call_ollama_vision("qwen2.5vl:3b", photo, "extract this recipe")
+
+    assert call_count == 2, "must retry once on schema fail"
+    assert parsed is not None
+    assert parsed["ingredients"][0]["name"] == "flour"
+    assert metadata["n_retries"] == 1
+    assert metadata["retry_latency_s"] is not None and metadata["retry_latency_s"] >= 0
+
+
+def test_no_retry_on_first_call_valid(monkeypatch, tmp_path):
+    """First response is valid → no retry, n_retries stays 0."""
+    photo = tmp_path / "recipe.jpg"
+    photo.write_bytes(b"\xff\xd8\xff")
+
+    good = {
+        "title": "T",
+        "ingredients": [{"qty": "1", "unit": "cup", "name": "flour"}],
+        "tags": [],
+    }
+    call_count = 0
+
+    def mock_post(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        ollama_body = {"model": "qwen2.5vl:3b", "response": json.dumps(good), "eval_count": 5}
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = json.dumps(ollama_body)
+        mock_resp.json.return_value = ollama_body
+        return mock_resp
+
+    monkeypatch.setattr(requests, "post", mock_post)
+
+    _, metadata = _call_ollama_vision("qwen2.5vl:3b", photo, "extract this recipe")
+    assert call_count == 1
+    assert metadata["n_retries"] == 0
+    assert metadata["retry_latency_s"] is None
+
+
 def test_429_no_retry(monkeypatch, tmp_path):
     """429 must not be retried and must not produce a parsed result.
 
