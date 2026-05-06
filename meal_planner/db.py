@@ -48,6 +48,21 @@ CREATE TABLE IF NOT EXISTS recipe_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_recipes_title ON recipes(title);
 CREATE INDEX IF NOT EXISTS idx_ingredients_recipe ON ingredients(recipe_id);
+CREATE TABLE IF NOT EXISTS photos_intake (
+    sha TEXT PRIMARY KEY,
+    source_path TEXT NOT NULL,
+    nas_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+        -- pending | extracting | ok | outlier_pending | parse_fail
+        -- | gemini_pending | gemini_ok | skipped | wedged
+    recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
+    error TEXT,
+    n_retries INTEGER NOT NULL DEFAULT 0,
+    enqueued_at TEXT NOT NULL,
+    completed_at TEXT,
+    extraction_path TEXT      -- "ollama" | "gemini" | NULL
+);
+CREATE INDEX IF NOT EXISTS idx_photos_intake_status ON photos_intake(status);
 """
 
 
