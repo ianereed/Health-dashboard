@@ -161,18 +161,31 @@ same proposal path as text-extracted events.
 |---|---|---|---|---|
 | Pre-classifier | qwen3:14b | `OLLAMA_MODEL` | `PRE_CLASSIFIER_NUM_CTX=2048` | `OLLAMA_KEEP_ALIVE_TEXT=-1` |
 | Text extraction (events + todos) | qwen3:14b | `OLLAMA_MODEL` | `OLLAMA_NUM_CTX_TEXT=16384` | `OLLAMA_KEEP_ALIVE_TEXT=-1` |
-| Vision + per-page OCR | qwen2.5vl:7b | `LOCAL_VISION_MODEL` | `OLLAMA_NUM_CTX_VISION=16384` | `OLLAMA_KEEP_ALIVE_VISION=30s` |
+| Vision + per-page OCR | llama3.2-vision:11b | `LOCAL_VISION_MODEL` | `OLLAMA_NUM_CTX_VISION=4096` | `OLLAMA_KEEP_ALIVE_VISION=30s` |
 | Calendar detection on doc text | qwen3:14b | reuses `OLLAMA_MODEL` | `OLLAMA_NUM_CTX_TEXT` | reuses `OLLAMA_KEEP_ALIVE_TEXT` |
 | Calendar conflict / cluster analysis | none — pure Python | — | — | — |
 
 No cloud fallback (deliberately removed 2026-04-24). All Ollama calls
 use `format:"json"`, `think:False`. Vision pins `temperature:0.1`.
 
-**Both models cannot be hot simultaneously** (24 GB mini RAM budget):
-qwen3 hot ≈ 14 GB, vision hot ≈ 9 GB — together = 23 GB before OS +
-dispatcher + finance-monitor. Worker enforces serial loading via
-`worker._ollama_unload` / `_ollama_warmup` with explicit `keep_alive=0`
-to free memory immediately during a swap (Tier 2.4).
+**Neither model can be hot simultaneously** (24 GB mini RAM budget):
+qwen3 hot ≈ 14 GB, llama3.2-vision:11b hot ≈ 9–10 GB — together = 23–24 GB before OS +
+dispatcher + finance-monitor. Worker enforces serial loading via `_ModelState.swap_to()`
+with explicit `keep_alive=0` to free memory immediately during a swap.
+
+### Vision unification 2026-05-06
+
+Vision model unified from `qwen2.5vl:7b` (ctx=16384) to `llama3.2-vision:11b` (ctx=4096).
+Reason: Phase 15 bake-off showed `llama3.2-vision:11b` has the highest recipe-extraction
+quality (F1=0.754, title=0.909, struct=1.000), and **neither** vision model can coexist
+with `qwen3:14b` anyway (RAM math: 14+9+2=25 GB > 24 GB available). Running two vision
+models offered no architectural benefit. The state machine stays 2-kind (text/vision).
+
+The meal-planner batch pipeline uses a per-call `keep_alive` override (`@requires_model("vision",
+keep_alive=300, batch_hint="drain")`) to hold the model warm across a recipe-photo batch,
+while event-aggregator's one-off OCR calls use the default 30s eviction.
+
+**See:** `meal_planner/eval/PHASE15_NOTES.md` for the bake-off details.
 
 ## 7. Result parsing
 

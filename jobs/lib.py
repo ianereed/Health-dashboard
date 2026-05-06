@@ -322,6 +322,14 @@ class _ModelState:
             return self.vision_model
         raise ValueError(f"unknown model kind {kind!r} (expected 'text' or 'vision')")
 
+    def _ctx_and_keep_alive(self, kind: str, keep_alive_override=None):
+        """Return (ctx, ka) for the given kind, applying override when provided."""
+        ctx = self.text_ctx if kind == "text" else self.vision_ctx
+        ka = keep_alive_override if keep_alive_override is not None else (
+            self.text_keep_alive if kind == "text" else self.vision_keep_alive
+        )
+        return ctx, ka
+
     def _http_post(self, url: str, payload: dict, timeout: int = 120) -> None:
         """POST JSON to url. Extracted for easy monkeypatching in tests."""
         import urllib.request as _urllib
@@ -330,10 +338,13 @@ class _ModelState:
         with _urllib.urlopen(req, timeout=timeout):
             pass
 
-    def swap_to(self, kind: str) -> None:
+    def swap_to(self, kind: str, keep_alive_override=None) -> None:
         """Unload current model (if any) and warmup the target kind.
         Caller MUST hold self._lock.
         Records the swap to model_swaps.jsonl for telemetry.
+
+        keep_alive_override: if provided, replaces the env-based keep_alive for this
+        call only. Useful for meal-planner batch (300s) vs event-agg default (30s).
         """
         target = self.model_for(kind)
         if self._current == target:
@@ -353,8 +364,7 @@ class _ModelState:
             except Exception as exc:
                 logger.warning("model_state: unload %s failed (best-effort): %s", from_model, exc)
 
-        ctx = self.text_ctx if kind == "text" else self.vision_ctx
-        ka = self.text_keep_alive if kind == "text" else self.vision_keep_alive
+        ctx, ka = self._ctx_and_keep_alive(kind, keep_alive_override)
         warmup_ok = False
         try:
             self._http_post(
@@ -372,25 +382,27 @@ class _ModelState:
         # Only commit the loaded-model cache on confirmed warmup success.
         # On failure, set to None so the next ensure() retries instead of no-oping.
         self._current = target if warmup_ok else None
-        record_swap(from_model or "none", target, latency_ms)
+        record_swap(from_model or "none", target, latency_ms, kind=kind)
 
-    def ensure(self, kind: str) -> None:
+    def ensure(self, kind: str, keep_alive_override=None) -> None:
         """Ensure the named model kind is loaded. Caller MUST hold self._lock.
         If a batch of the opposite kind is active, this call is deferred
         (silently returns without swapping).
+
+        keep_alive_override: forwarded to swap_to(); see swap_to() docstring.
         """
         target = self.model_for(kind)
         if self._current == target:
             return
         if self._batch_kinds and kind not in self._batch_kinds:
             return  # deferred; next ensure() after batch clears will swap
-        self.swap_to(kind)
+        self.swap_to(kind, keep_alive_override)
 
 
 _model_state = _ModelState()
 
 
-def record_swap(from_model: str, to_model: str, latency_ms: int) -> None:
+def record_swap(from_model: str, to_model: str, latency_ms: int, kind: str | None = None) -> None:
     """Append a model-swap telemetry record to model_swaps.jsonl."""
     row = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -398,6 +410,8 @@ def record_swap(from_model: str, to_model: str, latency_ms: int) -> None:
         "to": to_model,
         "latency_ms": latency_ms,
     }
+    if kind is not None:
+        row["to_kind"] = kind
     try:
         _MODEL_SWAP_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(_MODEL_SWAP_LOG, "a") as fh:
@@ -406,13 +420,16 @@ def record_swap(from_model: str, to_model: str, latency_ms: int) -> None:
         pass
 
 
-def requires_model(kind: str, batch_hint: str = "") -> Callable:
+def requires_model(kind: str, batch_hint: str = "", keep_alive=None) -> Callable:
     """Ensure the named Ollama model kind is loaded before calling the decorated fn.
 
     kind: "text" or "vision"
     batch_hint="drain": while this function executes, opposite-kind swap requests
     are deferred. Preserves warmup amortization when the same kind is called
     repeatedly (e.g. draining a text queue before switching to vision).
+    keep_alive: if provided, overrides the env-based keep_alive for the warmup call.
+    Use @requires_model("vision", keep_alive=300) for meal-planner batch to hold the
+    model warm longer; omit for event-aggregator's default 30s.
 
     Lazy teardown: no unload on return. The next call to requires_model with the
     opposite kind triggers the swap.
@@ -429,7 +446,7 @@ def requires_model(kind: str, batch_hint: str = "") -> Callable:
             with _model_state._lock:
                 if batch_hint == "drain":
                     _model_state._batch_kinds.add(kind)
-                _model_state.ensure(kind)
+                _model_state.ensure(kind, keep_alive_override=keep_alive)
             try:
                 return fn(*args, **kwargs)
             finally:

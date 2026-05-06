@@ -43,4 +43,16 @@ if [ -f "$(pwd)/meal_planner/.env" ]; then
     unset _line _key _val
 fi
 
+# Load event-aggregator Ollama config (LOCAL_VISION_MODEL, OLLAMA_NUM_CTX_VISION, etc.).
+if [ -f "$(pwd)/event-aggregator/.env" ]; then
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${_line// }" ]] && continue
+        _key="${_line%%=*}"
+        _val="${_line#*=}"
+        export "$_key=$_val"
+    done < "$(pwd)/event-aggregator/.env"
+    unset _line _key _val
+fi
+
 exec "$VENV/bin/huey_consumer" jobs.huey -w 1 -k thread
