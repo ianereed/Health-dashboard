@@ -17,7 +17,6 @@ Known Ollama vision tags: qwen2.5vl:7b, qwen2.5vl:3b, llama3.2-vision:11b, minic
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import pathlib
@@ -25,13 +24,26 @@ import re
 import statistics
 import subprocess
 import sys
-import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from typing import Optional
 
 import requests
 import yaml
+
+# Production extraction helpers live in meal_planner/vision/_ollama.py (Phase 16
+# Chunk 1). Re-imported here under their original `_`-prefixed names so the bake-off
+# CLI + existing tests keep working unchanged.
+from meal_planner.vision._ollama import (
+    NUM_CTX_TABLE as _NUM_CTX_TABLE,
+    _ollama_one_call,
+    call_ollama_vision as _call_ollama_vision,
+    cold_call_ollama as _cold_call_ollama,
+    default_ctx_for as _ollama_default_ctx_for,
+    load_prompt as _load_prompt,
+    unload_ollama as _unload_ollama,
+    validate_schema as _validate_schema,
+)
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
 _SYNONYMS_PATH = pathlib.Path(__file__).parent / "synonyms.yml"
@@ -56,20 +68,6 @@ _IDENTITY_KEEP = {
     "smoked", "kosher", "boneless", "skinless", "unsalted", "dark",
     "semisweet", "bittersweet", "whole", "coarse", "short-grain", "low-sodium",
 }
-
-_NUM_CTX_TABLE: dict[tuple[str, str], int] = {
-    ("minicpm-v:8b", "vision"): 4096,
-    ("qwen2.5vl:3b", "vision"): 6144,
-    ("qwen2.5vl:7b", "vision"): 4096,
-    ("llama3.2-vision:11b", "vision"): 4096,
-    ("qwen2.5:3b", "text"): 6144,
-    ("qwen2.5:7b", "text"): 4096,
-    ("llama3.1:8b", "text"): 4096,
-}
-
-
-def _ollama_default_ctx_for(model: str, role: str = "vision") -> int:
-    return _NUM_CTX_TABLE.get((model, role), 4096)
 
 
 def _load_synonyms() -> dict:
@@ -332,32 +330,6 @@ def _normalize_unit(u: Optional[str]) -> Optional[str]:
         "liter": "l", "l": "l",
     }
     return _UNIT_MAP.get(s, s)
-
-
-def _validate_schema(d: dict | None) -> tuple[bool, list[str]]:
-    """Check structural validity. Returns (is_valid, errors)."""
-    errors: list[str] = []
-    if not isinstance(d, dict):
-        errors.append("not_a_dict")
-        return False, errors
-    if not isinstance(d.get("title"), str) and d.get("title") is not None:
-        errors.append("title_not_str")
-        return False, errors
-    if not isinstance(d.get("ingredients"), list):
-        errors.append("ingredients_not_list")
-        return False, errors
-    if not isinstance(d.get("tags"), list):
-        errors.append("tags_not_list")
-        return False, errors
-    for item in d["ingredients"]:
-        if not isinstance(item, dict):
-            errors.append("ingredient_item_not_dict")
-            return False, errors
-        for k in ("qty", "unit", "name"):
-            if k not in item:
-                errors.append(f"ingredient_missing_key_{k}")
-                return False, errors
-    return True, errors
 
 
 def _score(extracted: dict, golden: dict, synonyms: dict, unicode_fractions: dict) -> dict:
@@ -799,191 +771,10 @@ def _summarize_warm(
 
 
 # ---------------------------------------------------------------------------
-# Ollama vision adapter
+# Ollama vision adapter — extracted to meal_planner/vision/_ollama.py (Phase 16
+# Chunk 1). Re-imported at the top of this file under the original `_`-prefixed
+# names so this CLI keeps working unchanged.
 # ---------------------------------------------------------------------------
-
-_PROMPT_PATH = pathlib.Path(__file__).parent / "recipe_extraction_prompt.txt"
-_PROMPT_TEXT: str | None = None
-
-
-def _load_prompt() -> str:
-    global _PROMPT_TEXT
-    if _PROMPT_TEXT is None:
-        _PROMPT_TEXT = _PROMPT_PATH.read_text(encoding="utf-8").strip()
-    return _PROMPT_TEXT
-
-
-def _unload_ollama(model: str, base_url: str) -> None:
-    """Unload model from GPU. Mirrors Mac-mini/benchmark_models.py:_unload (line 142)."""
-    try:
-        requests.post(
-            f"{base_url}/api/generate",
-            json={"model": model, "keep_alive": 0},
-            timeout=10,
-        )
-    except Exception:
-        pass
-    time.sleep(2)
-
-
-_OLLAMA_HTTP_TIMEOUT_S = 600
-
-
-def _ollama_one_call(
-    model: str,
-    image_b64: str,
-    prompt: str,
-    base_url: str,
-    num_ctx: int,
-    keep_alive: str | int = "10s",
-) -> tuple[dict | None, dict, str]:
-    """Single Ollama call. Returns (parsed_dict_or_None, per_call_metadata, raw_response_text).
-
-    per_call_metadata keys: latency_s, eval_count, raw_response, http_status.
-    """
-    body = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "images": [image_b64],
-        "keep_alive": keep_alive,
-        "options": {"temperature": 0.1, "num_ctx": num_ctx},
-    }
-    md: dict = {"latency_s": None, "eval_count": None, "raw_response": None, "http_status": None}
-
-    t0 = time.monotonic()
-    try:
-        r = requests.post(f"{base_url}/api/generate", json=body, timeout=_OLLAMA_HTTP_TIMEOUT_S)
-    except requests.RequestException as exc:
-        md["latency_s"] = round(time.monotonic() - t0, 3)
-        md["raw_response"] = str(exc)
-        return None, md, str(exc)
-
-    md["latency_s"] = round(time.monotonic() - t0, 3)
-    md["http_status"] = r.status_code
-
-    if r.status_code != 200:
-        md["raw_response"] = f"HTTP {r.status_code}: {r.text[:1000]}"
-        return None, md, md["raw_response"]
-
-    raw_text = r.text
-    md["raw_response"] = raw_text
-
-    try:
-        resp_json = r.json()
-    except ValueError:
-        return None, md, raw_text
-
-    md["eval_count"] = resp_json.get("eval_count")
-    response_text = resp_json.get("response", "") or ""
-
-    try:
-        parsed = json.loads(response_text)
-    except (json.JSONDecodeError, ValueError):
-        return None, md, response_text
-
-    if not isinstance(parsed, dict):
-        return None, md, response_text
-
-    return parsed, md, response_text
-
-
-def _call_ollama_vision(
-    model: str,
-    image_path: pathlib.Path,
-    prompt: str,
-    base_url: str = "http://localhost:11434",
-    num_ctx: int | None = None,
-    keep_alive: str | int = "10s",
-) -> tuple[dict | None, dict]:
-    """Call Ollama vision API with a single image. Returns (parsed_json_or_None, metadata).
-
-    Retries once on schema validation failure (parse-fail or schema-fail), feeding back the
-    malformed response to the model with an explicit "your output failed validation" prompt.
-
-    metadata keys: latency_s (first call only), cold_load_s (set by _cold_call_ollama),
-    eval_count (first call), raw_response (final response body), n_retries (0 or 1),
-    retry_latency_s (None if no retry).
-
-    HTTP errors (including 429) are never collapsed into a parsed result — they always
-    return (None, metadata). This is the regression gate for the 2026-05-04 incident
-    where a 429 with empty body silently produced {}.
-    """
-    if num_ctx is None:
-        num_ctx = _ollama_default_ctx_for(model, "vision")
-
-    with image_path.open("rb") as f:
-        image_b64 = base64.b64encode(f.read()).decode("ascii")
-
-    metadata: dict = {
-        "latency_s": None,
-        "cold_load_s": None,
-        "eval_count": None,
-        "raw_response": None,
-        "n_retries": 0,
-        "retry_latency_s": None,
-    }
-
-    parsed, md1, raw1 = _ollama_one_call(model, image_b64, prompt, base_url, num_ctx, keep_alive)
-    metadata["latency_s"] = md1["latency_s"]
-    metadata["eval_count"] = md1["eval_count"]
-    metadata["raw_response"] = md1["raw_response"]
-
-    # Decide whether to retry: HTTP non-200 is unrecoverable; otherwise, validate the parsed
-    # output against the schema. Retry only when first call returned a parseable-but-malformed
-    # response (parse fail or schema fail) — not when the model is unreachable / rate-limited.
-    if md1.get("http_status") and md1["http_status"] != 200:
-        return None, metadata
-
-    is_valid, schema_errors = _validate_schema(parsed)
-    if is_valid:
-        return parsed, metadata
-
-    # Retry: same image, augmented prompt with the malformed response and explicit error list.
-    err_summary = ", ".join(schema_errors) if schema_errors else "could not parse as JSON"
-    truncated_raw = (raw1 or "")[:1500]
-    retry_prompt = (
-        f"{prompt}\n\n"
-        f"---\n"
-        f"Your previous response failed schema validation: {err_summary}.\n"
-        f"Previous response was:\n{truncated_raw}\n\n"
-        f"Return ONLY valid JSON matching the schema above. "
-        f"Every ingredient must have qty, unit, AND name keys."
-    )
-    parsed2, md2, _raw2 = _ollama_one_call(model, image_b64, retry_prompt, base_url, num_ctx, keep_alive)
-    metadata["n_retries"] = 1
-    metadata["retry_latency_s"] = md2.get("latency_s")
-    if parsed2 is None:
-        return None, metadata
-
-    # Replace raw_response with the retry's body so the parsed_ok row reflects what we used.
-    # If parsed2 is parseable but still schema-invalid, surface it anyway — _score will mark
-    # structural_validity=False, which is more useful signal than dropping it as parse_fail.
-    metadata["raw_response"] = md2.get("raw_response")
-    metadata["eval_count"] = md2.get("eval_count")
-    return parsed2, metadata
-
-
-def _cold_call_ollama(
-    model: str,
-    image_path: pathlib.Path,
-    prompt: str,
-    base_url: str = "http://localhost:11434",
-    num_ctx: int | None = None,
-) -> tuple[dict | None, dict]:
-    """Unload model then call — measures cold-start latency.
-
-    Mirrors Mac-mini/benchmark_models.py:_cold_load (line 243).
-    cold_load_s includes the 2s sleep from _unload_ollama plus inference time.
-    """
-    if num_ctx is None:
-        num_ctx = _ollama_default_ctx_for(model, "vision")
-    t0 = time.monotonic()
-    _unload_ollama(model, base_url)
-    parsed, metadata = _call_ollama_vision(model, image_path, prompt, base_url, num_ctx)
-    metadata["cold_load_s"] = round(time.monotonic() - t0, 3)
-    return parsed, metadata
 
 
 # ---------------------------------------------------------------------------
