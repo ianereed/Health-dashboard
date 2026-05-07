@@ -292,3 +292,73 @@ def test_ingest_skips_non_pending_row(tmp_path, monkeypatch):
     ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
     assert ret["status"] == "skipped_already_handled"
     extract_mock.assert_not_called()
+
+
+def test_ingest_photo_partial_warnings_status_ok_partial(tmp_path, monkeypatch):
+    """When some ingredient qtys are compound, status=ok_partial with warnings JSON."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_partial = ExtractResult(
+        status="ok",
+        parsed={
+            "title": "X",
+            "ingredients": [
+                {"name": "a", "qty": 1, "unit": "cup"},
+                {"name": "b", "qty": "compound thing", "unit": None},
+            ],
+            "tags": [],
+        },
+        latency_s=1.0,
+        error=None,
+        n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_partial)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    assert ret["status"] == "ok_partial"
+    assert ret["warning_count"] == 1
+
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ok_partial"
+    assert db_row.completed_at is not None
+    assert db_row.extraction_warnings is not None
+
+    import json
+    warnings = json.loads(db_row.extraction_warnings)
+    assert len(warnings) == 1
+    assert "compound thing" in warnings[0]
+
+
+def test_ingest_photo_clean_extraction_status_ok(tmp_path, monkeypatch):
+    """When all ingredient qtys are numeric, status=ok with no warnings."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_clean = ExtractResult(
+        status="ok",
+        parsed={
+            "title": "Y",
+            "ingredients": [
+                {"name": "butter", "qty": 2, "unit": "tbsp"},
+                {"name": "flour", "qty": "1/2", "unit": "cup"},
+            ],
+            "tags": [],
+        },
+        latency_s=1.0,
+        error=None,
+        n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_clean)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    assert ret["status"] == "ok"
+    assert ret["warning_count"] == 0
+
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ok"
+    assert db_row.completed_at is not None

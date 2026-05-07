@@ -13,7 +13,7 @@ from pathlib import Path
 from meal_planner.db import DB_PATH, _get_conn, init_db
 
 _VALID_STATUSES = frozenset({
-    "pending", "extracting", "ok",
+    "pending", "extracting", "ok", "ok_partial",
     "parse_fail", "validation_fail", "ollama_error", "timeout",
     "outlier_pending", "gemini_pending", "gemini_ok",
     "skipped", "wedged",
@@ -32,6 +32,7 @@ class IntakeRow:
     enqueued_at: str
     completed_at: str | None
     extraction_path: str | None
+    extraction_warnings: str | None
 
 
 def _row_to_intake(row: sqlite3.Row) -> IntakeRow:
@@ -46,6 +47,7 @@ def _row_to_intake(row: sqlite3.Row) -> IntakeRow:
         enqueued_at=row["enqueued_at"],
         completed_at=row["completed_at"],
         extraction_path=row["extraction_path"],
+        extraction_warnings=row["extraction_warnings"],
     )
 
 
@@ -117,16 +119,17 @@ def mark_status(
     recipe_id: int | None = None,
     error: str | None = None,
     extraction_path: str | None = None,
+    extraction_warnings: str | None = None,
     conn: sqlite3.Connection | None = None,
     db_path: Path | None = None,
 ) -> None:
-    """Update status (and optionally recipe_id/error/extraction_path) for a sha row.
+    """Update status (and optionally recipe_id/error/extraction_path/extraction_warnings) for a sha row.
 
     Sets completed_at when the new status is a terminal one.
     """
     if status not in _VALID_STATUSES:
         raise ValueError(f"unknown status: {status!r}")
-    terminal = {"ok", "skipped", "wedged", "gemini_ok"}
+    terminal = {"ok", "ok_partial", "skipped", "wedged", "gemini_ok"}
     completed_at = datetime.now(timezone.utc).isoformat() if status in terminal else None
 
     sql = """
@@ -135,10 +138,11 @@ def mark_status(
                recipe_id = COALESCE(?, recipe_id),
                error = ?,
                extraction_path = COALESCE(?, extraction_path),
+               extraction_warnings = COALESCE(?, extraction_warnings),
                completed_at = COALESCE(?, completed_at)
          WHERE sha = ?
     """
-    params = (status, recipe_id, error, extraction_path, completed_at, sha)
+    params = (status, recipe_id, error, extraction_path, extraction_warnings, completed_at, sha)
     if conn is not None:
         conn.execute(sql, params)
         return
