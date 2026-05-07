@@ -104,10 +104,14 @@ normalizer; review-fixes pass (`4b38f10`) hardened multi-token units, Pattern 2
 over-fire guards, retry-path normalization, and DB-persisted normalize warnings.
 273/273 tests pass.
 
-**Next: Phase 17 — UI polish.** Tag filter categorized (cuisine/country,
-meat-type/vegetarian, other), Consolidate button on Recipes tab (wires the
-existing `consolidation.py`), alphabetical-sort toggle, Todoist-success indicator
-on the Recipes tab (today's toast fires on enqueue, not on job completion).
+**Phase 17 — UI polish (in progress).**
+
+**Chunk A DONE 2026-05-07** (`b560a6d`) — Categorized tag pills: split the flat
+`st.pills` row into three labeled groups (Cuisine / Meat+diet / Other) driven by
+`meal_planner/tag_categories.py:CATEGORY_MAP`. 6 new tests; 279/279 pass.
+
+**Next: Chunk B** — `st.toggle("Alphabetical")` alpha-sort toggle on Recipes grid.
+Then Chunk C — Todoist-success indicator via huey result polling.
 
 **Then: Phase 18 — Edit recipes via web GUI + Sheet decommission +
 jobs-queue bug fix.** Two workstreams bundled in one phase:
