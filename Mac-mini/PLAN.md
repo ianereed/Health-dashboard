@@ -109,6 +109,23 @@ meat-type/vegetarian, other), Consolidate button on Recipes tab (wires the
 existing `consolidation.py`), alphabetical-sort toggle, Todoist-success indicator
 on the Recipes tab (today's toast fires on enqueue, not on job completion).
 
+**Then: Phase 18 — Edit recipes via web GUI + Sheet decommission +
+jobs-queue bug fix.** Two workstreams bundled in one phase:
+
+1. **Web-edit recipes + decommission the Apps Script Sheet fallback** —
+   move recipe edits into `console/tabs/plan.py`; the Sheet stops being
+   the source-of-truth (it's been a read-only fallback since Phase 14).
+2. **Jobs-queue bug fix** — two bugs surfaced 2026-05-07 (see
+   `memory/project_nas_intake_worker_wedge_bug.md` and `journal-135.md`
+   + `journal-136.md`): nas_intake_scan starved the shared huey worker
+   for ~25 min, and the long-running streamlit held an orphan WAL fd
+   that silently dropped two send-to-Todoist enqueues.
+
+Both workstreams land on `fix/phase18-recipe-edit-and-jobs-queue` (or
+two sibling branches that merge together), separate from Phase 17 so
+the Phase 17 UI work isn't destabilized. Detail for each in the Phase
+18 section below.
+
 Pre-flight (confirm health before starting new work):
 
 ```bash
@@ -447,7 +464,131 @@ Production `meal_planner_ingest_photo` runs on the mini's
 `com.home-tools.jobs-consumer` LaunchAgent. Live test: Nanaimo Bars PDF
 processed end-to-end 2026-05-06.
 
-## Phase 17+ — Future chunks (numbered as each chunk is claimed)
+## Phase 18 — Edit recipes via web GUI + Sheet decommission + jobs-queue bug fix (SCOPED 2026-05-07, not yet started)
+
+Two workstreams in one phase. Lands on
+`fix/phase18-recipe-edit-and-jobs-queue` (or sibling branches that
+merge together), separate from Phase 17 so UI polish isn't
+destabilized.
+
+### Workstream A — Edit recipes via web GUI + Sheet decommission
+
+Move recipe-row editing into the Recipes tab so `recipes.db` becomes
+the sole source-of-truth. Today the Apps Script Sheet is a read-only
+fallback (Phase 14); after Phase 18 it's retired. Detailed scope to be
+filled in at the Phase 18 office-hours session — likely an inline
+edit-row affordance per recipe in `console/tabs/plan.py`, persistence
+via `meal_planner.queries.update_recipe(...)`, and a one-shot script
+that exports the current Sheet state into `recipes.db` then archives
+the Sheet to read-only.
+
+### Workstream B — Jobs-queue bug fix
+
+Two bugs surfaced same session — both real, both confirmed live on the
+mini:
+
+1. **nas_intake_scan starves the shared huey worker.** A multi-page
+   healthcare PDF held Worker-1 for ~25 min while 13+ periodic tasks
+   queued behind it. v1.1 large-file escalation never armed because the
+   small-file path completed in one shot — the `timeout_counts >= 3`
+   rule only increments on `subprocess.TimeoutExpired`, so a 590s
+   successful run never triggers escalation. Single-worker consumer
+   (`-w 1`) means any slow non-model kind starves every other kind.
+2. **Streamlit holds orphan SQLite WAL fd, silently drops enqueues.**
+   Long-running mini console (`com.home-tools.console`, started May 5)
+   held WAL/shm fds on inodes that no longer existed in any directory
+   entry. INSERT INTO task returned cleanly, huey returned a Result.id,
+   "Job enqueued" banner showed — but the row landed in a deleted WAL
+   the consumer could never read. Two clicks (`c5ab896e`, `346474b6`)
+   both fell into the hole; Todoist confirmed never received the items.
+   Immediate fix was a `launchctl kickstart -kp` of the streamlit; real
+   fix is to remove the in-process huey import.
+
+### Bug 1 — primary fix (1A)
+
+`nas-intake/config.py`: `SUBPROCESS_TIMEOUT_S = 600 → 90`. After 3×90s
+timeouts (~5 min) v1.1 escalation arms automatically and the file moves
+to `ingest-image-large` (page-resumable, heartbeat-watchdog).
+
+- **LOC:** 1.
+- **Risk:** false-positive timeouts on slow-but-not-wedged PDFs — but
+  those simply re-queue at the next 5-min tick and eventually escalate,
+  which is the right outcome anyway.
+- **Test:** replay the wedged healthcare PDF; expect 3× ~90s timeouts
+  then escalation; large-file path completes the OCR.
+
+### Bug 1 — deferred class fix (1B, separate follow-up branch)
+
+Split queues — second `SqliteHuey(name="home-tools-jobs-bg")` for non-
+model kinds, second consumer plist. Don't block Phase 18 on this; if 1A
+holds, defer indefinitely. See full tradeoff write-up in journal-136.md.
+
+### Bug 2 — primary fix (2A)
+
+Route console enqueues through `jobs.enqueue_http` on port 8504 (the
+service is already running but currently dormant — auth blocked because
+`HOME_TOOLS_HTTP_TOKEN` keychain entry is missing).
+
+Pre-req: `jobs/install.sh` adds an idempotent `add-generic-password`
+step that creates `home-tools/jobs_http_token` (random 32-byte hex if
+missing). Then `launchctl kickstart -kp gui/501/com.home-tools.jobs-http`
+to pick up the env.
+
+Code change:
+
+- New `console/jobs_client.py` — POST to
+  `http://100.66.241.126:8504/jobs` with bearer auth. ~50 LOC.
+- `console/tabs/plan.py:96` and `:141` — replace
+  `from jobs.kinds.X import X; X(...)` with
+  `jobs_client.enqueue("X", {...})`. ~10 LOC delta.
+- Add `GET /queue-size` endpoint to `jobs/enqueue_http.py` (~15 LOC),
+  swap `console/tabs/jobs.py:42` and `console/sidebar/settings.py:17`
+  to use HTTP. Removes the entire long-lived fd surface from the
+  streamlit.
+
+**Risk:** HTTP server outage → enqueues fail visibly with toast (which
+is *better* than today's silent drop).
+
+**Test:**
+
+- `python -m jobs.cli doctor` sanity check.
+- Console "Send checked recipes to Todoist" → Todoist actually
+  populates within 30s.
+- `lsof -p $(pgrep streamlit) | grep jobs.db` returns empty after
+  shipping.
+- Restart `com.home-tools.jobs-http`; verify console enqueues fail
+  visibly (failure-path test).
+- Long-soak: leave streamlit up overnight, re-run lsof — still empty.
+
+### Bug 2 — fallback (2B)
+
+If 2A blocks on infra, add a `jobs/__init__.py` helper that builds a
+fresh `SqliteHuey` on demand and closes it after each call; replace the
+three console-side imports with this helper. ~25 LOC, in-process pattern
+preserved but fd is short-lived. Don't ship both 2A and 2B — they
+conflict in maintenance burden.
+
+### Cross-cutting
+
+- Add memory `feedback_streamlit_in_process_huey` — "don't import a
+  SQLite-WAL backend in a long-lived Streamlit process; route writes
+  via HTTP."
+- Update `Mac-mini/PHASE12.md` to document the keychain entry
+  expectation for `jobs_http_token` and the rule "console writes go
+  through 8504, not in-process huey".
+- Flag follow-up: `health-dashboard/data/health.db` has the same long-
+  lived-streamlit + WAL pattern (4 LaunchAgent collectors writing).
+  Same vulnerability class; consider an analogous fix in a separate
+  branch.
+
+### Total scope
+
+~120 LOC across 6 files + 1 plist (no new plist needed; jobs-http
+already exists) + 1 install.sh edit. Primary path is 1A + 2A.
+
+---
+
+## Phase 19+ — Future chunks (numbered as each chunk is claimed)
 
 Each chunk gets the next sequential Phase number when claimed.
 Numbers are not pre-allocated.
