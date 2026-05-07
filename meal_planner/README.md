@@ -60,7 +60,9 @@ Job kinds: `meal_planner_photo_intake_scan` + `meal_planner_ingest_photo`.
 Post-extraction normalizer at `meal_planner/vision/_normalize.py` fixes the
 qty/unit-fusion class of LLM bugs deterministically.
 
-Phase 17+ direction (UI polish): `Mac-mini/PLAN.md`.
+Phase 17 direction (UI polish) and Phase 18 (jobs-queue bug fix —
+nas_intake_scan worker starvation + streamlit orphan-WAL-fd silent
+drops): `Mac-mini/PLAN.md`.
 
 ## ⚠️ Critical model rules
 
