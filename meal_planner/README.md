@@ -48,6 +48,8 @@ available in `consolidation.py` for a future opt-in phase. "Clear all
 meal-planner items from Todoist" button available for cleanup. Tag filter (Phase 17) — three labeled pill rows (Cuisine / Meat+diet / Other)
 plus AND/OR radio. Empty selection = show all. `st.toggle("Alphabetical")`
 above the grid: on = alpha by title (default, session-only), off = most-recently-added first.
+Post-send/clear status banner (Phase 17 Chunk C): spinner appears while the job is pending;
+flips to a green/yellow/red result banner ("Send to Todoist: N/N items") when the kind completes.
 
 **Phase 15 done (2026-05-06)** — bake-off picked `llama3.2-vision:11b` via
 Ollama on the mini for recipe-photo extraction. See
