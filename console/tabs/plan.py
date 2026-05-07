@@ -13,6 +13,7 @@ import streamlit as st
 
 from meal_planner import db as _db
 from meal_planner import queries
+from meal_planner.tag_categories import CATEGORY_MAP, _partition_tags_by_category
 
 _CONFIRM_CLEAR_TTL = 10  # seconds before the confirm state resets
 
@@ -36,9 +37,24 @@ def _render_inner() -> None:
 
     all_tags = queries.list_all_tags()
     if all_tags:
-        selected_tags = st.pills(
-            "Filter by tag", options=all_tags, selection_mode="multi"
-        )
+        grouped = _partition_tags_by_category(all_tags, CATEGORY_MAP)
+        selected: list[str] = []
+        if grouped["cuisine"]:
+            selected += st.pills(
+                "Cuisine", options=grouped["cuisine"], selection_mode="multi",
+                key="tag_pills_cuisine",
+            ) or []
+        if grouped["meat_or_diet"]:
+            selected += st.pills(
+                "Meat / diet", options=grouped["meat_or_diet"],
+                selection_mode="multi", key="tag_pills_meat",
+            ) or []
+        if grouped["other"]:
+            selected += st.pills(
+                "Other", options=grouped["other"], selection_mode="multi",
+                key="tag_pills_other",
+            ) or []
+        selected_tags = selected
         tag_logic = st.radio(
             "Match", ["AND", "OR"], horizontal=True, index=0
         )
