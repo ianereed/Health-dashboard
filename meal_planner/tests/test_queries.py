@@ -148,6 +148,45 @@ def test_search_recipes_invalid_tag_logic_raises(seeded_db: Path) -> None:
         search_recipes(tags=("asian",), tag_logic="xor", path=seeded_db)
 
 
+def test_search_recipes_sort_alpha_default(seeded_db: Path) -> None:
+    """No sort arg → alpha order by title (default behavior preserved)."""
+    results = search_recipes(path=seeded_db)
+    titles = [r.title for r in results]
+    assert titles == sorted(titles, key=str.casefold)
+
+
+def test_search_recipes_sort_alpha_explicit(seeded_db: Path) -> None:
+    """sort='alpha' → same alpha order as default."""
+    default = search_recipes(path=seeded_db)
+    explicit = search_recipes(sort="alpha", path=seeded_db)
+    assert [r.id for r in default] == [r.id for r in explicit]
+
+
+def test_search_recipes_sort_recent_returns_id_desc(seeded_db: Path) -> None:
+    """sort='recent' returns recipes in id-DESC order (most-recently-added first)."""
+    # seeded_db inserts: Chicken Soup (r1), Beef Stew (r2), Veggie Stir Fry (r3)
+    # id-DESC order should be: Veggie Stir Fry, Beef Stew, Chicken Soup
+    results = search_recipes(sort="recent", path=seeded_db)
+    ids = [r.id for r in results]
+    assert ids == sorted(ids, reverse=True)
+    assert len(ids) == 3
+
+
+def test_search_recipes_sort_recent_with_tag_filter(seeded_db: Path) -> None:
+    """sort='recent' with tags= returns intersection in id-DESC order."""
+    # Both Chicken Soup and Veggie Stir Fry have "asian"; Veggie Stir Fry was inserted last
+    results = search_recipes(tags=("asian",), sort="recent", path=seeded_db)
+    ids = [r.id for r in results]
+    assert ids == sorted(ids, reverse=True)
+    assert {r.title for r in results} == {"Chicken Soup", "Veggie Stir Fry"}
+
+
+def test_search_recipes_sort_invalid_raises(seeded_db: Path) -> None:
+    """sort='weird' raises ValueError before any SQL runs."""
+    with pytest.raises(ValueError, match="sort"):
+        search_recipes(sort="weird", path=seeded_db)
+
+
 def test_get_recipe_roundtrip_all_fields(db_path: Path) -> None:
     rid = insert_recipe(
         title="Full Recipe",

@@ -83,6 +83,7 @@ def search_recipes(
     name_substring: str = "",
     tags: tuple[str, ...] = (),
     tag_logic: str = "and",
+    sort: str = "alpha",
     path: Path | None = None,
 ) -> list[Recipe]:
     """Return recipes matching name_substring and the given tag filter.
@@ -91,11 +92,18 @@ def search_recipes(
     tags filters to recipes based on tag_logic:
       "and" — recipes that have ALL listed tags (default).
       "or"  — recipes that have ANY listed tag.
-    Both filters are AND-combined; empty tags means no tag filter.
-    Raises ValueError for unrecognized tag_logic.
+    sort controls result ordering:
+      "alpha"   — alphabetical by title (default; case-insensitive).
+      "recent"  — most-recently-added first (id DESC).
+    Both tag filters are AND-combined; empty tags means no tag filter.
+    Raises ValueError for unrecognized tag_logic or sort.
     """
     if tag_logic not in ("and", "or"):
         raise ValueError(f"tag_logic must be 'and' or 'or', got {tag_logic!r}")
+    # sort is validated before any SQL is composed — never reaches ORDER BY unsanitized
+    if sort not in ("alpha", "recent"):
+        raise ValueError(f"sort must be 'alpha' or 'recent', got {sort!r}")
+    order_by = "r.title COLLATE NOCASE" if sort == "alpha" else "r.id DESC"
     tags = tuple(dict.fromkeys(tags))  # dedupe while preserving order
     p = path or _db.DB_PATH
     with _db._get_conn(p) as conn:
@@ -112,7 +120,7 @@ def search_recipes(
                         JOIN tags t ON t.id = rt.tag_id
                         WHERE rt.recipe_id = r.id AND t.name IN ({placeholders})
                       ) = ?
-                    ORDER BY r.title COLLATE NOCASE
+                    ORDER BY {order_by}
                     """,
                     (f"%{name_substring}%", *tags, len(tags)),
                 ).fetchall()
@@ -126,13 +134,13 @@ def search_recipes(
                         JOIN tags t ON t.id = rt.tag_id
                         WHERE rt.recipe_id = r.id AND t.name IN ({placeholders})
                       )
-                    ORDER BY r.title COLLATE NOCASE
+                    ORDER BY {order_by}
                     """,
                     (f"%{name_substring}%", *tags),
                 ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM recipes WHERE lower(title) LIKE lower(?) ORDER BY title COLLATE NOCASE",
+                f"SELECT r.* FROM recipes r WHERE lower(r.title) LIKE lower(?) ORDER BY {order_by}",
                 (f"%{name_substring}%",),
             ).fetchall()
     return [_row_to_recipe(r) for r in rows]

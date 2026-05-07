@@ -62,8 +62,14 @@ def _render_inner() -> None:
         selected_tags = []
         tag_logic = "AND"
 
+    sort_alpha = st.toggle(
+        "Alphabetical", value=True, key="recipes_sort_alpha",
+        help="When off, recipes are listed most-recently-added first.",
+    )
     recipes = queries.search_recipes(
-        tags=tuple(selected_tags), tag_logic=tag_logic.lower()
+        tags=tuple(selected_tags),
+        tag_logic=tag_logic.lower(),
+        sort="alpha" if sort_alpha else "recent",
     )
     if not recipes:
         if selected_tags:
