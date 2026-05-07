@@ -22,6 +22,9 @@ Use null (not the string "null") for qty/unit when not specified.
 Rules for ingredients:
 - "qty" is the quantity as a string (e.g. "1", "2.5", "1/2"). Set to null for
   "to taste", "as needed", "for serving", "a pinch", or any vague/uncountable amount.
+- "qty" MUST be number-only (a bare digit or fraction). The unit ALWAYS goes in
+  "unit" — NEVER in "qty". If the source says "1 teaspoon olive oil", emit
+  qty="1" AND unit="teaspoon". Never qty="1 teaspoon" with unit=null.
 - "qty" MUST be a SINGLE quantity — a bare number or simple fraction. Never produce
   compound strings like "1/4 cup plus 2 tablespoons" or "1 cup, plus extra for serving".
   If the source gives two amounts, emit two separate ingredient entries (e.g. one for
@@ -32,6 +35,8 @@ Rules for ingredients:
   string. If the qualifier matters (e.g. "scant"), put it in "name".
 - "unit" is the unit of measure (e.g. "cup", "tbsp", "g"). Use null when no unit is given.
 - "name" is the ingredient name only. Do NOT include quantity or unit in the name.
+  If the source line is "1 teaspoon turmeric", "name" is "turmeric" — NEVER
+  "teaspoon turmeric". The unit goes in "unit", and only the food/item goes in "name".
   Preserve the ingredient name exactly as it appears in the source — do not normalize
   synonyms (e.g. keep "aubergine" rather than converting to "eggplant").
 - One object per distinct ingredient line. Do not combine lines.
@@ -62,3 +67,17 @@ Example of an INCORRECT response (compound qty — DO NOT do this):
 
 The correct split for the above is two entries:
 {"qty": "1/4", "unit": "cup", "name": "flour"} and {"qty": "2", "unit": "tablespoons", "name": "flour"}
+
+Example of an INCORRECT response (qty/unit fused — DO NOT do this):
+
+{"title": "Bad", "ingredients": [{"qty": "1 teaspoon", "unit": null, "name": "olive oil"}, {"qty": "1/2 pound", "unit": null, "name": "orzo"}, {"qty": "10 ounces", "unit": null, "name": "Italian sausage"}], "tags": []}
+
+The CORRECT form for the above is qty=number-only with unit in the unit field:
+{"qty": "1", "unit": "teaspoon", "name": "olive oil"}, {"qty": "1/2", "unit": "pound", "name": "orzo"}, {"qty": "10", "unit": "ounces", "name": "Italian sausage"}
+
+Example of an INCORRECT response (unit slipped into name — DO NOT do this):
+
+{"title": "Bad", "ingredients": [{"qty": "1", "unit": null, "name": "teaspoon turmeric"}, {"qty": "5-6", "unit": null, "name": "cloves garlic"}, {"qty": "2", "unit": null, "name": "ounces butter"}], "tags": []}
+
+The CORRECT form for the above moves the unit into the "unit" field and leaves only the food in "name":
+{"qty": "1", "unit": "teaspoon", "name": "turmeric"}, {"qty": "5-6", "unit": "cloves", "name": "garlic"}, {"qty": "2", "unit": "ounces", "name": "butter"}
