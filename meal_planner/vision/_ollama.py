@@ -34,7 +34,7 @@ NUM_CTX_TABLE: dict[tuple[str, str], int] = {
     ("minicpm-v:8b", "vision"): 4096,
     ("qwen2.5vl:3b", "vision"): 6144,
     ("qwen2.5vl:7b", "vision"): 4096,
-    ("llama3.2-vision:11b", "vision"): 4096,
+    ("llama3.2-vision:11b", "vision"): 16384,
     ("qwen2.5:3b", "text"): 6144,
     ("qwen2.5:7b", "text"): 4096,
     ("llama3.1:8b", "text"): 4096,

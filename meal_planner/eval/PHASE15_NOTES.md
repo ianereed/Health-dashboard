@@ -2,6 +2,13 @@
 
 > **For Phase 16:** See `/Users/ianreed/.claude/plans/phase-16-nas-photo-intake.md`
 > for the standalone plan. This file records the *why* behind Phase 15 decisions.
+>
+> **Post-Phase 15 ctx bump (2026-05-07):** the production `num_ctx` for
+> `llama3.2-vision:11b` was raised from 4096 → 16384. The 4096 number recorded
+> in Phase 15's bake-off below is **historical** — it was the value used while
+> bench-marking. The bake-off conclusion (model choice, preprocessing pipeline,
+> solo-mode swap discipline) is unchanged. Rationale and RAM math live in
+> `MEMORY_BUDGET.md`.
 
 ---
 

@@ -61,7 +61,6 @@ def meal_planner_ingest_photo(sha: str) -> dict:
             result = extract_recipe_from_photo(
                 preprocessed,
                 timeout_s=500,
-                num_ctx=4096,
                 keep_alive="300s",
             )
 

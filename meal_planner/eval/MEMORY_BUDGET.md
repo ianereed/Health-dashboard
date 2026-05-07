@@ -30,7 +30,7 @@ This table is authoritative for all bake-off bench runs. Values are set via
 | minicpm-v:8b | vision | 4096 | ~7 GB | ✓ (tight — 7+14+2=23 GB) |
 | qwen2.5vl:3b | vision | 6144 | ~5 GB | ✓ |
 | qwen2.5vl:7b | vision | 4096 | ~7–8 GB | ✓ (tight) |
-| llama3.2-vision:11b | vision | 4096 | ~9–10 GB | ✗ solo only |
+| llama3.2-vision:11b | vision | 16384 | ~12.5 GB | ✗ solo only |
 | qwen2.5:3b | text | 6144 | ~4 GB | ✓ |
 | qwen2.5:7b | text | 4096 | ~7 GB | ✓ (tight) |
 | llama3.1:8b | text | 4096 | ~7–8 GB | ✓ (tight) |
@@ -46,6 +46,25 @@ the Phase 15 Round 2 bake-off (2026-05-05).
 Setting `num_ctx` to 4096–6144 per model eliminates truncation for all tested recipes
 while staying within the coexistence RAM budget (except llama3.2-vision:11b, which is
 solo-only regardless).
+
+### llama3.2-vision:11b raised to 16384 (2026-05-07)
+
+Because llama3.2-vision:11b is the production vision model and is **solo-only by
+design** (`keep_alive=0` swap discipline displaces qwen3:14b before any vision call),
+its RAM budget is bounded by 24 GB − OS/baseline (~2 GB) = ~22 GB rather than the
+~8 GB coexistence ceiling. The 4096 ctx left ~13 GB of vision-time RAM unused.
+
+KV cache scaling for llama3.2-vision:11b (40 layers × 8 GQA heads × 128 head_dim ×
+ctx × 2 bytes per KV per element):
+- 4096 → ~0.7 GB KV → ~10.5 GB hot total
+- 8192 → ~1.4 GB KV → ~11 GB hot total
+- 16384 → ~2.7 GB KV → ~12.5 GB hot total
+- 32768 → ~5.4 GB KV → ~15 GB hot total
+
+16384 is the production default. Headroom during a vision job is ~9 GB; comfortable
+margin over OS pressure. Future move to 32768 is on the table for Phase 19 (recipe
+instruction extraction will lean harder on the model and may benefit from few-shot
+prompting that doesn't fit in 16384).
 
 ## Bench protocol
 
@@ -64,7 +83,7 @@ The production 2-kind state machine lives at `jobs/lib.py:_ModelState`.
 | Kind | Model | ctx | keep_alive |
 |---|---|---|---|
 | text | qwen3:14b | 16384 | -1 (always resident) |
-| vision | llama3.2-vision:11b | 4096 | 30s (default) |
+| vision | llama3.2-vision:11b | 16384 | 30s (default) |
 
 Meal-planner batch workers use a per-call keep_alive override to hold the model warm
 longer during photo ingestion:
