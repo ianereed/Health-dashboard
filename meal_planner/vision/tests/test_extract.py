@@ -352,3 +352,55 @@ def test_call_ollama_vision_normalizes_fused_qty_unit(monkeypatch, tmp_path):
     warns = metadata["normalize_warnings"]
     assert len(warns) == 1
     assert "teaspoon" in warns[0]
+
+
+def test_call_ollama_vision_normalizes_schema_invalid_retry(monkeypatch, tmp_path):
+    """First call returns schema-valid garbage that triggers retry; retry returns a
+    schema-INVALID dict (missing 'name' on one ingredient) but the other ingredient
+    is fused. Normalizer must still run on the retry result so the well-formed
+    ingredient gets its qty/unit split — H3 from the Phase 16 review.
+    """
+    photo = _photo(tmp_path)
+    # First response: schema-invalid (ingredient missing 'name' key) — triggers retry.
+    first_payload = {
+        "title": "Bad",
+        "ingredients": [{"qty": "1", "unit": "cup"}],  # missing name
+        "tags": [],
+    }
+    # Retry response: still schema-invalid (still missing 'name') but contains a fused qty.
+    retry_payload = {
+        "title": "Bad",
+        "ingredients": [
+            {"qty": "1", "unit": "cup"},  # still missing name
+            {"qty": "2 tablespoons", "unit": None, "name": "olive oil"},  # fused, fixable
+        ],
+        "tags": [],
+    }
+    calls = {"n": 0}
+
+    def mock_post(*args, **kwargs):
+        calls["n"] += 1
+        payload = first_payload if calls["n"] == 1 else retry_payload
+        body = {"model": "llama3.2-vision:11b", "response": json.dumps(payload), "eval_count": 5}
+        m = MagicMock()
+        m.status_code = 200
+        m.text = json.dumps(body)
+        m.json.return_value = body
+        return m
+
+    monkeypatch.setattr(_ollama.requests, "post", mock_post)
+    parsed, metadata = _ollama.call_ollama_vision(
+        "llama3.2-vision:11b", photo, "Extract recipe.", base_url="http://localhost:11434"
+    )
+
+    assert calls["n"] == 2, "retry should have happened"
+    assert metadata["n_retries"] == 1
+    # The fused ingredient on the retry path must have been normalized despite
+    # the overall response still failing schema validation.
+    fixable = parsed["ingredients"][1]
+    assert fixable["qty"] == "2", f"expected '2', got {fixable['qty']!r}"
+    assert fixable["unit"] == "tablespoons", f"expected 'tablespoons', got {fixable['unit']!r}"
+    assert "normalize_warnings" in metadata
+    assert any("tablespoons" in w for w in metadata["normalize_warnings"])
+    # The schema-invalid ingredient is preserved untouched (no 'name' key added).
+    assert "name" not in parsed["ingredients"][0]

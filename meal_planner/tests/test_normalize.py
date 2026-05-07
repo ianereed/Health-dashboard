@@ -134,13 +134,12 @@ def test_no_double_fire_p1_then_p2():
     assert len(warns) == 1, f"Expected 1 warning, got {warns}"
 
 
-def test_p2_stops_at_first_unit_token():
-    """Only the first token moves to unit; rest of name stays intact."""
+def test_p2_of_pattern_is_noop():
+    """'X of Y' is descriptive (e.g., 'cup of milk', 'slice of bread') — no fire."""
     ing = {"qty": "1", "unit": None, "name": "cup of cup-sized portions"}
     out, warns = normalize_ingredient(ing)
-    assert out["unit"] == "cup"
-    assert out["name"] == "of cup-sized portions"
-    assert len(warns) == 1
+    assert out == ing
+    assert warns == []
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +210,124 @@ def test_normalize_extraction_orzo():
     assert result["tags"] == _ORZO_SIDECAR["tags"]
     # Input not mutated
     assert _ORZO_SIDECAR["ingredients"][0]["unit"] is None
+
+
+# ---------------------------------------------------------------------------
+# Multi-token units (Pattern 1, H1 from Opus review)
+# ---------------------------------------------------------------------------
+
+def test_p1_two_token_unit_fl_oz():
+    """qty='8 fl oz' should split into qty='8', unit='fl oz'."""
+    ing = {"qty": "8 fl oz", "unit": None, "name": "milk"}
+    out, warns = normalize_ingredient(ing)
+    assert out["qty"] == "8"
+    assert out["unit"] == "fl oz"
+    assert out["name"] == "milk"
+    assert len(warns) == 1
+
+
+def test_p1_two_token_unit_fluid_ounce():
+    ing = {"qty": "12 fluid ounces", "unit": None, "name": "milk"}
+    out, warns = normalize_ingredient(ing)
+    assert out["qty"] == "12"
+    assert out["unit"] == "fluid ounces"
+
+
+def test_p2_two_token_unit_in_name():
+    ing = {"qty": "8", "unit": None, "name": "fl oz milk"}
+    out, warns = normalize_ingredient(ing)
+    assert out["unit"] == "fl oz"
+    assert out["name"] == "milk"
+
+
+# ---------------------------------------------------------------------------
+# Pattern 2 over-fire guards (H2 from Opus review)
+# ---------------------------------------------------------------------------
+
+def test_p2_noop_slice_of_bread():
+    """name='slice of bread' is descriptive, not a measurement — Pattern 2 must NOT fire."""
+    ing = {"qty": "1", "unit": None, "name": "slice of bread"}
+    out, warns = normalize_ingredient(ing)
+    assert out == ing
+    assert warns == []
+
+
+def test_p2_noop_package_of_cheese():
+    ing = {"qty": "1", "unit": None, "name": "package of cream cheese"}
+    out, warns = normalize_ingredient(ing)
+    assert out == ing
+    assert warns == []
+
+
+def test_p2_noop_single_word_unit_as_name():
+    """name is just 'oz' — Pattern 2 would empty the name. Must NOT fire."""
+    ing = {"qty": "1", "unit": None, "name": "oz"}
+    out, warns = normalize_ingredient(ing)
+    assert out == ing
+    assert warns == []
+
+
+def test_p2_still_fires_on_real_unit_name_pair():
+    """Sanity: legitimate 'cloves Garlic' still works after over-fire guards."""
+    ing = {"qty": "5-6", "unit": None, "name": "cloves Garlic"}
+    out, warns = normalize_ingredient(ing)
+    assert out["unit"] == "cloves"
+    assert out["name"] == "Garlic"
+
+
+# ---------------------------------------------------------------------------
+# Robustness: non-string qty, missing keys, bare mixed fraction (Q3 fragility)
+# ---------------------------------------------------------------------------
+
+def test_qty_int_passes_through():
+    ing = {"qty": 1, "unit": None, "name": "egg"}
+    out, warns = normalize_ingredient(ing)
+    assert out == ing
+    assert warns == []
+
+
+def test_ingredient_missing_keys():
+    """Missing qty/unit keys entirely — must not crash."""
+    out, warns = normalize_ingredient({"name": "salt"})
+    assert out == {"name": "salt"}
+    assert warns == []
+
+
+def test_bare_mixed_fraction_no_unit_is_noop():
+    """qty='1 1/2' alone, name has no unit token — must remain unchanged."""
+    ing = {"qty": "1 1/2", "unit": None, "name": "pepper"}
+    out, warns = normalize_ingredient(ing)
+    assert out == ing
+    assert warns == []
+
+
+def test_idempotent_double_normalize():
+    """Calling normalize_ingredient twice on already-normalized input is a no-op."""
+    once, w1 = normalize_ingredient({"qty": "1 teaspoon", "unit": None, "name": "salt"})
+    twice, w2 = normalize_ingredient(once)
+    assert twice == once
+    assert w2 == []
+
+
+# ---------------------------------------------------------------------------
+# Pattern 3: discarded-content warning (M1 from Opus review)
+# ---------------------------------------------------------------------------
+
+def test_p3_emits_discarded_warning_for_meaningful_unit():
+    """unit='large cloves, minced' contains real prep info — must surface a discarded warning."""
+    ing = {"qty": "2 cloves", "unit": "large cloves, minced", "name": "garlic"}
+    out, warns = normalize_ingredient(ing)
+    assert out["qty"] == "2"
+    assert out["unit"] == "cloves"
+    # First warning is the split; second flags discarded unit content
+    assert len(warns) == 2
+    assert any("discarded" in w for w in warns), warns
+
+
+def test_p3_no_discarded_warning_for_redundant_unit():
+    """unit='vegetable oil' duplicates the name — no extra warning needed."""
+    ing = {"qty": "2 tsp", "unit": "vegetable oil", "name": "vegetable oil"}
+    out, warns = normalize_ingredient(ing)
+    assert out["qty"] == "2"
+    assert out["unit"] == "tsp"
+    assert len(warns) == 1

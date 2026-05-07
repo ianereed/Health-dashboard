@@ -111,19 +111,29 @@ def meal_planner_ingest_photo(sha: str) -> dict:
             except Exception as _sidecar_exc:
                 logger.warning("meal_planner_ingest_photo: sidecar write failed sha=%s: %s", sha, _sidecar_exc)
 
-            if ing_warnings:
+            # Merge normalize_warnings (qty/unit splits, discarded unit content)
+            # into the persisted warnings so the DB reflects every transformation
+            # applied between raw LLM output and stored ingredients.
+            norm_warnings = result.normalize_warnings or []
+            all_warnings = list(ing_warnings) + list(norm_warnings)
+            if all_warnings:
                 intake_db.mark_status(
                     sha, "ok_partial",
                     recipe_id=recipe_id, extraction_path="ollama",
-                    extraction_warnings=json.dumps(ing_warnings),
+                    extraction_warnings=json.dumps(all_warnings),
                 )
                 status_for_return = "ok_partial"
             else:
                 intake_db.mark_status(sha, "ok", recipe_id=recipe_id, extraction_path="ollama")
                 status_for_return = "ok"
-            logger.info("meal_planner_ingest_photo: %s sha=%s recipe_id=%d", status_for_return, sha, recipe_id)
+            logger.info(
+                "meal_planner_ingest_photo: %s sha=%s recipe_id=%d ing_warns=%d norm_warns=%d",
+                status_for_return, sha, recipe_id, len(ing_warnings), len(norm_warnings),
+            )
             return {"sha": sha, "status": status_for_return, "recipe_id": recipe_id,
-                    "latency_s": result.latency_s, "warning_count": len(ing_warnings)}
+                    "latency_s": result.latency_s,
+                    "warning_count": len(all_warnings),
+                    "normalize_warning_count": len(norm_warnings)}
 
         intake_db.mark_status(sha, result.status, error=result.error)
         logger.warning(

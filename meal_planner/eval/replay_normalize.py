@@ -81,14 +81,26 @@ def main() -> int:
     fractions = syn_doc.get("unicode_fractions", {})
 
     all_rows = [json.loads(l) for l in args.runs.read_text().splitlines() if l.strip()]
-    # Deduplicate: keep the last row per photo that has extracted data.
-    # Baseline runs.jsonl uses multi-step statuses (pending/calling/parsed_ok/scored);
-    # V1 runs.jsonl uses single-row-per-photo format (ok/timeout).
-    seen: dict[str, dict] = {}
+    # Deduplicate: prefer the last row per photo with a scoreable status; fall back
+    # to the last row with extracted data if none qualify. Baseline runs.jsonl uses
+    # multi-step statuses (pending/calling/parsed_ok/scored); V1 runs.jsonl uses
+    # single-row-per-photo (ok/timeout). Without the status preference, dedup can
+    # silently pick a stale terminal row whose status falls outside the scoreable
+    # set, dragging F1 to 0 even though valid extraction exists earlier.
+    _SCOREABLE = {"ok", "scored", "parsed_ok"}
+    scoreable: dict[str, dict] = {}
+    extracted_only: dict[str, dict] = {}
     for r in all_rows:
-        if r.get("extracted"):
-            seen[r["photo"]] = r
-    rows = list(seen.values())
+        if not r.get("extracted"):
+            continue
+        extracted_only[r["photo"]] = r
+        if r.get("status") in _SCOREABLE:
+            scoreable[r["photo"]] = r
+    rows = [scoreable.get(p, extracted_only[p]) for p in extracted_only]
+    n_fallback = sum(1 for p in extracted_only if p not in scoreable)
+    if n_fallback:
+        print(f"[replay] dedup: {n_fallback} photo(s) had extracted data but no scoreable row; "
+              f"using last extracted row (will score 0).")
 
     # Build normalized rows
     norm_rows = []

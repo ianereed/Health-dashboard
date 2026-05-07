@@ -20,6 +20,9 @@ class ExtractResult:
     latency_s: float | None
     error: str | None
     n_retries: int
+    normalize_warnings: list[str] | None = None
+        # Phase 16 Chunk F: post-extraction normalizer flagged splits/discards.
+        # None on non-ok branches; list (possibly empty) when normalization ran.
 
 
 def extract_recipe_from_photo(
@@ -60,6 +63,7 @@ def extract_recipe_from_photo(
     latency_s = metadata.get("latency_s")
     n_retries = metadata.get("n_retries", 0) or 0
     raw = metadata.get("raw_response") or ""
+    norm_warnings = metadata.get("normalize_warnings")
 
     # If (None, metadata) was returned, classify by the raw_response string.
     if parsed is None:
@@ -95,6 +99,7 @@ def extract_recipe_from_photo(
             latency_s=latency_s,
             error=", ".join(errors) if errors else "schema validation failed",
             n_retries=n_retries,
+            normalize_warnings=norm_warnings,
         )
 
     return ExtractResult(
@@ -103,4 +108,5 @@ def extract_recipe_from_photo(
         latency_s=latency_s,
         error=None,
         n_retries=n_retries,
+        normalize_warnings=norm_warnings,
     )

@@ -233,13 +233,13 @@ def call_ollama_vision(
     # structural_validity=False, which is more useful signal than dropping it as parse_fail.
     metadata["raw_response"] = md2.get("raw_response")
     metadata["eval_count"] = md2.get("eval_count")
-    is_valid2, _ = validate_schema(parsed2)
-    if is_valid2:
-        parsed2_normalized, norm_warnings2 = normalize_extraction(parsed2)
-        if norm_warnings2:
-            metadata["normalize_warnings"] = norm_warnings2
-        return parsed2_normalized, metadata
-    return parsed2, metadata
+    # Normalize on both branches: normalize_extraction is idempotent and only acts
+    # on dict-shaped ingredients, so it can't make a schema-invalid result worse,
+    # and a partially-bad retry with valid ingredients still benefits from the split.
+    parsed2_normalized, norm_warnings2 = normalize_extraction(parsed2)
+    if norm_warnings2:
+        metadata["normalize_warnings"] = norm_warnings2
+    return parsed2_normalized, metadata
 
 
 def cold_call_ollama(
