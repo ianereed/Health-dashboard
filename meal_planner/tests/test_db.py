@@ -145,3 +145,49 @@ def test_add_recipe_tag_external_conn_not_visible_until_commit(db_path: Path) ->
         assert count == 1
     finally:
         conn.close()
+
+
+def test_init_db_adds_qty_raw_to_existing_db(tmp_path: Path) -> None:
+    """Reproduce the live-mini case: an existing recipes.db without
+    the new columns gets them via init_db's ALTER block."""
+    db_p = tmp_path / "recipes.db"
+    # Build an OLD-shape DB by hand (no qty_raw, no extraction_warnings).
+    with sqlite3.connect(str(db_p)) as c:
+        c.executescript('''
+            CREATE TABLE recipes (id INTEGER PRIMARY KEY, title TEXT NOT NULL,
+              base_servings INTEGER NOT NULL DEFAULT 4, instructions TEXT,
+              created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE ingredients (id INTEGER PRIMARY KEY,
+              recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+              name TEXT NOT NULL, qty_per_serving REAL, unit TEXT, notes TEXT,
+              todoist_section TEXT, sort_order INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+              kind TEXT NOT NULL DEFAULT 'user');
+            CREATE TABLE recipe_tags (recipe_id INTEGER, tag_id INTEGER,
+              PRIMARY KEY (recipe_id, tag_id));
+            CREATE TABLE photos_intake (sha TEXT PRIMARY KEY,
+              source_path TEXT NOT NULL, nas_path TEXT NOT NULL,
+              status TEXT NOT NULL, recipe_id INTEGER, error TEXT,
+              n_retries INTEGER NOT NULL DEFAULT 0,
+              enqueued_at TEXT NOT NULL, completed_at TEXT,
+              extraction_path TEXT);
+        ''')
+
+    # Pre-condition: columns absent.
+    cols_pre = {r[1] for r in sqlite3.connect(str(db_p)).execute(
+        "PRAGMA table_info(ingredients)").fetchall()}
+    assert "qty_raw" not in cols_pre
+
+    # Run migration.
+    init_db(db_p)
+
+    # Post-condition: both columns present.
+    cols_post_ing = {r[1] for r in sqlite3.connect(str(db_p)).execute(
+        "PRAGMA table_info(ingredients)").fetchall()}
+    cols_post_pi = {r[1] for r in sqlite3.connect(str(db_p)).execute(
+        "PRAGMA table_info(photos_intake)").fetchall()}
+    assert "qty_raw" in cols_post_ing
+    assert "extraction_warnings" in cols_post_pi
+
+    # Idempotent: second call must not raise.
+    init_db(db_p)
