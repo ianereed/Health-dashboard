@@ -82,6 +82,13 @@ def meal_planner_ingest_photo(sha: str) -> dict:
                     conn=conn,
                 )
                 add_recipe_tag(recipe_id, "photo-intake", conn=conn)
+                for raw_tag in result.parsed.get("tags", []):
+                    if not isinstance(raw_tag, str):
+                        continue
+                    t = raw_tag.strip()
+                    if not t:
+                        continue
+                    add_recipe_tag(recipe_id, t, conn=conn)
                 ing_count, ing_warnings = _insert_ingredients_batch(
                     recipe_id=recipe_id,
                     parsed=result.parsed.get("ingredients", []),
@@ -95,6 +102,12 @@ def meal_planner_ingest_photo(sha: str) -> dict:
                 raise
             finally:
                 conn.close()
+
+            try:
+                sidecar_path = done_dir / f"{sha}.json"
+                sidecar_path.write_text(json.dumps(result.parsed, indent=2, ensure_ascii=False))
+            except Exception as _sidecar_exc:
+                logger.warning("meal_planner_ingest_photo: sidecar write failed sha=%s: %s", sha, _sidecar_exc)
 
             if ing_warnings:
                 intake_db.mark_status(
