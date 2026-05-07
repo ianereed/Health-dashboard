@@ -11,3 +11,6 @@ requests>=2.31
 # which imports event-aggregator/config.py — that file uses python-dotenv
 # at import time. Adding here so the consumer venv can load the chain.
 python-dotenv>=1.0
+
+# meal_planner_ingest_photo kind — image preprocessing via preprocess_images.py
+Pillow>=10.0
