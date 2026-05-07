@@ -20,6 +20,8 @@ import time
 
 import requests
 
+from meal_planner.vision._normalize import normalize_extraction
+
 _PROMPT_PATH = pathlib.Path(__file__).parent / "recipe_extraction_prompt.txt"
 _PROMPT_TEXT: str | None = None
 
@@ -202,7 +204,10 @@ def call_ollama_vision(
 
     is_valid, schema_errors = validate_schema(parsed)
     if is_valid:
-        return parsed, metadata
+        parsed_normalized, norm_warnings = normalize_extraction(parsed)
+        if norm_warnings:
+            metadata["normalize_warnings"] = norm_warnings
+        return parsed_normalized, metadata
 
     # Retry: same image, augmented prompt with the malformed response and explicit error list.
     err_summary = ", ".join(schema_errors) if schema_errors else "could not parse as JSON"
@@ -228,6 +233,12 @@ def call_ollama_vision(
     # structural_validity=False, which is more useful signal than dropping it as parse_fail.
     metadata["raw_response"] = md2.get("raw_response")
     metadata["eval_count"] = md2.get("eval_count")
+    is_valid2, _ = validate_schema(parsed2)
+    if is_valid2:
+        parsed2_normalized, norm_warnings2 = normalize_extraction(parsed2)
+        if norm_warnings2:
+            metadata["normalize_warnings"] = norm_warnings2
+        return parsed2_normalized, metadata
     return parsed2, metadata
 
 

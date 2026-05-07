@@ -1,0 +1,289 @@
+{
+  "before": {
+    "n_photos": 11,
+    "split_rate": 0.7241379310344828,
+    "scale_ok_rate": 0.8275862068965517,
+    "qty_unit_fused_rate": 0.011494252873563218,
+    "unit_in_name_rate": 0.16091954022988506,
+    "ingredients_present": 87,
+    "ingredient_f1_mean": 0.7380344345077887,
+    "title_accuracy_mean": 0.9090909090909091,
+    "agg": {
+      "split_ok": 63,
+      "qty_unit_fused": 1,
+      "unit_in_name": 14,
+      "qty_only_no_unit": 9,
+      "present": 87
+    },
+    "per_photo": [
+      {
+        "photo": "IMG_9956.jpg",
+        "counts": {
+          "split_ok": 9,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 9
+        },
+        "f1": 0.8181818181818181
+      },
+      {
+        "photo": "IMG_9958.jpg",
+        "counts": {
+          "split_ok": 1,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 1,
+          "present": 2
+        },
+        "f1": 1.0
+      },
+      {
+        "photo": "IMG_9959.jpg",
+        "counts": {
+          "split_ok": 5,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 3,
+          "present": 8
+        },
+        "f1": 0.5
+      },
+      {
+        "photo": "IMG_9960.jpg",
+        "counts": {
+          "split_ok": 0,
+          "qty_unit_fused": 0,
+          "unit_in_name": 12,
+          "qty_only_no_unit": 1,
+          "present": 13
+        },
+        "f1": 0.8148148148148148
+      },
+      {
+        "photo": "IMG_9961.jpg",
+        "counts": {
+          "split_ok": 5,
+          "qty_unit_fused": 1,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 2,
+          "present": 8
+        },
+        "f1": 0.7999999999999999
+      },
+      {
+        "photo": "IMG_9962.jpg",
+        "counts": {
+          "split_ok": 5,
+          "qty_unit_fused": 0,
+          "unit_in_name": 1,
+          "qty_only_no_unit": 0,
+          "present": 6
+        },
+        "f1": 0.5714285714285713
+      },
+      {
+        "photo": "IMG_9963.jpg",
+        "counts": {
+          "split_ok": 12,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 12
+        },
+        "f1": 0.5517241379310345
+      },
+      {
+        "photo": "IMG_9964.jpg",
+        "counts": {
+          "split_ok": 10,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 10
+        },
+        "f1": 0.9523809523809523
+      },
+      {
+        "photo": "IMG_9965.jpg",
+        "counts": {
+          "split_ok": 0,
+          "qty_unit_fused": 0,
+          "unit_in_name": 1,
+          "qty_only_no_unit": 0,
+          "present": 1
+        },
+        "f1": 0.625
+      },
+      {
+        "photo": "IMG_9966.jpg",
+        "counts": {
+          "split_ok": 8,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 2,
+          "present": 10
+        },
+        "f1": 0.8181818181818182
+      },
+      {
+        "photo": "IMG_9967.jpg",
+        "counts": {
+          "split_ok": 8,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 8
+        },
+        "f1": 0.6666666666666665
+      }
+    ]
+  },
+  "after": {
+    "n_photos": 11,
+    "split_rate": 0.8850574712643678,
+    "scale_ok_rate": 0.9885057471264368,
+    "qty_unit_fused_rate": 0.0,
+    "unit_in_name_rate": 0.011494252873563218,
+    "ingredients_present": 87,
+    "ingredient_f1_mean": 0.7447684412417955,
+    "title_accuracy_mean": 0.9090909090909091,
+    "agg": {
+      "split_ok": 77,
+      "qty_unit_fused": 0,
+      "unit_in_name": 1,
+      "qty_only_no_unit": 9,
+      "present": 87
+    },
+    "per_photo": [
+      {
+        "photo": "IMG_9956.jpg",
+        "counts": {
+          "split_ok": 9,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 9
+        },
+        "f1": 0.8181818181818181
+      },
+      {
+        "photo": "IMG_9958.jpg",
+        "counts": {
+          "split_ok": 1,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 1,
+          "present": 2
+        },
+        "f1": 1.0
+      },
+      {
+        "photo": "IMG_9959.jpg",
+        "counts": {
+          "split_ok": 5,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 3,
+          "present": 8
+        },
+        "f1": 0.5
+      },
+      {
+        "photo": "IMG_9960.jpg",
+        "counts": {
+          "split_ok": 12,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 1,
+          "present": 13
+        },
+        "f1": 0.888888888888889
+      },
+      {
+        "photo": "IMG_9961.jpg",
+        "counts": {
+          "split_ok": 6,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 2,
+          "present": 8
+        },
+        "f1": 0.7999999999999999
+      },
+      {
+        "photo": "IMG_9962.jpg",
+        "counts": {
+          "split_ok": 6,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 6
+        },
+        "f1": 0.5714285714285713
+      },
+      {
+        "photo": "IMG_9963.jpg",
+        "counts": {
+          "split_ok": 12,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 12
+        },
+        "f1": 0.5517241379310345
+      },
+      {
+        "photo": "IMG_9964.jpg",
+        "counts": {
+          "split_ok": 10,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 10
+        },
+        "f1": 0.9523809523809523
+      },
+      {
+        "photo": "IMG_9965.jpg",
+        "counts": {
+          "split_ok": 0,
+          "qty_unit_fused": 0,
+          "unit_in_name": 1,
+          "qty_only_no_unit": 0,
+          "present": 1
+        },
+        "f1": 0.625
+      },
+      {
+        "photo": "IMG_9966.jpg",
+        "counts": {
+          "split_ok": 8,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 2,
+          "present": 10
+        },
+        "f1": 0.8181818181818182
+      },
+      {
+        "photo": "IMG_9967.jpg",
+        "counts": {
+          "split_ok": 8,
+          "qty_unit_fused": 0,
+          "unit_in_name": 0,
+          "qty_only_no_unit": 0,
+          "present": 8
+        },
+        "f1": 0.6666666666666665
+      }
+    ]
+  },
+  "delta": {
+    "scale_ok_rate": 0.1609,
+    "qty_unit_fused_rate": -0.0115,
+    "unit_in_name_rate": -0.1494,
+    "ingredient_f1_mean": 0.0067,
+    "title_accuracy_mean": 0.0
+  }
+}

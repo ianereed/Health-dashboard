@@ -104,6 +104,8 @@ def meal_planner_ingest_photo(sha: str) -> dict:
                 conn.close()
 
             try:
+                # Sidecar captures post-normalize output (Chunk F). Raw LLM text is in
+                # result.metadata["raw_response"]; normalize_warnings in metadata too.
                 sidecar_path = done_dir / f"{sha}.json"
                 sidecar_path.write_text(json.dumps(result.parsed, indent=2, ensure_ascii=False))
             except Exception as _sidecar_exc:

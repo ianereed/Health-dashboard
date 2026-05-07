@@ -306,3 +306,49 @@ def test_bake_off_shadowed_names_still_resolve():
     assert bake_off._ollama_default_ctx_for is _ollama.default_ctx_for
     assert bake_off._load_prompt is _ollama.load_prompt
     assert bake_off._NUM_CTX_TABLE is _ollama.NUM_CTX_TABLE
+
+
+# ---------------------------------------------------------------------------
+# Normalizer integration — call_ollama_vision normalizes fused qty/unit output
+# ---------------------------------------------------------------------------
+
+
+def test_call_ollama_vision_normalizes_fused_qty_unit(monkeypatch, tmp_path):
+    """LLM returns fused qty — call_ollama_vision returns normalized dict + warning."""
+    photo = _photo(tmp_path)
+    fused_payload = {
+        "title": "Sausage Orzo",
+        "ingredients": [
+            {"qty": "1 teaspoon", "unit": None, "name": "olive oil"},
+            {"qty": "2", "unit": "cup", "name": "orzo"},  # already ok — no-op
+        ],
+        "tags": ["pasta"],
+    }
+
+    def mock_post(*args, **kwargs):
+        body = {"model": "llama3.2-vision:11b", "response": json.dumps(fused_payload), "eval_count": 20}
+        m = MagicMock()
+        m.status_code = 200
+        m.text = json.dumps(body)
+        m.json.return_value = body
+        return m
+
+    monkeypatch.setattr(_ollama.requests, "post", mock_post)
+    parsed, metadata = _ollama.call_ollama_vision(
+        "llama3.2-vision:11b", photo, "Extract recipe.", base_url="http://localhost:11434"
+    )
+
+    assert parsed is not None
+    first_ing = parsed["ingredients"][0]
+    assert first_ing["qty"] == "1", f"qty should be '1', got {first_ing['qty']!r}"
+    assert first_ing["unit"] == "teaspoon", f"unit should be 'teaspoon', got {first_ing['unit']!r}"
+    assert first_ing["name"] == "olive oil"
+
+    second_ing = parsed["ingredients"][1]
+    assert second_ing["qty"] == "2"   # already ok, unchanged
+    assert second_ing["unit"] == "cup"
+
+    assert "normalize_warnings" in metadata, "metadata should carry normalize_warnings"
+    warns = metadata["normalize_warnings"]
+    assert len(warns) == 1
+    assert "teaspoon" in warns[0]
