@@ -292,3 +292,206 @@ def test_ingest_skips_non_pending_row(tmp_path, monkeypatch):
     ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
     assert ret["status"] == "skipped_already_handled"
     extract_mock.assert_not_called()
+
+
+def test_ingest_photo_partial_warnings_status_ok_partial(tmp_path, monkeypatch):
+    """When some ingredient qtys are compound, status=ok_partial with warnings JSON."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_partial = ExtractResult(
+        status="ok",
+        parsed={
+            "title": "X",
+            "ingredients": [
+                {"name": "a", "qty": 1, "unit": "cup"},
+                {"name": "b", "qty": "compound thing", "unit": None},
+            ],
+            "tags": [],
+        },
+        latency_s=1.0,
+        error=None,
+        n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_partial)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    assert ret["status"] == "ok_partial"
+    assert ret["warning_count"] == 1
+
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ok_partial"
+    assert db_row.completed_at is not None
+    assert db_row.extraction_warnings is not None
+
+    import json
+    warnings = json.loads(db_row.extraction_warnings)
+    assert len(warnings) == 1
+    assert "compound thing" in warnings[0]
+
+
+def test_ingest_photo_clean_extraction_status_ok(tmp_path, monkeypatch):
+    """When all ingredient qtys are numeric, status=ok with no warnings."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_clean = ExtractResult(
+        status="ok",
+        parsed={
+            "title": "Y",
+            "ingredients": [
+                {"name": "butter", "qty": 2, "unit": "tbsp"},
+                {"name": "flour", "qty": "1/2", "unit": "cup"},
+            ],
+            "tags": [],
+        },
+        latency_s=1.0,
+        error=None,
+        n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_clean)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    assert ret["status"] == "ok"
+    assert ret["warning_count"] == 0
+
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ok"
+    assert db_row.completed_at is not None
+
+
+def test_ingest_photo_writes_sidecar_json(tmp_path, monkeypatch):
+    """Successful extraction writes a sidecar JSON next to the photo in _done/."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_ok = ExtractResult(
+        status="ok", parsed=_GOOD_PARSED, latency_s=1.0, error=None, n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_ok)
+
+    ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    sidecar = intake_dir / "_done" / f"{_TEST_SHA}.json"
+    assert sidecar.exists(), "sidecar JSON was not written to _done/"
+    import json
+    parsed = json.loads(sidecar.read_text())
+    assert parsed == _GOOD_PARSED
+
+
+def test_ingest_photo_persists_llm_tags(tmp_path, monkeypatch):
+    """LLM-returned tags are persisted alongside the hardcoded 'photo-intake' tag."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_tagged = ExtractResult(
+        status="ok",
+        parsed={
+            "title": "Veggie Stir Fry",
+            "ingredients": [{"qty": "1", "unit": "cup", "name": "broccoli"}],
+            "tags": ["dessert", "quick", "vegetarian"],
+        },
+        latency_s=1.0,
+        error=None,
+        n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_tagged)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+    assert ret["recipe_id"] is not None
+
+    import sqlite3
+    conn = sqlite3.connect(str(db_p))
+    conn.row_factory = sqlite3.Row
+    tags = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT t.name FROM tags t JOIN recipe_tags rt ON rt.tag_id=t.id WHERE rt.recipe_id=?",
+            (ret["recipe_id"],),
+        ).fetchall()
+    }
+    conn.close()
+
+    assert "photo-intake" in tags
+    assert "dessert" in tags
+    assert "quick" in tags
+    assert "vegetarian" in tags
+    assert len(tags) == 4
+
+
+def test_ingest_photo_sidecar_failure_does_not_block(tmp_path, monkeypatch):
+    """If the sidecar write raises OSError, the recipe row and ok status are unaffected."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_ok = ExtractResult(
+        status="ok", parsed=_GOOD_PARSED, latency_s=1.0, error=None, n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_ok)
+
+    original_write_text = Path.write_text
+
+    def _failing_write_text(self, content, *args, **kwargs):
+        if str(self).endswith(".json"):
+            raise OSError("disk full")
+        return original_write_text(self, content, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _failing_write_text)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    assert ret["status"] == "ok"
+    assert ret["recipe_id"] is not None
+
+    import sqlite3
+    conn = sqlite3.connect(str(db_p))
+    recipe_count = conn.execute("SELECT COUNT(*) FROM recipes WHERE source='nas-intake'").fetchone()[0]
+    conn.close()
+    assert recipe_count == 1, "recipe row must be inserted even if sidecar write fails"
+
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ok"
+
+
+def test_ingest_photo_invalid_tag_entries_skipped(tmp_path, monkeypatch):
+    """Non-string, empty, and whitespace-only tags are silently skipped."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    _setup_intake(intake_dir, db_p)
+
+    result_mixed_tags = ExtractResult(
+        status="ok",
+        parsed={
+            "title": "Z",
+            "ingredients": [{"qty": "1", "unit": "cup", "name": "water"}],
+            "tags": ["dessert", "", 42, "  ", None, "quick"],
+        },
+        latency_s=1.0,
+        error=None,
+        n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_mixed_tags)
+
+    ret = ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+    assert ret["recipe_id"] is not None
+
+    import sqlite3
+    conn = sqlite3.connect(str(db_p))
+    conn.row_factory = sqlite3.Row
+    tags = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT t.name FROM tags t JOIN recipe_tags rt ON rt.tag_id=t.id WHERE rt.recipe_id=?",
+            (ret["recipe_id"],),
+        ).fetchall()
+    }
+    conn.close()
+
+    assert tags == {"photo-intake", "dessert", "quick"}

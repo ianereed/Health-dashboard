@@ -190,8 +190,8 @@ def test_multiple_recipes_in_one_tab(db_path: Path) -> None:
     assert count == 2
 
 
-def test_malformed_parsed_ingredients_skipped(db_path: Path) -> None:
-    """Malformed items (empty name, non-numeric qty) are skipped; valid ones land."""
+def test_malformed_parsed_ingredients_preserved(db_path: Path) -> None:
+    """Empty-name rows are silently skipped; non-numeric qty rows land with NULL qty and a warning."""
     malformed_and_valid = [
         {"name": "", "qty": 1.0, "unit": "cup", "notes": "", "todoist_section": "Pantry"},
         {"name": "valid item", "qty": "nope", "unit": "tbsp", "notes": "", "todoist_section": "Pantry"},
@@ -204,11 +204,17 @@ def test_malformed_parsed_ingredients_skipped(db_path: Path) -> None:
     assert skipped == 0
 
     conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
     ing_count = conn.execute("SELECT COUNT(*) FROM ingredients").fetchone()[0]
-    names = [r[0] for r in conn.execute("SELECT name FROM ingredients").fetchall()]
+    rows = conn.execute("SELECT name, qty_per_serving, qty_raw FROM ingredients ORDER BY sort_order").fetchall()
     conn.close()
-    assert ing_count == 1
-    assert names == ["soy sauce"]
+    # Empty-name row dropped; compound-qty row inserted with NULL qty (never dropped)
+    assert ing_count == 2
+    assert rows[0]["name"] == "valid item"
+    assert rows[0]["qty_per_serving"] is None
+    assert rows[0]["qty_raw"] == "nope"
+    assert rows[1]["name"] == "soy sauce"
+    assert rows[1]["qty_per_serving"] == pytest.approx(0.5)
 
 
 def test_single_transaction_no_orphan_on_batch_failure(db_path: Path) -> None:

@@ -48,6 +48,7 @@ from dotenv import load_dotenv
 
 from meal_planner import db as _db
 from meal_planner.db import add_recipe_tag, init_db, insert_recipe
+from meal_planner.qty_parse import parse_qty
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -346,7 +347,7 @@ def seed(
                     conn=conn,
                 )
                 add_recipe_tag(recipe_id, tag, path=p_db, conn=conn)
-                ing_count = _insert_ingredients_batch(
+                ing_count, ing_warnings = _insert_ingredients_batch(
                     recipe_id=recipe_id,
                     parsed=parsed,
                     base_servings=base_servings,
@@ -364,6 +365,8 @@ def seed(
             done.add(key)
             _save_progress(done, p_progress)
             print(f"recipe_id={recipe_id}, ingredients={ing_count}")
+            for w in ing_warnings:
+                print(f"    WARNING: {w}")
             seeded += 1
 
     return seeded, skipped
@@ -376,8 +379,12 @@ def _insert_ingredients_batch(
     base_servings: int,
     path: Path,
     conn: sqlite3.Connection | None = None,
-) -> int:
-    """Insert all parsed ingredients for a recipe. Returns count inserted.
+) -> tuple[int, list[str]]:
+    """Insert all parsed ingredients for a recipe. Returns (count_inserted, warnings).
+
+    Inserts every row whose `name` is non-empty. Never silently drops a row.
+    warnings: one entry per unparseable qty, formatted as
+      f"row {sort_order}: {name!r} qty={qty_raw!r} not parseable, stored verbatim"
 
     When conn is passed, uses it without committing or closing (caller owns
     the transaction). When conn is None, opens, commits, and closes its own.
@@ -388,38 +395,69 @@ def _insert_ingredients_batch(
         conn = _db._get_conn(p)
     try:
         count = 0
+        warnings: list[str] = []
         for sort_order, item in enumerate(parsed):
-            try:
-                name = str(item.get("name", "")).strip()
-                if not name:
-                    continue
-                qty_raw = item.get("qty")
-                qty_per_serving: float | None
-                if qty_raw is None:
-                    qty_per_serving = None
-                else:
-                    qty_per_serving = float(qty_raw) / base_servings
-                unit = str(item.get("unit", "") or "").strip() or None
-                notes = str(item.get("notes", "") or "").strip() or None
-                todoist_section = str(item.get("todoist_section", "") or "").strip() or None
-            except (TypeError, ValueError) as exc:
-                print(f"\n    ingredient parse error ({exc}) — skipping this ingredient")
+            name = str(item.get("name", "")).strip()
+            if not name:
                 continue
+
+            raw_q = item.get("qty")
+            qty_per_serving: float | None
+            qty_raw_str: str | None
+
+            if raw_q is None:
+                qty_per_serving = None
+                qty_raw_str = None
+            elif isinstance(raw_q, bool):
+                qty_per_serving = None
+                qty_raw_str = repr(raw_q)
+                warnings.append(
+                    f"row {sort_order}: {name!r} qty={raw_q!r} not parseable, stored verbatim"
+                )
+            elif isinstance(raw_q, (int, float)):
+                qty_per_serving = float(raw_q) / base_servings
+                qty_raw_str = str(raw_q)
+            elif isinstance(raw_q, str):
+                numeric, normalized = parse_qty(raw_q)
+                if numeric is not None:
+                    qty_per_serving = numeric / base_servings
+                    qty_raw_str = normalized
+                elif normalized:
+                    qty_per_serving = None
+                    qty_raw_str = normalized
+                    warnings.append(
+                        f"row {sort_order}: {name!r} qty={raw_q!r} not parseable, stored verbatim"
+                    )
+                else:
+                    qty_per_serving = None
+                    qty_raw_str = None
+            else:
+                qty_per_serving = None
+                qty_raw_str = repr(raw_q)
+                warnings.append(
+                    f"row {sort_order}: {name!r} qty={raw_q!r} not parseable, stored verbatim"
+                )
+
+            unit = str(item.get("unit", "") or "").strip() or None
+            notes = str(item.get("notes", "") or "").strip() or None
+            todoist_section = str(item.get("todoist_section", "") or "").strip() or None
 
             cur = conn.execute(
                 """
                 INSERT INTO ingredients
-                  (recipe_id, name, qty_per_serving, unit, notes,
+                  (recipe_id, name, qty_per_serving, qty_raw, unit, notes,
                    todoist_section, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (recipe_id, name, qty_per_serving, unit, notes, todoist_section, sort_order),
+                (recipe_id, name, qty_per_serving, qty_raw_str, unit, notes,
+                 todoist_section, sort_order),
             )
             if cur.rowcount == 1:
                 count += 1
+
         if owned:
             conn.commit()
-        return count
+        return count, warnings
     finally:
         if owned:
             conn.close()

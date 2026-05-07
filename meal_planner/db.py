@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS ingredients (
     recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     qty_per_serving REAL,
+    qty_raw TEXT,
     unit TEXT,
     notes TEXT,
     todoist_section TEXT,
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS photos_intake (
         -- | gemini_pending | gemini_ok | skipped | wedged
     recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
     error TEXT,
+    extraction_warnings TEXT,
     n_retries INTEGER NOT NULL DEFAULT 0,
     enqueued_at TEXT NOT NULL,
     completed_at TEXT,
@@ -74,12 +76,22 @@ def _get_conn(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, type_: str) -> None:
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_}")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower():
+            raise
+
+
 def init_db(path: Path | str | None = None) -> None:
     """Apply schema + pragmas. Idempotent — safe to call multiple times."""
     p = Path(path) if path is not None else DB_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     with _get_conn(p) as conn:
         conn.executescript(_SCHEMA)
+        _add_column_if_missing(conn, "ingredients", "qty_raw", "TEXT")
+        _add_column_if_missing(conn, "photos_intake", "extraction_warnings", "TEXT")
 
 
 def insert_recipe(

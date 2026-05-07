@@ -34,3 +34,36 @@ def test_intake_db_accepts_all_valid_statuses(tmp_path):
         record_intake(sha, f"{sha}.jpg", f"/nas/{sha}.jpg", path=db_p)
         mark_status(sha, status, db_path=db_p)  # must not raise
         assert get_by_sha(sha, db_path=db_p).status == status
+
+
+def test_ok_partial_is_valid_status(tmp_path):
+    db_p = _setup_db(tmp_path)
+    record_intake("sha_op", "src.jpg", "/nas/sha_op.jpg", path=db_p)
+    mark_status("sha_op", "ok_partial", db_path=db_p)  # must not raise
+    assert get_by_sha("sha_op", db_path=db_p).status == "ok_partial"
+
+
+def test_ok_partial_sets_completed_at(tmp_path):
+    db_p = _setup_db(tmp_path)
+    record_intake("sha_opc", "src.jpg", "/nas/sha_opc.jpg", path=db_p)
+    mark_status("sha_opc", "ok_partial", db_path=db_p)
+    row = get_by_sha("sha_opc", db_path=db_p)
+    assert row.completed_at is not None
+
+
+def test_extraction_warnings_persisted(tmp_path):
+    db_p = _setup_db(tmp_path)
+    record_intake("sha_ew", "src.jpg", "/nas/sha_ew.jpg", path=db_p)
+    mark_status("sha_ew", "ok_partial", extraction_warnings='["row 0: foo"]', db_path=db_p)
+    row = get_by_sha("sha_ew", db_path=db_p)
+    assert row.extraction_warnings == '["row 0: foo"]'
+
+
+def test_extraction_warnings_default_none_preserves_existing(tmp_path):
+    db_p = _setup_db(tmp_path)
+    record_intake("sha_ewp", "src.jpg", "/nas/sha_ewp.jpg", path=db_p)
+    mark_status("sha_ewp", "ok_partial", extraction_warnings='["row 0: bar"]', db_path=db_p)
+    # Call again without extraction_warnings — COALESCE must preserve the existing value
+    mark_status("sha_ewp", "extracting", db_path=db_p)
+    row = get_by_sha("sha_ewp", db_path=db_p)
+    assert row.extraction_warnings == '["row 0: bar"]'

@@ -22,6 +22,14 @@ Use null (not the string "null") for qty/unit when not specified.
 Rules for ingredients:
 - "qty" is the quantity as a string (e.g. "1", "2.5", "1/2"). Set to null for
   "to taste", "as needed", "for serving", "a pinch", or any vague/uncountable amount.
+- "qty" MUST be a SINGLE quantity — a bare number or simple fraction. Never produce
+  compound strings like "1/4 cup plus 2 tablespoons" or "1 cup, plus extra for serving".
+  If the source gives two amounts, emit two separate ingredient entries (e.g. one for
+  "1/4 cup flour" and one for "2 tablespoons flour"). If the second amount is incidental
+  (e.g. "plus extra for serving"), drop it and fold any useful note into "name".
+- Never use vague-quantifier prefixes in "qty" ("scant 1 cup", "about 2",
+  "a generous 1/2 cup"). Strip the qualifier; "qty" must be the bare numeric/fraction
+  string. If the qualifier matters (e.g. "scant"), put it in "name".
 - "unit" is the unit of measure (e.g. "cup", "tbsp", "g"). Use null when no unit is given.
 - "name" is the ingredient name only. Do NOT include quantity or unit in the name.
   Preserve the ingredient name exactly as it appears in the source — do not normalize
@@ -47,3 +55,10 @@ Example of an INCORRECT response (missing "name" key — DO NOT do this):
 Example of an INCORRECT response (qty embedded in name — DO NOT do this):
 
 {"title": "Bad", "ingredients": [{"qty": null, "unit": null, "name": "1 cup orzo"}], "tags": []}
+
+Example of an INCORRECT response (compound qty — DO NOT do this):
+
+{"title": "Bad", "ingredients": [{"qty": "1/4 cup plus 2 tablespoons", "unit": null, "name": "flour"}], "tags": []}
+
+The correct split for the above is two entries:
+{"qty": "1/4", "unit": "cup", "name": "flour"} and {"qty": "2", "unit": "tablespoons", "name": "flour"}

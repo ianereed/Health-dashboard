@@ -7,6 +7,7 @@ Card UX (Chunk 3) and wedge logic (Chunk 4) are not yet wired.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
@@ -81,7 +82,14 @@ def meal_planner_ingest_photo(sha: str) -> dict:
                     conn=conn,
                 )
                 add_recipe_tag(recipe_id, "photo-intake", conn=conn)
-                _insert_ingredients_batch(
+                for raw_tag in result.parsed.get("tags", []):
+                    if not isinstance(raw_tag, str):
+                        continue
+                    t = raw_tag.strip()
+                    if not t:
+                        continue
+                    add_recipe_tag(recipe_id, t, conn=conn)
+                ing_count, ing_warnings = _insert_ingredients_batch(
                     recipe_id=recipe_id,
                     parsed=result.parsed.get("ingredients", []),
                     base_servings=4,
@@ -95,9 +103,25 @@ def meal_planner_ingest_photo(sha: str) -> dict:
             finally:
                 conn.close()
 
-            intake_db.mark_status(sha, "ok", recipe_id=recipe_id, extraction_path="ollama")
-            logger.info("meal_planner_ingest_photo: ok sha=%s recipe_id=%d", sha, recipe_id)
-            return {"sha": sha, "status": "ok", "recipe_id": recipe_id, "latency_s": result.latency_s}
+            try:
+                sidecar_path = done_dir / f"{sha}.json"
+                sidecar_path.write_text(json.dumps(result.parsed, indent=2, ensure_ascii=False))
+            except Exception as _sidecar_exc:
+                logger.warning("meal_planner_ingest_photo: sidecar write failed sha=%s: %s", sha, _sidecar_exc)
+
+            if ing_warnings:
+                intake_db.mark_status(
+                    sha, "ok_partial",
+                    recipe_id=recipe_id, extraction_path="ollama",
+                    extraction_warnings=json.dumps(ing_warnings),
+                )
+                status_for_return = "ok_partial"
+            else:
+                intake_db.mark_status(sha, "ok", recipe_id=recipe_id, extraction_path="ollama")
+                status_for_return = "ok"
+            logger.info("meal_planner_ingest_photo: %s sha=%s recipe_id=%d", status_for_return, sha, recipe_id)
+            return {"sha": sha, "status": status_for_return, "recipe_id": recipe_id,
+                    "latency_s": result.latency_s, "warning_count": len(ing_warnings)}
 
         intake_db.mark_status(sha, result.status, error=result.error)
         logger.warning(
