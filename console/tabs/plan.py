@@ -16,7 +16,14 @@ from meal_planner import db as _db
 from meal_planner import queries
 from meal_planner.tag_categories import CATEGORY_MAP, _partition_tags_by_category
 
+from console.tabs._job_status import (
+    _format_status,
+    _read_result_or_synthesize_error,
+)
+
 _CONFIRM_CLEAR_TTL = 10  # seconds before the confirm state resets
+
+__all__ = ["render", "_format_status", "_read_result_or_synthesize_error"]
 
 
 def render() -> None:
@@ -25,29 +32,6 @@ def render() -> None:
     except Exception as exc:
         st.error("Plan tab error — see traceback below")
         st.exception(exc)
-
-
-def _format_status(result: object) -> tuple[str, str]:
-    """Pure function: map a kind result dict to (level, message).
-
-    level is one of "success", "warning", "error".
-    Factored out of the fragment for testability.
-    """
-    if not isinstance(result, dict):
-        return ("error", f"unexpected result shape: {result!r}")
-    err = result.get("error") or result.get("consolidate_failed")
-    sent = result.get("items_sent", result.get("items_cleared", 0))
-    attempted = result.get("items_attempted", sent)
-    dropped = result.get("consolidate_dropped", 0)
-    if err:
-        return ("error", f"failed: {err} (sent {sent}/{attempted})")
-    if sent == attempted and dropped == 0:
-        return ("success", f"{sent}/{attempted} items")
-    return (
-        "warning",
-        f"{sent}/{attempted} items"
-        + (f", {dropped} consolidated-out" if dropped else ""),
-    )
 
 
 @st.fragment(run_every="2s")
@@ -63,7 +47,7 @@ def _render_job_status(state_key: str, label: str) -> None:
         return
     task_id = state["task_id"]
     started_at = state["started_at"]
-    result = _huey.result(task_id, blocking=False)
+    result = _read_result_or_synthesize_error(_huey, task_id)
     if result is None:
         elapsed = int(time.monotonic() - started_at)
         st.info(f"{label}… ({elapsed}s)", icon="⏳")
