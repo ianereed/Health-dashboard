@@ -45,9 +45,9 @@ ingredient under the `meal-planner` label. Ingredients are NOT merged across
 recipes — duplicates appear as separate tasks, each tagged with `(Recipe Name)`
 so you can tell them apart. No Gemini call on send; Gemini consolidation is
 available in `consolidation.py` for a future opt-in phase. "Clear all
-meal-planner items from Todoist" button available for cleanup. Tag filter
-(Phase 14.11) — `st.pills` of every tag in the DB plus AND/OR toggle, above
-the grid. Empty selection = show all.
+meal-planner items from Todoist" button available for cleanup. Tag filter (Phase 17) — three labeled pill rows (Cuisine / Meat+diet / Other)
+plus AND/OR radio. Empty selection = show all. `st.toggle("Alphabetical")`
+above the grid: on = alpha by title (default, session-only), off = most-recently-added first.
 
 **Phase 15 done (2026-05-06)** — bake-off picked `llama3.2-vision:11b` via
 Ollama on the mini for recipe-photo extraction. See

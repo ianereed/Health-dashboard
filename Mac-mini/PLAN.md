@@ -110,8 +110,11 @@ over-fire guards, retry-path normalization, and DB-persisted normalize warnings.
 `st.pills` row into three labeled groups (Cuisine / Meat+diet / Other) driven by
 `meal_planner/tag_categories.py:CATEGORY_MAP`. 6 new tests; 279/279 pass.
 
-**Next: Chunk B** — `st.toggle("Alphabetical")` alpha-sort toggle on Recipes grid.
-Then Chunk C — Todoist-success indicator via huey result polling.
+**Chunk B DONE 2026-05-07** (`e590aa6`) — Alpha-sort toggle: `st.toggle("Alphabetical", value=True)`
+above the grid. Default on = alpha by title; off = id DESC (most-recently-added). `sort` param
+added to `search_recipes()`; validated before SQL composition. 5 new tests; 566 pass.
+
+**Next: Chunk C** — Todoist-success indicator via huey result polling.
 
 **Then: Phase 18 — Edit recipes via web GUI + Sheet decommission +
 jobs-queue bug fix.** Two workstreams bundled in one phase:
