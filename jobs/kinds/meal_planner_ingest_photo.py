@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 _DEFAULT_INTAKE_DIR = "/Users/homeserver/Share1/Documents/Recipes/photo-intake"
 
 
-@huey.task(retries=2, retry_delay=60)
+# No huey-level retries: the outer except below marks the row ollama_error
+# before re-raising, and the skip-check at the top gates on status=='pending'.
+# With retries enabled, huey would re-dequeue the task only to have it return
+# skipped_already_handled — wasted queue cycles. Recovery for ollama_error rows
+# is owned by Chunk 4 wedge logic.
+@huey.task()
 @requires_model("vision", keep_alive=300, batch_hint="drain")
 @requires(["fs:meal_planner", "model:llama3.2-vision:11b"])
 def meal_planner_ingest_photo(sha: str) -> dict:
@@ -36,63 +41,74 @@ def meal_planner_ingest_photo(sha: str) -> dict:
 
     intake_db.mark_status(sha, "extracting")
 
-    nas_path = Path(row.nas_path)
-    intake_dir = Path(os.environ.get("MEAL_PLANNER_NAS_INTAKE_DIR", _DEFAULT_INTAKE_DIR))
-    done_dir = intake_dir / "_done"
-    done_path = done_dir / f"{sha}.jpg"
+    try:
+        nas_path = Path(row.nas_path)
+        intake_dir = Path(os.environ.get("MEAL_PLANNER_NAS_INTAKE_DIR", _DEFAULT_INTAKE_DIR))
+        done_dir = intake_dir / "_done"
+        done_path = done_dir / f"{sha}.jpg"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        preprocessed = tmp / f"{sha}.jpg"
-        _process_one(
-            src=nas_path,
-            dst=preprocessed,
-            max_dim=1500,
-            autocontrast_cutoff=2,
-            log_path=tmp / "preprocess.log",
-        )
-        result = extract_recipe_from_photo(
-            preprocessed,
-            timeout_s=500,
-            num_ctx=4096,
-            keep_alive="300s",
-        )
-
-    if result.status == "ok":
-        db_path = _db.DB_PATH
-        conn = _db._get_conn(db_path)
-        try:
-            title = (result.parsed.get("title") or "") or sha
-            recipe_id = insert_recipe(
-                title=title,
-                source="nas-intake",
-                photo_path=str(done_path),
-                conn=conn,
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            preprocessed = tmp / f"{sha}.jpg"
+            _process_one(
+                src=nas_path,
+                dst=preprocessed,
+                max_dim=1500,
+                autocontrast_cutoff=2,
+                log_path=tmp / "preprocess.log",
             )
-            add_recipe_tag(recipe_id, "photo-intake", conn=conn)
-            _insert_ingredients_batch(
-                recipe_id=recipe_id,
-                parsed=result.parsed.get("ingredients", []),
-                base_servings=4,
-                path=db_path,
-                conn=conn,
+            result = extract_recipe_from_photo(
+                preprocessed,
+                timeout_s=500,
+                num_ctx=4096,
+                keep_alive="300s",
             )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
 
-        done_dir.mkdir(parents=True, exist_ok=True)
-        nas_path.rename(done_path)
-        intake_db.mark_status(sha, "ok", recipe_id=recipe_id, extraction_path="ollama")
-        logger.info("meal_planner_ingest_photo: ok sha=%s recipe_id=%d", sha, recipe_id)
-        return {"sha": sha, "status": "ok", "recipe_id": recipe_id, "latency_s": result.latency_s}
+        if result.status == "ok":
+            # Option B: rename first so photo_path always points at a real file.
+            # If rename fails, the outer try/except catches it → ollama_error, no recipe row.
+            done_dir.mkdir(parents=True, exist_ok=True)
+            nas_path.rename(done_path)
 
-    intake_db.mark_status(sha, result.status, error=result.error)
-    logger.warning(
-        "meal_planner_ingest_photo: %s sha=%s error=%s",
-        result.status, sha, (result.error or "")[:200],
-    )
-    return {"sha": sha, "status": result.status, "recipe_id": None, "latency_s": result.latency_s}
+            db_path = _db.DB_PATH
+            conn = _db._get_conn(db_path)
+            try:
+                title = (result.parsed.get("title") or "") or sha
+                recipe_id = insert_recipe(
+                    title=title,
+                    source="nas-intake",
+                    photo_path=str(done_path),
+                    conn=conn,
+                )
+                add_recipe_tag(recipe_id, "photo-intake", conn=conn)
+                _insert_ingredients_batch(
+                    recipe_id=recipe_id,
+                    parsed=result.parsed.get("ingredients", []),
+                    base_servings=4,
+                    path=db_path,
+                    conn=conn,
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+
+            intake_db.mark_status(sha, "ok", recipe_id=recipe_id, extraction_path="ollama")
+            logger.info("meal_planner_ingest_photo: ok sha=%s recipe_id=%d", sha, recipe_id)
+            return {"sha": sha, "status": "ok", "recipe_id": recipe_id, "latency_s": result.latency_s}
+
+        intake_db.mark_status(sha, result.status, error=result.error)
+        logger.warning(
+            "meal_planner_ingest_photo: %s sha=%s error=%s",
+            result.status, sha, (result.error or "")[:200],
+        )
+        return {"sha": sha, "status": result.status, "recipe_id": None, "latency_s": result.latency_s}
+
+    except Exception as exc:
+        intake_db.mark_status(
+            sha, "ollama_error",
+            error=f"ingest crash: {exc!r}"[:500],
+        )
+        raise

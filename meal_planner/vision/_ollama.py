@@ -197,7 +197,7 @@ def call_ollama_vision(
     # Decide whether to retry: HTTP non-200 is unrecoverable; otherwise, validate the parsed
     # output against the schema. Retry only when first call returned a parseable-but-malformed
     # response (parse fail or schema fail) — not when the model is unreachable / rate-limited.
-    if md1.get("http_status") and md1["http_status"] != 200:
+    if md1.get("http_status") != 200:  # None (RequestException) or non-200 — both unrecoverable
         return None, metadata
 
     is_valid, schema_errors = validate_schema(parsed)

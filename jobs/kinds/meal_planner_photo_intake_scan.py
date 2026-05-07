@@ -24,7 +24,7 @@ from meal_planner.vision import intake_db
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTAKE_DIR = "/Users/homeserver/Share1/Documents/Recipes/photo-intake"
-_IMAGE_SUFFIXES = frozenset({".jpg", ".JPG", ".jpeg", ".JPEG", ".png", ".PNG"})
+_IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
 _SUBFOLDERS = ("_processing", "_done", "_skipped", "_wedged")
 
 
@@ -51,6 +51,18 @@ def meal_planner_photo_intake_scan() -> dict:
     for sub in _SUBFOLDERS:
         (intake_dir / sub).mkdir(parents=True, exist_ok=True)
 
+    # Self-heal: re-enqueue pending rows whose file still exists in _processing/.
+    # Covers consumer crashes and enqueue failures from prior ticks.
+    # Rows whose file is missing are handled by Chunk 4 wedge logic.
+    re_enqueued = 0
+    for row in intake_db.list_pending():
+        if Path(row.nas_path).exists():
+            try:
+                meal_planner_ingest_photo(row.sha)
+                re_enqueued += 1
+            except Exception as exc:
+                logger.warning("self-heal enqueue failed sha=%s: %s", row.sha, exc)
+
     discovered = 0
     enqueued = 0
     skipped_dup = 0
@@ -58,7 +70,7 @@ def meal_planner_photo_intake_scan() -> dict:
     for f in files:
         if not f.is_file():
             continue
-        if f.suffix not in _IMAGE_SUFFIXES:
+        if f.suffix.lower() not in _IMAGE_SUFFIXES:
             continue
 
         discovered += 1
@@ -74,15 +86,37 @@ def meal_planner_photo_intake_scan() -> dict:
             skipped_dup += 1
             continue
 
-        f.rename(target)
-        intake_db.record_intake(sha, source_path=f.name, nas_path=str(target))
-        meal_planner_ingest_photo(sha)
-        enqueued += 1
-        logger.info("meal_planner_photo_intake_scan: enqueued sha=%s", sha)
+        # Claim first (DB row is canonical), then move file.
+        if not intake_db.record_intake(sha, source_path=f.name, nas_path=str(target)):
+            # Race: another tick claimed this sha. Treat as dup.
+            skipped_dup += 1
+            continue
+
+        try:
+            f.rename(target)
+        except OSError as exc:
+            logger.warning(
+                "meal_planner_photo_intake_scan: rename failed sha=%s: %s — rolling back row",
+                sha, exc,
+            )
+            intake_db._delete_by_sha(sha)
+            continue
+
+        try:
+            meal_planner_ingest_photo(sha)
+            enqueued += 1
+            logger.info("meal_planner_photo_intake_scan: enqueued sha=%s", sha)
+        except Exception as exc:
+            logger.warning(
+                "meal_planner_photo_intake_scan: enqueue failed sha=%s: %s",
+                sha, exc,
+            )
+            intake_db.mark_status(sha, "ollama_error", error=f"enqueue failed: {exc!r}"[:500])
 
     return {
         "discovered": discovered,
         "enqueued": enqueued,
         "skipped_dup": skipped_dup,
+        "re_enqueued": re_enqueued,
         "tick_at": datetime.now(timezone.utc).isoformat(),
     }

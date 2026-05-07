@@ -100,4 +100,16 @@ def _load_all_kinds() -> None:
                 logger.warning("failed to load internal kind %s: %s", modname, exc)
 
 
+def _init_meal_planner_schema() -> None:
+    try:
+        from meal_planner.db import init_db
+        init_db()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "meal_planner.init_db() failed at consumer boot: %s", exc
+        )
+
+
+_init_meal_planner_schema()
 _load_all_kinds()

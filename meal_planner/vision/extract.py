@@ -9,8 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import requests
-
 from meal_planner.vision._ollama import call_ollama_vision, load_prompt, validate_schema
 
 
@@ -47,41 +45,23 @@ def extract_recipe_from_photo(
     """
     prompt = load_prompt()
 
-    try:
-        parsed, metadata = call_ollama_vision(
-            model,
-            photo_path,
-            prompt,
-            base_url=base_url,
-            num_ctx=num_ctx,
-            keep_alive=keep_alive,
-            timeout_s=timeout_s,
-        )
-    except requests.Timeout as exc:
-        return ExtractResult(
-            status="timeout",
-            parsed=None,
-            latency_s=None,
-            error=str(exc) or "request timed out",
-            n_retries=0,
-        )
-    except requests.RequestException as exc:
-        return ExtractResult(
-            status="ollama_error",
-            parsed=None,
-            latency_s=None,
-            error=str(exc),
-            n_retries=0,
-        )
+    # _ollama_one_call swallows RequestException (incl. Timeout) and surfaces
+    # the message in metadata["raw_response"]. Classify by string content below.
+    parsed, metadata = call_ollama_vision(
+        model,
+        photo_path,
+        prompt,
+        base_url=base_url,
+        num_ctx=num_ctx,
+        keep_alive=keep_alive,
+        timeout_s=timeout_s,
+    )
 
     latency_s = metadata.get("latency_s")
     n_retries = metadata.get("n_retries", 0) or 0
     raw = metadata.get("raw_response") or ""
 
-    # call_ollama_vision distinguishes timeout via requests.Timeout exception above;
-    # if it returned (None, …) we're either in HTTP-error or parse-fail land. The
-    # raw_response on RequestException starts with the str(exception) which contains
-    # "timed out" / "Read timed out" — fall through to ollama_error otherwise.
+    # If (None, metadata) was returned, classify by the raw_response string.
     if parsed is None:
         if "timed out" in raw.lower() or "timeout" in raw.lower():
             return ExtractResult(

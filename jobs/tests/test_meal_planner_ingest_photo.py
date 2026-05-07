@@ -211,6 +211,62 @@ def test_ingest_ollama_error_records_error(tmp_path, monkeypatch):
     assert "500" in db_row.error
 
 
+def test_ingest_rename_failure_keeps_photo_path_real(tmp_path, monkeypatch):
+    """Option B: rename before DB write. Rename failure → no recipe row, status=ollama_error."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    nas_path = _setup_intake(intake_dir, db_p)
+
+    result_ok = ExtractResult(
+        status="ok", parsed=_GOOD_PARSED, latency_s=1.0, error=None, n_retries=0,
+    )
+    _wire(monkeypatch, intake_dir, db_p, result_ok)
+
+    original_rename = Path.rename
+
+    def _failing_rename(self, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "rename", _failing_rename)
+
+    with pytest.raises(OSError, match="disk full"):
+        ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    # No recipe row inserted.
+    import sqlite3
+    conn = sqlite3.connect(str(db_p))
+    row = conn.execute("SELECT * FROM recipes WHERE source='nas-intake'").fetchone()
+    conn.close()
+    assert row is None
+
+    # photos_intake row marked ollama_error.
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ollama_error"
+
+    # Source file still in _processing/ (rename never succeeded).
+    assert nas_path.exists()
+
+
+def test_ingest_crash_records_error(tmp_path, monkeypatch):
+    """Unhandled exception from _process_one marks row as ollama_error and re-raises."""
+    db_p = _setup_db(tmp_path)
+    intake_dir = tmp_path / "photo-intake"
+    nas_path = _setup_intake(intake_dir, db_p)
+
+    _wire(monkeypatch, intake_dir, db_p, ExtractResult(
+        status="ok", parsed=_GOOD_PARSED, latency_s=1.0, error=None, n_retries=0,
+    ))
+    # Override _process_one to crash after _wire already set it to a copy helper.
+    monkeypatch.setattr(ingest_mod, "_process_one", lambda *a, **kw: (_ for _ in ()).throw(OSError("NAS gone")))
+
+    with pytest.raises(OSError, match="NAS gone"):
+        ingest_mod.meal_planner_ingest_photo.func(_TEST_SHA)
+
+    db_row = get_by_sha(_TEST_SHA, db_path=db_p)
+    assert db_row.status == "ollama_error"
+    assert "NAS gone" in db_row.error
+
+
 def test_ingest_skips_non_pending_row(tmp_path, monkeypatch):
     """If the row status is not 'pending', ingest returns early without extraction."""
     db_p = _setup_db(tmp_path)
