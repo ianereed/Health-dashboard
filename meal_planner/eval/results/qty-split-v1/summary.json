@@ -1,0 +1,1775 @@
+{
+  "n_photos": 12,
+  "split_rate": 0.7241379310344828,
+  "scale_ok_rate": 0.8275862068965517,
+  "qty_unit_fused_rate": 0.011494252873563218,
+  "unit_in_name_rate": 0.16091954022988506,
+  "ingredients_present": 87,
+  "ingredient_f1_mean": 0.676531564965473,
+  "title_accuracy_mean": 0.8333333333333334,
+  "parse_correctness_mean": 0.6269149831649832,
+  "structural_validity_mean": 0.9166666666666666,
+  "agg": {
+    "split_ok": 63,
+    "qty_unit_fused": 1,
+    "unit_in_name": 14,
+    "qty_only_no_unit": 9,
+    "present": 87
+  },
+  "per_photo": [
+    {
+      "photo": "IMG_9956.jpg",
+      "status": "ok",
+      "latency_s": 59.764,
+      "split_counts": {
+        "split_ok": 9,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 0,
+        "present": 9
+      },
+      "ing_classes": [
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "Reed Parents Enchiladas",
+        "ingredients": [
+          {
+            "qty": "2",
+            "unit": "tsp",
+            "name": "vegetable oil"
+          },
+          {
+            "qty": "1",
+            "unit": "large yellow onion, chopped (about 1 cup)",
+            "name": "onion"
+          },
+          {
+            "qty": "1",
+            "unit": "medium red bell pepper, chopped (about 1 cup)",
+            "name": "bell pepper"
+          },
+          {
+            "qty": "1/2",
+            "unit": "cup",
+            "name": "chopped fresh cilantro"
+          },
+          {
+            "qty": "3",
+            "unit": "cups",
+            "name": "shredded cheddar cheese"
+          },
+          {
+            "qty": "1",
+            "unit": "Emeril's Enchilada Sauce recipe below",
+            "name": "enchilada sauce"
+          },
+          {
+            "qty": "8-10",
+            "unit": "flour tortillas (or substitute GF tortillas)",
+            "name": "tortillas"
+          },
+          {
+            "qty": "1/2",
+            "unit": "cup",
+            "name": "sour cream"
+          },
+          {
+            "qty": "8",
+            "unit": "tsp",
+            "name": "chopped fresh cilantro"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Reed Parents Enchiladas",
+        "ingredients": [
+          {
+            "qty": "2",
+            "unit": "tsp",
+            "name": "vegetable oil"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "large yellow onion, chopped (about 1 cup)"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "medium red bell pepper, chopped (about 1 cup)"
+          },
+          {
+            "qty": "1",
+            "unit": "20oz can",
+            "name": "pineapple tidbits in juice, drained, 1/3C juice reserved"
+          },
+          {
+            "qty": "1",
+            "unit": "15oz can",
+            "name": "Progresso black beans, drained, rinsed"
+          },
+          {
+            "qty": "1",
+            "unit": "4.5oz can",
+            "name": "Old El Paso chopped green chilies"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "salt"
+          },
+          {
+            "qty": "1/2",
+            "unit": "cup",
+            "name": "chopped fresh cilantro"
+          },
+          {
+            "qty": "3",
+            "unit": "cups",
+            "name": "shredded cheddar cheese"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "Emeril's enchilada sauce (recipe below)"
+          },
+          {
+            "qty": "8-10",
+            "unit": null,
+            "name": "flour tortillas"
+          },
+          {
+            "qty": "1/2",
+            "unit": "cup",
+            "name": "sour cream"
+          },
+          {
+            "qty": "8",
+            "unit": "tsp",
+            "name": "chopped fresh cilantro"
+          }
+        ],
+        "tags": [
+          "mexican"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.8181818181818181,
+        "ingredient_precision": 1.0,
+        "ingredient_recall": 0.6923076923076923,
+        "parse_correctness": 0.7777777777777778,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9957.jpg",
+      "status": "timeout",
+      "latency_s": 500.008,
+      "split_counts": {
+        "split_ok": 0,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 0,
+        "present": 0
+      },
+      "ing_classes": [],
+      "extracted": {},
+      "golden": {
+        "title": "Braised Beef Stew",
+        "ingredients": [
+          {
+            "qty": "3",
+            "unit": "lb",
+            "name": "marbled chuck roast, cut into cubes"
+          },
+          {
+            "qty": "3",
+            "unit": "tbsp",
+            "name": "canola oil"
+          },
+          {
+            "qty": "900",
+            "unit": "ml",
+            "name": "water (3 3/4 cup) or 4 cup low sodium chicken broth"
+          },
+          {
+            "qty": "180",
+            "unit": "ml",
+            "name": "Kikkoman soy sauce (3/4 cup)"
+          },
+          {
+            "qty": "3",
+            "unit": "tbsp",
+            "name": "sugar"
+          },
+          {
+            "qty": "6",
+            "unit": "tbsp",
+            "name": "sesame oil (3/8 cup)"
+          },
+          {
+            "qty": "10",
+            "unit": "cloves",
+            "name": "garlic"
+          },
+          {
+            "qty": "2-3",
+            "unit": "tbsp",
+            "name": "crushed dried red peppers (1 tbsp for mild)"
+          },
+          {
+            "qty": "1",
+            "unit": "tea ball",
+            "name": "star anise"
+          },
+          {
+            "qty": "1",
+            "unit": "tea ball",
+            "name": "Sichuan peppercorn"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "medium onion, cut into wedges"
+          },
+          {
+            "qty": "0.5",
+            "unit": "head",
+            "name": "green cabbage, cut into short strips"
+          },
+          {
+            "qty": "8",
+            "unit": null,
+            "name": "soft boiled eggs (6 min boiling; pierce before boiling; ice bath 5 min; crack \u2192 ice bath 15 min)"
+          },
+          {
+            "qty": "4",
+            "unit": null,
+            "name": "medium yellow potatoes, cut into cubes (10 min boiling time)"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "udon noodles / rice"
+          }
+        ],
+        "tags": [
+          "asian",
+          "soup",
+          "beef"
+        ]
+      },
+      "score": {
+        "title_accuracy": 0.0,
+        "ingredient_f1": 0.0,
+        "parse_correctness": 0.0,
+        "structural_validity": false,
+        "errors": [
+          "timeout"
+        ]
+      }
+    },
+    {
+      "photo": "IMG_9958.jpg",
+      "status": "ok",
+      "latency_s": 42.123,
+      "split_counts": {
+        "split_ok": 1,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 1,
+        "present": 2
+      },
+      "ing_classes": [
+        "qty_only_no_unit",
+        "split_ok",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty"
+      ],
+      "extracted": {
+        "title": "Mom's Dan Gung",
+        "ingredients": [
+          {
+            "qty": "4x",
+            "unit": null,
+            "name": "eggs"
+          },
+          {
+            "qty": "1",
+            "unit": "cup",
+            "name": "chicken stock"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "white pepper"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "salt"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "green onions, sliced"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "cooked ground pork or bacon bits"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "soy sauce"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "sesame oil"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Mom's Dan Gung",
+        "ingredients": [
+          {
+            "qty": "4",
+            "unit": null,
+            "name": "eggs"
+          },
+          {
+            "qty": "1",
+            "unit": "cup",
+            "name": "chicken stock"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "white pepper"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "salt"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "green onions, sliced"
+          },
+          {
+            "qty": "1/3-1/2",
+            "unit": "lb",
+            "name": "cooked ground pork or bacon bits"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "soy sauce"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "sesame oil"
+          }
+        ],
+        "tags": [
+          "asian",
+          "pork"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 1.0,
+        "ingredient_precision": 1.0,
+        "ingredient_recall": 1.0,
+        "parse_correctness": 0.75,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9959.jpg",
+      "status": "ok",
+      "latency_s": 49.366,
+      "split_counts": {
+        "split_ok": 5,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 3,
+        "present": 8
+      },
+      "ing_classes": [
+        "qty_only_no_unit",
+        "qty_only_no_unit",
+        "qty_only_no_unit",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "Sushi",
+        "ingredients": [
+          {
+            "qty": "6",
+            "unit": null,
+            "name": "seaweed"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "immitation crab"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "mayo"
+          },
+          {
+            "qty": "2",
+            "unit": "cups",
+            "name": "rice"
+          },
+          {
+            "qty": "1",
+            "unit": "avocado",
+            "name": "avocado"
+          },
+          {
+            "qty": "1",
+            "unit": "fish",
+            "name": "fish"
+          },
+          {
+            "qty": "6",
+            "unit": "tempura shrimp",
+            "name": "tempura shrimp"
+          },
+          {
+            "qty": "1",
+            "unit": "roasted sesame seeds",
+            "name": "roasted sesame seeds"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Sushi",
+        "ingredients": [
+          {
+            "qty": "6",
+            "unit": "sheets",
+            "name": "Yamamoto Yama seaweed"
+          },
+          {
+            "qty": "1",
+            "unit": "pack",
+            "name": "Aquamarine imitation crab (8-10 sticks), cut into 1cm pieces"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "Kewpie mayo (to taste)"
+          },
+          {
+            "qty": "2",
+            "unit": "cups",
+            "name": "short grain rice (ie Nishiki), uncooked"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "large avocado, cut into small strips"
+          },
+          {
+            "qty": "1",
+            "unit": "6inx4in piece",
+            "name": "sashimi-grade salmon, cut into small strips"
+          },
+          {
+            "qty": "6",
+            "unit": "pieces",
+            "name": "tempura shrimp, baked and cut lengthwise"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "roasted sesame seeds (for topping rice)"
+          }
+        ],
+        "tags": [
+          "asian"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.5,
+        "ingredient_precision": 0.5,
+        "ingredient_recall": 0.5,
+        "parse_correctness": 0.375,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9960.jpg",
+      "status": "ok",
+      "latency_s": 65.288,
+      "split_counts": {
+        "split_ok": 0,
+        "qty_unit_fused": 0,
+        "unit_in_name": 12,
+        "qty_only_no_unit": 1,
+        "present": 13
+      },
+      "ing_classes": [
+        "qty_only_no_unit",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name",
+        "unit_in_name"
+      ],
+      "extracted": {
+        "title": "Instant Pot Butter Chicken",
+        "ingredients": [
+          {
+            "qty": "1 14-",
+            "unit": null,
+            "name": "Canned Tomatoes"
+          },
+          {
+            "qty": "5-6",
+            "unit": null,
+            "name": "cloves Garlic"
+          },
+          {
+            "qty": "1-2",
+            "unit": null,
+            "name": "teaspoons Minced Ginger"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "teaspoon Turmeric"
+          },
+          {
+            "qty": "1/2",
+            "unit": null,
+            "name": "teaspoons Cayenne Pepper"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "teaspoon Smoked Paprika"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "teaspoon Kosher Salt"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "teaspoon Garam Masala"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "teaspoon Ground Cumin"
+          },
+          {
+            "qty": "2-3/4",
+            "unit": null,
+            "name": "pound Boneless Skinless Chicken Thighs"
+          },
+          {
+            "qty": "2",
+            "unit": null,
+            "name": "ounces butter"
+          },
+          {
+            "qty": "4",
+            "unit": null,
+            "name": "ounces Heavy Cream"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "teaspoon Garam Masala"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Instant Pot Butter Chicken",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": "14oz can",
+            "name": "canned tomatoes"
+          },
+          {
+            "qty": "5-6",
+            "unit": "cloves",
+            "name": "garlic"
+          },
+          {
+            "qty": "1-2",
+            "unit": "tsp",
+            "name": "minced ginger"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "turmeric"
+          },
+          {
+            "qty": "1/2",
+            "unit": "tsp",
+            "name": "cayenne pepper"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "smoked paprika"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "kosher salt"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "garam masala"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "ground cumin"
+          },
+          {
+            "qty": "2-3",
+            "unit": "lb",
+            "name": "boneless skinless chicken thighs (or breast, bone-in; if frozen add 1-2 min to cook time)"
+          },
+          {
+            "qty": "2",
+            "unit": "oz",
+            "name": "butter, cut into cubes (or coconut oil if dairy free)"
+          },
+          {
+            "qty": "4",
+            "unit": "oz",
+            "name": "heavy cream (or full-fat coconut milk if dairy free)"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "garam masala"
+          },
+          {
+            "qty": "1/4-1/2",
+            "unit": "cup",
+            "name": "chopped cilantro"
+          }
+        ],
+        "tags": [
+          "indian",
+          "asian",
+          "instant pot"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.8148148148148148,
+        "ingredient_precision": 0.8461538461538461,
+        "ingredient_recall": 0.7857142857142857,
+        "parse_correctness": 0.4090909090909091,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9961.jpg",
+      "status": "ok",
+      "latency_s": 46.199,
+      "split_counts": {
+        "split_ok": 5,
+        "qty_unit_fused": 1,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 2,
+        "present": 8
+      },
+      "ing_classes": [
+        "qty_only_no_unit",
+        "qty_unit_fused",
+        "qty_only_no_unit",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "Bok Choy and Mushroom Stir-Fry",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "Ramekin"
+          },
+          {
+            "qty": "1 tsp",
+            "unit": "minced",
+            "name": "ginger"
+          },
+          {
+            "qty": "4",
+            "unit": null,
+            "name": "garlic cloves"
+          },
+          {
+            "qty": "1.5",
+            "unit": "lb",
+            "name": "baby bok choy"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "soy sauce"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "sesame oil"
+          },
+          {
+            "qty": "12",
+            "unit": "oz",
+            "name": "fresh shiitake mushrooms"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "Shaoxng rice wine"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Bok Choy and Mushroom Stir Fry",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "minced ginger"
+          },
+          {
+            "qty": "4",
+            "unit": "cloves",
+            "name": "garlic, smashed or sliced"
+          },
+          {
+            "qty": "12",
+            "unit": "oz",
+            "name": "fresh shiitake mushrooms, trimmed, rinsed, then spun dry"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "Shaoxing rice wine"
+          },
+          {
+            "qty": "1.5",
+            "unit": "lb",
+            "name": "baby bok choy, trimmed, rinsed, then spun dry"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "soy sauce"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "sesame oil"
+          }
+        ],
+        "tags": [
+          "asian",
+          "chinese"
+        ]
+      },
+      "score": {
+        "title_accuracy": 0.0,
+        "ingredient_f1": 0.7999999999999999,
+        "ingredient_precision": 0.75,
+        "ingredient_recall": 0.8571428571428571,
+        "parse_correctness": 0.8333333333333334,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9962.jpg",
+      "status": "ok",
+      "latency_s": 51.426,
+      "split_counts": {
+        "split_ok": 5,
+        "qty_unit_fused": 0,
+        "unit_in_name": 1,
+        "qty_only_no_unit": 0,
+        "present": 6
+      },
+      "ing_classes": [
+        "unit_in_name",
+        "qty_empty",
+        "split_ok",
+        "qty_empty",
+        "qty_empty",
+        "split_ok",
+        "qty_empty",
+        "split_ok",
+        "qty_empty",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "Instant Pot Chicken Juk With Scallion Sauce",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "cup short-grain white rice"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "water"
+          },
+          {
+            "qty": "3",
+            "unit": "ounces",
+            "name": "white button mushrooms"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "small carrot"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "garlic clove"
+          },
+          {
+            "qty": "1/4",
+            "unit": "teaspoon",
+            "name": "sesame oil"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "chicken broth"
+          },
+          {
+            "qty": "1",
+            "unit": "pound",
+            "name": "boneless, skinless chicken thighs"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "scallions"
+          },
+          {
+            "qty": "2",
+            "unit": "scallions",
+            "name": "chicken broth"
+          },
+          {
+            "qty": "1/2",
+            "unit": "pilchoue",
+            "name": "galllupl"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Instant Pot Chicken Juk with Scallion Sauce",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": "cup",
+            "name": "short-grain white rice (about 7 1/2 oz), rinsed until water runs clear"
+          },
+          {
+            "qty": "3",
+            "unit": "oz",
+            "name": "white button mushrooms, very thinly sliced (about 1 packed cup)"
+          },
+          {
+            "qty": "1",
+            "unit": "clove",
+            "name": "garlic, minced"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "toasted sesame oil"
+          },
+          {
+            "qty": "6",
+            "unit": "cups",
+            "name": "low-sodium chicken broth"
+          },
+          {
+            "qty": "1",
+            "unit": "2-inch piece",
+            "name": "fresh ginger, peeled and julienned"
+          },
+          {
+            "qty": "1",
+            "unit": "lb",
+            "name": "boneless, skinless chicken thighs"
+          },
+          {
+            "qty": "2",
+            "unit": null,
+            "name": "scallions, trimmed and finely chopped (about 1/3 cup)"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "safflower or canola oil"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "black vinegar"
+          }
+        ],
+        "tags": [
+          "asian",
+          "chinese",
+          "instant pot"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.5714285714285713,
+        "ingredient_precision": 0.5454545454545454,
+        "ingredient_recall": 0.6,
+        "parse_correctness": 0.5,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9963.jpg",
+      "status": "ok",
+      "latency_s": 58.568,
+      "split_counts": {
+        "split_ok": 12,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 0,
+        "present": 12
+      },
+      "ing_classes": [
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "Ginger Fried Rice",
+        "ingredients": [
+          {
+            "qty": "2",
+            "unit": "oz",
+            "name": "ginger"
+          },
+          {
+            "qty": "1",
+            "unit": "lb",
+            "name": "chicken"
+          },
+          {
+            "qty": "4",
+            "unit": "eggs",
+            "name": "egg"
+          },
+          {
+            "qty": "2",
+            "unit": "cups",
+            "name": "white rice"
+          },
+          {
+            "qty": "2",
+            "unit": "cups",
+            "name": "water"
+          },
+          {
+            "qty": "2",
+            "unit": "green",
+            "name": "onion"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "salt"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "white pepper"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "cornstarch"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "sugar"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "soy sauce"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "sesame oil"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Ginger Fried Rice",
+        "ingredients": [
+          {
+            "qty": "2",
+            "unit": "oz",
+            "name": "ginger (1 tbsp minced) / 1 tbsp minced garlic"
+          },
+          {
+            "qty": "10-16",
+            "unit": "oz",
+            "name": "chicken"
+          },
+          {
+            "qty": "4",
+            "unit": null,
+            "name": "eggs"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "salt (for eggs)"
+          },
+          {
+            "qty": "2",
+            "unit": "cup",
+            "name": "white rice, uncooked"
+          },
+          {
+            "qty": "2",
+            "unit": "cup",
+            "name": "water"
+          },
+          {
+            "qty": "2",
+            "unit": null,
+            "name": "green onion"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "oil"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "salt (for cooking)"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "white pepper"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "oyster sauce"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "soy sauce"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "sesame oil"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "water"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "cornstarch (or 1/2 tsp baking soda, omit water)"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "salt"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "white pepper"
+          }
+        ],
+        "tags": [
+          "asian",
+          "rice"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.5517241379310345,
+        "ingredient_precision": 0.6666666666666666,
+        "ingredient_recall": 0.47058823529411764,
+        "parse_correctness": 0.5,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9964.jpg",
+      "status": "ok",
+      "latency_s": 50.152,
+      "split_counts": {
+        "split_ok": 10,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 0,
+        "present": 10
+      },
+      "ing_classes": [
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "The Best Chocolate Chip Cookies Recipe",
+        "ingredients": [
+          {
+            "qty": "8",
+            "unit": "ounces",
+            "name": "unsalted butter"
+          },
+          {
+            "qty": "1",
+            "unit": "standard",
+            "name": "ice cube"
+          },
+          {
+            "qty": "10",
+            "unit": "ounces",
+            "name": "all-purpose flour"
+          },
+          {
+            "qty": "3/4",
+            "unit": "teaspoon",
+            "name": "baking soda"
+          },
+          {
+            "qty": "2",
+            "unit": "teaspoons",
+            "name": "Diamond Crystal kosher salt"
+          },
+          {
+            "qty": "5",
+            "unit": "ounces",
+            "name": "granulated sugar"
+          },
+          {
+            "qty": "2",
+            "unit": "large",
+            "name": "eggs"
+          },
+          {
+            "qty": "2",
+            "unit": "teaspoons",
+            "name": "vanilla extract"
+          },
+          {
+            "qty": "5",
+            "unit": "ounces",
+            "name": "dark brown sugar"
+          },
+          {
+            "qty": "8",
+            "unit": "ounces",
+            "name": "semisweet chocolate"
+          }
+        ],
+        "tags": [
+          "chocolate",
+          "chips",
+          "cookies"
+        ]
+      },
+      "golden": {
+        "title": "The Best Chocolate Chip Cookies Recipe",
+        "ingredients": [
+          {
+            "qty": "8",
+            "unit": "oz",
+            "name": "unsalted butter (2 sticks; 225g)"
+          },
+          {
+            "qty": "1",
+            "unit": "ice cube",
+            "name": "ice cube (about 2 tbsp / 30ml frozen water)"
+          },
+          {
+            "qty": "10",
+            "unit": "oz",
+            "name": "all-purpose flour (about 2 cups; 280g)"
+          },
+          {
+            "qty": "3/4",
+            "unit": "tsp",
+            "name": "baking soda (3g)"
+          },
+          {
+            "qty": "2",
+            "unit": "tsp",
+            "name": "Diamond Crystal kosher salt (or 1 tsp table salt; 4g)"
+          },
+          {
+            "qty": "5",
+            "unit": "oz",
+            "name": "granulated sugar (about 3/4 cup; 140g)"
+          },
+          {
+            "qty": "2",
+            "unit": null,
+            "name": "large eggs (100g)"
+          },
+          {
+            "qty": "2",
+            "unit": "tsp",
+            "name": "vanilla extract (10ml)"
+          },
+          {
+            "qty": "5",
+            "unit": "oz",
+            "name": "dark brown sugar (about 1/2 tightly packed cup plus 2 tbsp; 140g)"
+          },
+          {
+            "qty": "8",
+            "unit": "oz",
+            "name": "semisweet chocolate, roughly chopped into 1/4-to 1/2-inch chunks (225g)"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "coarse sea salt, for garnish"
+          }
+        ],
+        "tags": [
+          "baking",
+          "dessert"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.9523809523809523,
+        "ingredient_precision": 1.0,
+        "ingredient_recall": 0.9090909090909091,
+        "parse_correctness": 0.9,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9965.jpg",
+      "status": "ok",
+      "latency_s": 49.493,
+      "split_counts": {
+        "split_ok": 0,
+        "qty_unit_fused": 0,
+        "unit_in_name": 1,
+        "qty_only_no_unit": 0,
+        "present": 1
+      },
+      "ing_classes": [
+        "unit_in_name",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty",
+        "qty_empty"
+      ],
+      "extracted": {
+        "title": "Venetian Tiramisu",
+        "ingredients": [
+          {
+            "qty": "2",
+            "unit": null,
+            "name": "large bowls"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "electric beater or stand mixer"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "sifter (red mokos)"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "4x6\" tin for setting"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "pavesini ladyfingers, slim"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "ristora cacao powder, no sugar"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "bowl of espresso"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "granarolo mascarponne"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "3 eggs"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "white sugar"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Venetian Tiramisu",
+        "ingredients": [
+          {
+            "qty": null,
+            "unit": null,
+            "name": "Pavesini ladyfingers, slim"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "Ristora cacao powder, no sugar"
+          },
+          {
+            "qty": "1",
+            "unit": "bowl",
+            "name": "espresso"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "Granarolo mascarpone"
+          },
+          {
+            "qty": "3",
+            "unit": null,
+            "name": "eggs"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "white sugar"
+          }
+        ],
+        "tags": [
+          "baking",
+          "dessert",
+          "italian"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.625,
+        "ingredient_precision": 0.5,
+        "ingredient_recall": 0.8333333333333334,
+        "parse_correctness": 0.7,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9966.jpg",
+      "status": "ok",
+      "latency_s": 54.732,
+      "split_counts": {
+        "split_ok": 8,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 2,
+        "present": 10
+      },
+      "ing_classes": [
+        "qty_only_no_unit",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "qty_only_no_unit"
+      ],
+      "extracted": {
+        "title": "Mom's Marinated Chicken Drumsticks",
+        "ingredients": [
+          {
+            "qty": "5",
+            "unit": null,
+            "name": "chicken drumsticks"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "soy sauce"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "red or yellow curry paste"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "sesame oil"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "oyster sauce"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "honey"
+          },
+          {
+            "qty": "1/2",
+            "unit": "tsp",
+            "name": "salt"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "coconut oil"
+          },
+          {
+            "qty": "1/2",
+            "unit": "tsp",
+            "name": "black paper"
+          },
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "garlic, smashed"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Mom's Marinated Chicken Drumsticks",
+        "ingredients": [
+          {
+            "qty": "5",
+            "unit": null,
+            "name": "chicken drumsticks, washed"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "soy sauce"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "red or yellow curry paste (or 2 tsp curry powder)"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "sesame oil"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "oyster sauce"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "honey"
+          },
+          {
+            "qty": "1/2",
+            "unit": "tsp",
+            "name": "salt"
+          },
+          {
+            "qty": "1",
+            "unit": "tbsp",
+            "name": "coconut oil"
+          },
+          {
+            "qty": "1/2",
+            "unit": "tsp",
+            "name": "black pepper"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "smashed garlic mixed with a bit of hot water (optional)"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "minced ginger"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "minced garlic"
+          }
+        ],
+        "tags": [
+          "asian",
+          "chicken"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.8181818181818182,
+        "ingredient_precision": 0.9,
+        "ingredient_recall": 0.75,
+        "parse_correctness": 0.9444444444444444,
+        "structural_validity": true,
+        "errors": []
+      }
+    },
+    {
+      "photo": "IMG_9967.jpg",
+      "status": "ok",
+      "latency_s": 49.917,
+      "split_counts": {
+        "split_ok": 8,
+        "qty_unit_fused": 0,
+        "unit_in_name": 0,
+        "qty_only_no_unit": 0,
+        "present": 8
+      },
+      "ing_classes": [
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok",
+        "split_ok"
+      ],
+      "extracted": {
+        "title": "Chocolate Pie",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": "whole pie crust",
+            "name": "pie crust"
+          },
+          {
+            "qty": "1 1/2",
+            "unit": "c.",
+            "name": "sugar"
+          },
+          {
+            "qty": "1/4",
+            "unit": "c.",
+            "name": "cornstarch"
+          },
+          {
+            "qty": "1/4",
+            "unit": "tsp.",
+            "name": "salt"
+          },
+          {
+            "qty": "3",
+            "unit": "c.",
+            "name": "whole milk"
+          },
+          {
+            "qty": "4",
+            "unit": "whole",
+            "name": "egg yolks"
+          },
+          {
+            "qty": "6",
+            "unit": "1/2",
+            "name": "oz. weight bittersweet chocolate"
+          },
+          {
+            "qty": "2",
+            "unit": "tsp.",
+            "name": "vanil"
+          }
+        ],
+        "tags": []
+      },
+      "golden": {
+        "title": "Chocolate Pie",
+        "ingredients": [
+          {
+            "qty": "1",
+            "unit": null,
+            "name": "whole pie crust, baked and cooled (or Oreo or graham cracker crust)"
+          },
+          {
+            "qty": "1 1/2",
+            "unit": "cup",
+            "name": "sugar"
+          },
+          {
+            "qty": "1/4",
+            "unit": "cup",
+            "name": "cornstarch"
+          },
+          {
+            "qty": "1/4",
+            "unit": "tsp",
+            "name": "salt"
+          },
+          {
+            "qty": "3",
+            "unit": "cups",
+            "name": "whole milk"
+          },
+          {
+            "qty": "4",
+            "unit": null,
+            "name": "whole egg yolks"
+          },
+          {
+            "qty": "6 1/2",
+            "unit": "oz",
+            "name": "bittersweet chocolate, chopped finely"
+          },
+          {
+            "qty": "1",
+            "unit": "tsp",
+            "name": "vanilla extract"
+          },
+          {
+            "qty": "2",
+            "unit": "tbsp",
+            "name": "butter"
+          },
+          {
+            "qty": null,
+            "unit": null,
+            "name": "whipped cream, for serving"
+          }
+        ],
+        "tags": [
+          "baking",
+          "pie",
+          "dessert"
+        ]
+      },
+      "score": {
+        "title_accuracy": 1.0,
+        "ingredient_f1": 0.6666666666666665,
+        "ingredient_precision": 0.75,
+        "ingredient_recall": 0.6,
+        "parse_correctness": 0.8333333333333334,
+        "structural_validity": true,
+        "errors": []
+      }
+    }
+  ]
+}
