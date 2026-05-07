@@ -11,6 +11,7 @@ import time
 import pandas as pd
 import streamlit as st
 
+from jobs import huey as _huey
 from meal_planner import db as _db
 from meal_planner import queries
 from meal_planner.tag_categories import CATEGORY_MAP, _partition_tags_by_category
@@ -24,6 +25,58 @@ def render() -> None:
     except Exception as exc:
         st.error("Plan tab error — see traceback below")
         st.exception(exc)
+
+
+def _format_status(result: object) -> tuple[str, str]:
+    """Pure function: map a kind result dict to (level, message).
+
+    level is one of "success", "warning", "error".
+    Factored out of the fragment for testability.
+    """
+    if not isinstance(result, dict):
+        return ("error", f"unexpected result shape: {result!r}")
+    err = result.get("error") or result.get("consolidate_failed")
+    sent = result.get("items_sent", result.get("items_cleared", 0))
+    attempted = result.get("items_attempted", sent)
+    dropped = result.get("consolidate_dropped", 0)
+    if err:
+        return ("error", f"failed: {err} (sent {sent}/{attempted})")
+    if sent == attempted and dropped == 0:
+        return ("success", f"{sent}/{attempted} items")
+    return (
+        "warning",
+        f"{sent}/{attempted} items"
+        + (f", {dropped} consolidated-out" if dropped else ""),
+    )
+
+
+@st.fragment(run_every="2s")
+def _render_job_status(state_key: str, label: str) -> None:
+    """Poll huey for the job stored at session_state[state_key].
+
+    Renders a spinner while pending; renders terminal status (success/warning/
+    error) with the result-dict summary when complete. Clears state_key on
+    terminal render so the fragment stops re-running.
+    """
+    state = st.session_state.get(state_key)
+    if not state:
+        return
+    task_id = state["task_id"]
+    started_at = state["started_at"]
+    result = _huey.result(task_id, blocking=False)
+    if result is None:
+        elapsed = int(time.monotonic() - started_at)
+        st.info(f"{label}… ({elapsed}s)", icon="⏳")
+        return
+    # terminal — render and clear
+    del st.session_state[state_key]
+    level, message = _format_status(result)
+    if level == "success":
+        st.success(f"{label}: {message}")
+    elif level == "warning":
+        st.warning(f"{label}: {message}")
+    else:
+        st.error(f"{label}: {message}")
 
 
 def _render_inner() -> None:
@@ -120,12 +173,19 @@ def _render_inner() -> None:
                 )
 
                 result = meal_planner_send_to_todoist(checked)
-                st.success(f"Job enqueued — task ID: {getattr(result, 'id', '?')}")
+                st.session_state["_send_job"] = {
+                    "task_id": result.id,
+                    "started_at": time.monotonic(),
+                }
+                st.rerun()
             except Exception as exc:
                 st.error(f"Failed to enqueue: {exc}")
 
+    _render_job_status("_send_job", "Send to Todoist")
+
     st.divider()
     _render_clear_button()
+    _render_job_status("_clear_job", "Clear Todoist")
 
 
 def _render_clear_button() -> None:
@@ -162,7 +222,11 @@ def _render_clear_button() -> None:
                 try:
                     from jobs.kinds.meal_planner_clear_todoist import meal_planner_clear_todoist
                     result = meal_planner_clear_todoist()
-                    st.success(f"Job enqueued — task ID: {getattr(result, 'id', '?')}. Check Jobs tab for results.")
+                    st.session_state["_clear_job"] = {
+                        "task_id": result.id,
+                        "started_at": time.monotonic(),
+                    }
+                    st.rerun()
                 except Exception as exc:
                     st.error(f"Failed to enqueue: {exc}")
         with col_no:

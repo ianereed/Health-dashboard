@@ -5,7 +5,7 @@ Key invariants under test:
   - Only task IDs returned by the labeled list are deleted.
   - An unfiltered task list is never iterated.
   - Per-task failures are collected; the kind does not abort on first failure.
-  - Return dict has the correct shape: {"deleted", "failed", "failed_ids"}.
+  - Return dict has the correct shape: {"items_cleared": int, "error": str | None}.
   - Pagination (next_cursor) is followed until exhausted.
 """
 from __future__ import annotations
@@ -89,9 +89,8 @@ def test_only_labeled_task_ids_are_deleted(monkeypatch):
     out = result(blocking=True, timeout=5)
 
     assert sorted(deleted_ids) == sorted(_TASK_IDS)
-    assert out["deleted"] == 3
-    assert out["failed"] == 0
-    assert out["failed_ids"] == []
+    assert out["items_cleared"] == 3
+    assert out["error"] is None
 
 
 def test_failure_collected_not_abort(monkeypatch):
@@ -121,13 +120,13 @@ def test_failure_collected_not_abort(monkeypatch):
     assert "id-b" in call_order
     assert "id-c" in call_order
 
-    assert out["deleted"] == 2
-    assert out["failed"] == 1
-    assert out["failed_ids"] == ["id-b"]
+    assert out["items_cleared"] == 2
+    assert out["error"] is not None
+    assert "1" in out["error"]
 
 
 def test_return_dict_shape(monkeypatch):
-    """Return dict must contain exactly: deleted, failed, failed_ids."""
+    """Return dict must contain: items_cleared (int) and error (str | None)."""
     monkeypatch.setenv("TODOIST_API_TOKEN", _TOKEN)
 
     monkeypatch.setattr(_requests, "get", lambda *a, **kw: _list_resp([]))
@@ -137,9 +136,8 @@ def test_return_dict_shape(monkeypatch):
     result = meal_planner_clear_todoist()
     out = result(blocking=True, timeout=5)
 
-    assert "deleted" in out
-    assert "failed" in out
-    assert "failed_ids" in out
+    assert "items_cleared" in out
+    assert "error" in out
 
 
 def test_pagination_follows_next_cursor(monkeypatch):
@@ -177,8 +175,8 @@ def test_pagination_follows_next_cursor(monkeypatch):
     assert get_calls[1] == {"label": "meal-planner", "cursor": "cursor-abc"}
 
     assert sorted(deleted_ids) == ["page1-task", "page2-task"]
-    assert out["deleted"] == 2
-    assert out["failed"] == 0
+    assert out["items_cleared"] == 2
+    assert out["error"] is None
 
 
 def test_empty_todoist_returns_zero_counts(monkeypatch):
@@ -193,7 +191,7 @@ def test_empty_todoist_returns_zero_counts(monkeypatch):
     result = meal_planner_clear_todoist()
     out = result(blocking=True, timeout=5)
 
-    assert out == {"deleted": 0, "failed": 0, "failed_ids": []}
+    assert out == {"items_cleared": 0, "error": None}
     assert delete_called == []
 
 
@@ -201,3 +199,18 @@ def test_label_constant_is_meal_planner():
     """Sanity: LABEL constant must be 'meal-planner', not configurable."""
     from jobs.kinds.meal_planner_clear_todoist import LABEL
     assert LABEL == "meal-planner"
+
+
+def test_clear_todoist_returns_full_result_shape(monkeypatch):
+    """Result dict has items_cleared (int) and error (None on success)."""
+    monkeypatch.setenv("TODOIST_API_TOKEN", _TOKEN)
+
+    monkeypatch.setattr(_requests, "get", lambda *a, **kw: _list_resp(["t-1", "t-2"]))
+    monkeypatch.setattr(_requests, "delete", lambda *a, **kw: _delete_resp(204))
+
+    from jobs.kinds.meal_planner_clear_todoist import meal_planner_clear_todoist
+    result = meal_planner_clear_todoist()
+    out = result(blocking=True, timeout=5)
+
+    assert out["items_cleared"] == 2
+    assert out["error"] is None

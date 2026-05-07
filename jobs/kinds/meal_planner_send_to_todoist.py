@@ -3,6 +3,13 @@
 For each selected recipe, scales ingredients to the requested serving count
 and creates one Todoist task per ingredient. Ingredients are NOT merged across
 recipes; duplicates appear as separate tasks with a (Recipe Name) suffix.
+
+Result-dict contract (forward-compatible with future Consolidate + Send phase):
+  items_sent:          int   — tasks successfully created
+  items_attempted:     int   — tasks attempted
+  consolidate_failed:  str | None — None (reserved for future D2 phase)
+  consolidate_dropped: int   — 0 (reserved for future D2 phase)
+  error:               str | None — top-level error string, None on success
 """
 from __future__ import annotations
 
@@ -83,4 +90,10 @@ def meal_planner_send_to_todoist(recipe_scales: list[list]) -> dict:
     logger.info(
         "meal_planner_send_to_todoist: sent %d/%d items", sent, attempted
     )
-    return {"items_sent": sent, "items_attempted": attempted}
+    return {
+        "items_sent": sent,
+        "items_attempted": attempted,
+        "consolidate_failed": None,
+        "consolidate_dropped": 0,
+        "error": None,
+    }

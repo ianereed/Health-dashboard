@@ -33,7 +33,7 @@ def meal_planner_clear_todoist() -> dict:
         TODOIST_API_TOKEN — loaded by run-consumer.sh from meal_planner/.env
 
     Returns:
-        {"deleted": N, "failed": M, "failed_ids": [...]}
+        {"items_cleared": N, "error": str | None}
     """
     token = os.environ["TODOIST_API_TOKEN"]
     headers = {"Authorization": f"Bearer {token}"}
@@ -41,13 +41,13 @@ def meal_planner_clear_todoist() -> dict:
     task_ids = _list_labeled_tasks(headers)
     logger.info("meal_planner_clear_todoist: found %d tasks to delete", len(task_ids))
 
-    deleted = 0
+    cleared = 0
     failed_ids: list[str] = []
 
     for task_id in task_ids:
         resp = requests.delete(f"{_BASE_URL}/tasks/{task_id}", headers=headers, timeout=10)
         if resp.status_code in (200, 204):
-            deleted += 1
+            cleared += 1
         else:
             logger.warning(
                 "meal_planner_clear_todoist: failed to delete task %s (HTTP %d)",
@@ -56,12 +56,13 @@ def meal_planner_clear_todoist() -> dict:
             )
             failed_ids.append(task_id)
 
+    error = f"{len(failed_ids)} task(s) failed to delete" if failed_ids else None
     logger.info(
-        "meal_planner_clear_todoist: deleted=%d failed=%d",
-        deleted,
-        len(failed_ids),
+        "meal_planner_clear_todoist: cleared=%d error=%s",
+        cleared,
+        error,
     )
-    return {"deleted": deleted, "failed": len(failed_ids), "failed_ids": failed_ids}
+    return {"items_cleared": cleared, "error": error}
 
 
 def _list_labeled_tasks(headers: dict) -> list[str]:

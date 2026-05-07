@@ -107,6 +107,26 @@ def test_happy_path_emits_one_task_per_scaled_ingredient(monkeypatch, tmp_path: 
         assert call["output_config"]["labels"] == ["meal-planner"]
 
 
+def test_send_to_todoist_returns_full_result_shape(monkeypatch, tmp_path: Path) -> None:
+    """Result dict has all Phase 17 Chunk C keys with correct no-consolidate defaults."""
+    import meal_planner.db as _db_mod
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    rid = _setup_db_one_recipe(db_path)
+    _make_env(monkeypatch)
+    _adapter_mock(monkeypatch)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    result = meal_planner_send_to_todoist([[rid, 4]])
+    out = result(blocking=True, timeout=5)
+
+    assert "items_sent" in out
+    assert "items_attempted" in out
+    assert out["consolidate_failed"] is None
+    assert out["consolidate_dropped"] == 0
+    assert out["error"] is None
+
+
 def test_title_includes_scaled_qty_and_recipe_suffix(monkeypatch, tmp_path: Path) -> None:
     """Title contains scaled qty (0.25 × 4 = 1.0 → '1') and ends with ' (Test Pasta)'."""
     import meal_planner.db as _db_mod
