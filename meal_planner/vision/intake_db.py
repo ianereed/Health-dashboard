@@ -12,6 +12,13 @@ from pathlib import Path
 
 from meal_planner.db import DB_PATH, _get_conn, init_db
 
+_VALID_STATUSES = frozenset({
+    "pending", "extracting", "ok",
+    "parse_fail", "validation_fail", "ollama_error", "timeout",
+    "outlier_pending", "gemini_pending", "gemini_ok",
+    "skipped", "wedged",
+})
+
 
 @dataclass
 class IntakeRow:
@@ -92,6 +99,17 @@ def record_intake(
         return cur.rowcount > 0
 
 
+def _delete_by_sha(sha: str, *, db_path: Path | None = None) -> None:
+    """Internal: remove a row when a scan-side rename failed before the file moved.
+
+    Not for general use — Chunk 4 wedge logic owns the legitimate "remove
+    photos_intake row" cases.
+    """
+    p = db_path or DB_PATH
+    with _get_conn(p) as c:
+        c.execute("DELETE FROM photos_intake WHERE sha = ?", (sha,))
+
+
 def mark_status(
     sha: str,
     status: str,
@@ -106,6 +124,8 @@ def mark_status(
 
     Sets completed_at when the new status is a terminal one.
     """
+    if status not in _VALID_STATUSES:
+        raise ValueError(f"unknown status: {status!r}")
     terminal = {"ok", "skipped", "wedged", "gemini_ok"}
     completed_at = datetime.now(timezone.utc).isoformat() if status in terminal else None
 
