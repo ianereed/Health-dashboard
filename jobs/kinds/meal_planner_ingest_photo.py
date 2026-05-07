@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 _DEFAULT_INTAKE_DIR = "/Users/homeserver/Share1/Documents/Recipes/photo-intake"
 
 
-@huey.task(retries=2, retry_delay=60)
+# No huey-level retries: the outer except below marks the row ollama_error
+# before re-raising, and the skip-check at the top gates on status=='pending'.
+# With retries enabled, huey would re-dequeue the task only to have it return
+# skipped_already_handled — wasted queue cycles. Recovery for ollama_error rows
+# is owned by Chunk 4 wedge logic.
+@huey.task()
 @requires_model("vision", keep_alive=300, batch_hint="drain")
 @requires(["fs:meal_planner", "model:llama3.2-vision:11b"])
 def meal_planner_ingest_photo(sha: str) -> dict:

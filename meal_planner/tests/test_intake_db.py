@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from meal_planner.db import _SCHEMA, _get_conn
-from meal_planner.vision.intake_db import mark_status, record_intake
+from meal_planner.vision.intake_db import get_by_sha, mark_status, record_intake
 
 
 def _setup_db(tmp_path: Path) -> Path:
@@ -33,3 +33,4 @@ def test_intake_db_accepts_all_valid_statuses(tmp_path):
         sha = f"sha{i:04d}"
         record_intake(sha, f"{sha}.jpg", f"/nas/{sha}.jpg", path=db_p)
         mark_status(sha, status, db_path=db_p)  # must not raise
+        assert get_by_sha(sha, db_path=db_p).status == status
