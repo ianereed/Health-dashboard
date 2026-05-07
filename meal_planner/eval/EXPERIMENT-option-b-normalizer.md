@@ -1,10 +1,11 @@
 # Plan — Option B: programmatic qty/unit normalizer
 
-> **Status:** Ready to execute autonomously in a fresh session.
-> **Prereq:** Phase 16 Chunk 2.6 is on main @ `f55f8a8`; experiment branch
-> `phase16/qty-unit-split-prompt` @ `ea185ad` carries the V1 prompt
-> experiment results. Read `meal_planner/eval/EXPERIMENT-qty-unit-split.md`
-> for the full V1 writeup before starting.
+> **Status:** SHIPPED 2026-05-07. Chunk F landed on main as `cce769c`; the
+> review-fix pass `4b38f10` followed (multi-token units, P2 over-fire guards,
+> retry-path normalize, P3 discarded warning, DB-persisted normalize warnings).
+> Replay validation: scale_ok 76.7% → 97.7%, F1 0.754 → 0.761. 273 tests pass.
+> Implementation lives at `meal_planner/vision/_normalize.py`; integration in
+> `meal_planner/vision/_ollama.py:call_ollama_vision`.
 
 ## TL;DR for the executor
 

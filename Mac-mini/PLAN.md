@@ -91,8 +91,23 @@ after merging changes to any `jobs/kinds/*.py` file.
 helper added; `search_recipes()` extended with `tag_logic` param. 148/148 tests
 pass.
 
-**Next: Phase 15 — Recipe-photo-LLM bake-off** (gated on Anny's full SC
-walkthrough, SC1–SC6 including SC3 now resolved by Phase 14.11).
+**Phase 15 DONE 2026-05-06** — bake-off ran on llama3.2-vision:11b; production
+prompt baseline + warm-reuse harness. Output: `meal_planner/eval/PHASE15_NOTES.md`.
+
+**Phase 16 DONE 2026-05-07** — Recipe-photo intake live. NAS folder watched by
+`meal_planner_photo_intake_scan` enqueues `meal_planner_ingest_photo`, which runs
+llama3.2-vision via Ollama on the mini, validates schema, retries once on
+malformed output, runs `_normalize.py` to fix qty/unit fusion bugs, inserts the
+recipe + ingredients + tags into `recipes.db`, and renames the photo into `_done/`
+with a sidecar JSON. Chunk F (`cce769c`) added the deterministic post-extraction
+normalizer; review-fixes pass (`4b38f10`) hardened multi-token units, Pattern 2
+over-fire guards, retry-path normalization, and DB-persisted normalize warnings.
+273/273 tests pass.
+
+**Next: Phase 17 — UI polish.** Tag filter categorized (cuisine/country,
+meat-type/vegetarian, other), Consolidate button on Recipes tab (wires the
+existing `consolidation.py`), alphabetical-sort toggle, Todoist-success indicator
+on the Recipes tab (today's toast fires on enqueue, not on job completion).
 
 Pre-flight (confirm health before starting new work):
 
@@ -377,13 +392,15 @@ Tag filter above the multi-recipe grid on the Recipes tab. Resolves SC3.
 - `meal_planner/tests/test_queries.py` — 5 new tests: orphan exclusion, OR union,
   AND intersection, empty tags = all, invalid logic raises. 148/148 tests pass.
 
-## Phase 15 — Recipe-photo-LLM bake-off
+## Phase 15 — Recipe-photo-LLM bake-off (DONE 2026-05-06)
 
-Research only — no production code. Compare Gemini-flash, Gemini-flash-lite,
-Claude Haiku-4.5, GPT-4o-mini, local qwen2.5-vl on recipe photo extraction.
-Output: `meal_planner/MODEL_CHOICE.md`.
+Research only — no production code. Output: `meal_planner/eval/PHASE15_NOTES.md`.
+Picked **llama3.2-vision:11b** via Ollama on the mini (local; no API quota
+exposure). Bake-off harness in `meal_planner/eval/bake_off.py` with
+warm-reuse + relaxed F1 + per-call `keep_alive_override`. Synonyms +
+unicode-fraction expansion in `meal_planner/eval/synonyms.yml`.
 
-Entry gate: Anny's full SC walkthrough (SC1–SC6) passes; SC3 now resolved by Phase 14.11.
+Entry gate (Anny's full SC walkthrough SC1–SC6) passed during Phase 14.11.
 
 **Open question — API quota visibility.** Google's Gemini API has no
 programmatic quota-check endpoint; the only signals are 429s at request time,
@@ -398,7 +415,39 @@ bake-off, we need a local API counter (per-key, per-day, per-model) so we can
 tell when the daily limit is closing in before users hit silent failures.
 Whichever provider wins should get the same treatment.
 
-## Phase 16+ — Meal-planner overhaul: build (numbered as each chunk is claimed)
+## Phase 16 — Recipe-photo intake (DONE 2026-05-07)
+
+Pipeline: NAS folder `Share1/Documents/Recipes/photo-intake/` →
+`meal_planner_photo_intake_scan` (every 60s, computes sha, dedups against
+`photos_intake` table, moves to `_processing/`) → `meal_planner_ingest_photo`
+(preprocess image, call Ollama vision, normalize, insert recipe + tags +
+ingredients, rename to `_done/<sha>.jpg` + `<sha>.json` sidecar).
+
+**Chunks shipped:**
+
+- **Chunk 1** — Schema add: `photos_intake` table with sha-keyed dedup;
+  `meal_planner.db.init_db` extended.
+- **Chunk 2** — `meal_planner_photo_intake_scan` + `meal_planner_ingest_photo`
+  job kinds; `_processing/` / `_done/` directory state machine; status row per
+  photo (pending → extracting → ok / ok_partial / ollama_error).
+- **Chunk 2.5** — Stuck-extracting recovery, rename split-brain fixes, scan
+  self-heal (`5793488`).
+- **Chunk 2.6** — Never-drop ingestion: prompt tightening, sidecar JSON,
+  tag persistence (`f55f8a8`).
+- **Chunk F** — Post-extraction normalizer `_normalize.py` (`cce769c`):
+  three deterministic patterns fix LLM qty/unit output bugs without touching
+  the prompt. Replay validation: scale_ok 76.7% → 97.7%, F1 0.754 → 0.761.
+- **Review-fix pass** (`4b38f10`): multi-token units (`fl oz`,
+  `fluid ounces`), Pattern 2 over-fire guards (`slice of bread`, single-word
+  unit names), retry-path always normalizes, Pattern 3 emits a "discarded
+  unit content" warning, replay dedup gates on scoreable status, DB
+  persists `normalize_warnings`. 273/273 tests pass.
+
+Production `meal_planner_ingest_photo` runs on the mini's
+`com.home-tools.jobs-consumer` LaunchAgent. Live test: Nanaimo Bars PDF
+processed end-to-end 2026-05-06.
+
+## Phase 17+ — Future chunks (numbered as each chunk is claimed)
 
 Each chunk gets the next sequential Phase number when claimed.
 Numbers are not pre-allocated.

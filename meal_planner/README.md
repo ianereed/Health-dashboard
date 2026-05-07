@@ -38,18 +38,29 @@ Use the explicit `?tab=recipes` parameter — tab clicks don't update the URL
 
 ## Status
 
-**V0 live (Phase 14.11, 2026-05-05).** 16 recipes seeded from the existing
-Sheet. Multi-recipe grid (st.data_editor): check one or more recipes, adjust
-servings, click "Send checked recipes to Todoist". Creates one Todoist task
-per scaled ingredient under the `meal-planner` label. Ingredients are NOT
-merged across recipes — duplicates appear as separate tasks, each tagged with
-`(Recipe Name)` so you can tell them apart. No Gemini call on send; Gemini
-consolidation is available in `consolidation.py` for a future opt-in phase.
-"Clear all meal-planner items from Todoist" button available for cleanup.
-Tag filter (Phase 14.11) — `st.pills` of every tag in the DB plus AND/OR
-toggle, above the grid. Empty selection = show all.
+**Phase 14 V0 live (2026-05-05).** 16 recipes seeded from the existing Sheet.
+Multi-recipe grid (st.data_editor): check one or more recipes, adjust servings,
+click "Send checked recipes to Todoist". Creates one Todoist task per scaled
+ingredient under the `meal-planner` label. Ingredients are NOT merged across
+recipes — duplicates appear as separate tasks, each tagged with `(Recipe Name)`
+so you can tell them apart. No Gemini call on send; Gemini consolidation is
+available in `consolidation.py` for a future opt-in phase. "Clear all
+meal-planner items from Todoist" button available for cleanup. Tag filter
+(Phase 14.11) — `st.pills` of every tag in the DB plus AND/OR toggle, above
+the grid. Empty selection = show all.
 
-Phase 15+ direction: `Mac-mini/PLAN.md`.
+**Phase 15 done (2026-05-06)** — bake-off picked `llama3.2-vision:11b` via
+Ollama on the mini for recipe-photo extraction. See
+`meal_planner/eval/PHASE15_NOTES.md` and `meal_planner/eval/bake_off.py`.
+
+**Phase 16 done (2026-05-07)** — Recipe-photo intake live. Drop a JPG/PDF in
+`Share1/Documents/Recipes/photo-intake/`; the mini extracts → normalizes →
+inserts the recipe + ingredients + tags into the DB and renames to `_done/`.
+Job kinds: `meal_planner_photo_intake_scan` + `meal_planner_ingest_photo`.
+Post-extraction normalizer at `meal_planner/vision/_normalize.py` fixes the
+qty/unit-fusion class of LLM bugs deterministically.
+
+Phase 17+ direction (UI polish): `Mac-mini/PLAN.md`.
 
 ## ⚠️ Critical model rules
 
