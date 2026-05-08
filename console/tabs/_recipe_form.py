@@ -5,6 +5,33 @@ without a running Streamlit server. Streamlit imports belong in plan.py.
 """
 from __future__ import annotations
 
+import math
+
+
+# ---------------------------------------------------------------------------
+# Form → DB value coercion
+# ---------------------------------------------------------------------------
+
+def clean_optional_str(v: object) -> str | None:
+    """Pass strings through (including empty); coerce anything else to None.
+
+    Used at the form→DB boundary so clearing a text field actually writes
+    "" to the DB instead of being silently dropped by a truthiness filter.
+    """
+    return v if isinstance(v, str) else None
+
+
+def nan_to_none(v):
+    """Convert NaN floats to None; pass everything else through.
+
+    pandas / ``st.data_editor`` returns ``float('nan')`` for cleared numeric
+    cells. NaN is not ``None``, so without this conversion the DB silently
+    stores NaN and reads back NaN — corrupting downstream arithmetic.
+    """
+    if isinstance(v, float) and math.isnan(v):
+        return None
+    return v
+
 
 # ---------------------------------------------------------------------------
 # Validation

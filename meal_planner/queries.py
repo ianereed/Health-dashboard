@@ -281,6 +281,11 @@ def delete_recipe(
         cur = c.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
         if cur.rowcount == 0:
             raise KeyError(recipe_id)
+        # GC orphan tag rows (FK cascade only clears recipe_tags rows, not
+        # tags). Matches set_recipe_tags' cleanup so list_all_tags stays tight.
+        c.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM recipe_tags)"
+        )
 
     if conn is not None:
         _run(conn)

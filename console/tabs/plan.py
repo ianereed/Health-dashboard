@@ -18,8 +18,10 @@ import streamlit as st
 
 from console import jobs_client as _jobs_client
 from console.tabs._recipe_form import (
+    clean_optional_str,
     diff_ingredients,
     ingredients_to_rows,
+    nan_to_none,
     normalize_tags,
     validate_recipe_form,
 )
@@ -34,6 +36,22 @@ from console.tabs._job_status import (
 
 _CONFIRM_CLEAR_TTL = 10  # seconds before the confirm state resets
 _CONFIRM_DELETE_TTL = 10  # seconds before the delete confirm state resets
+
+# Widget key prefixes for the edit panel. Streamlit ignores `value=` /
+# `default=` on re-render when `key=` is already in session_state, so leaving
+# these populated would silently overwrite the DB on the next save (and hide
+# concurrent writes from another browser session). Pop all of them on every
+# panel-close path.
+_EDIT_WIDGET_KEY_PREFIXES = (
+    "edit_title",
+    "edit_servings",
+    "edit_instructions",
+    "edit_cook_time",
+    "edit_source",
+    "edit_tags",
+    "edit_new_tag",
+    "edit_ingr",
+)
 
 __all__ = ["render", "_format_status", "_read_result_or_synthesize_error"]
 
@@ -234,13 +252,28 @@ def _render_inner() -> None:
     _render_job_status("_clear_job", "Clear Todoist")
 
 
+def _close_edit_panel(recipe_id: int) -> None:
+    """Close the edit panel and pop all per-recipe widget state.
+
+    Streamlit ignores `value=` / `default=` once a widget's `key=` exists in
+    session_state, so re-opening the panel without this cleanup would show
+    the user's previous (possibly cancelled) edits — and a follow-up Save
+    would silently overwrite the DB with stale values. Always call this on
+    any close path (Cancel, Save success, Delete success, recipe-vanished).
+    """
+    st.session_state.pop("_edit_recipe_id", None)
+    st.session_state.pop(f"_confirm_delete_at_{recipe_id}", None)
+    for prefix in _EDIT_WIDGET_KEY_PREFIXES:
+        st.session_state.pop(f"{prefix}_{recipe_id}", None)
+
+
 def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     """Render the inline edit form for a single recipe."""
     try:
         recipe = queries.get_recipe(recipe_id)
     except KeyError:
         st.error(f"Recipe id {recipe_id} not found — it may have been deleted.")
-        del st.session_state["_edit_recipe_id"]
+        _close_edit_panel(recipe_id)
         return
 
     current_tags = queries.get_recipe_tags(recipe_id)
@@ -338,8 +371,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
 
     with col_cancel:
         if st.button("Cancel", use_container_width=True, key=f"cancel_{recipe_id}"):
-            del st.session_state["_edit_recipe_id"]
-            st.session_state.pop(f"_confirm_delete_at_{recipe_id}", None)
+            _close_edit_panel(recipe_id)
             st.rerun()
 
     with col_delete:
@@ -355,9 +387,9 @@ def _save_recipe(
 ) -> None:
     """Write recipe + tags + ingredient diff in a single transaction."""
     after_rows = edited_ingr.to_dict("records") if hasattr(edited_ingr, "to_dict") else []
-    # Clean up None ids that data_editor may inject for new rows
+    # Normalize NaN/None ids to 0 so diff_ingredients treats those rows as adds.
     for row in after_rows:
-        if row.get("id") is None or (isinstance(row.get("id"), float) and row["id"] != row["id"]):
+        if nan_to_none(row.get("id")) is None:
             row["id"] = 0
 
     diff = diff_ingredients(before_rows, after_rows)
@@ -383,11 +415,11 @@ def _save_recipe(
                 queries.update_ingredient(
                     row["id"],
                     name=row.get("name") or None,
-                    qty_per_serving=row.get("qty_per_serving"),
-                    unit=row.get("unit") or None,
-                    notes=row.get("notes") or None,
-                    todoist_section=row.get("todoist_section") or None,
-                    sort_order=row.get("sort_order"),
+                    qty_per_serving=nan_to_none(row.get("qty_per_serving")),
+                    unit=clean_optional_str(row.get("unit")),
+                    notes=clean_optional_str(row.get("notes")),
+                    todoist_section=clean_optional_str(row.get("todoist_section")),
+                    sort_order=nan_to_none(row.get("sort_order")),
                     conn=conn,
                 )
             for row in diff["adds"]:
@@ -395,17 +427,19 @@ def _save_recipe(
                     queries.add_ingredient(
                         recipe_id,
                         name=row["name"].strip(),
-                        qty_per_serving=row.get("qty_per_serving"),
-                        unit=row.get("unit") or None,
-                        notes=row.get("notes") or None,
-                        todoist_section=row.get("todoist_section") or None,
-                        sort_order=int(row.get("sort_order") or 0),
+                        qty_per_serving=nan_to_none(row.get("qty_per_serving")),
+                        unit=clean_optional_str(row.get("unit")),
+                        notes=clean_optional_str(row.get("notes")),
+                        todoist_section=clean_optional_str(row.get("todoist_section")),
+                        sort_order=int(nan_to_none(row.get("sort_order")) or 0),
                         conn=conn,
                     )
         st.success("Recipe saved.")
-        del st.session_state["_edit_recipe_id"]
-        st.session_state.pop(f"_confirm_delete_at_{recipe_id}", None)
-        st.session_state.pop(f"edit_new_tag_{recipe_id}", None)
+        _close_edit_panel(recipe_id)
+        st.rerun()
+    except KeyError:
+        st.error("Recipe was deleted by another session — closing editor.")
+        _close_edit_panel(recipe_id)
         st.rerun()
     except Exception as exc:
         st.error(f"Save failed: {exc}")
@@ -437,11 +471,12 @@ def _render_delete_button(recipe_id: int) -> None:
         ):
             try:
                 queries.delete_recipe(recipe_id)
-                del st.session_state["_edit_recipe_id"]
-                del st.session_state[_key]
+                _close_edit_panel(recipe_id)
                 st.success("Recipe deleted.")
                 st.rerun()
             except Exception as exc:
+                # Reset the confirm window so a retry starts from a clean slate
+                st.session_state.pop(_key, None)
                 st.error(f"Delete failed: {exc}")
 
 

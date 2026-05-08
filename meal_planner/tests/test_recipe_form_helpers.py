@@ -11,8 +11,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from console.tabs._recipe_form import (
+    clean_optional_str,
     diff_ingredients,
     ingredients_to_rows,
+    nan_to_none,
     normalize_tags,
     validate_recipe_form,
 )
@@ -217,3 +219,51 @@ def test_ingredients_to_rows() -> None:
     assert r["unit"] == ""
     assert r["notes"] == ""
     assert r["todoist_section"] == ""
+
+
+# ---------------------------------------------------------------------------
+# clean_optional_str
+# ---------------------------------------------------------------------------
+
+def test_clean_optional_str_passes_string_through() -> None:
+    assert clean_optional_str("cups") == "cups"
+
+
+def test_clean_optional_str_preserves_empty_string() -> None:
+    # Critical: the form→DB boundary must let "" through so clearing a
+    # text field actually clears the column.
+    assert clean_optional_str("") == ""
+
+
+def test_clean_optional_str_none_returns_none() -> None:
+    assert clean_optional_str(None) is None
+
+
+def test_clean_optional_str_non_string_returns_none() -> None:
+    # data_editor can hand us NaN floats for cleared cells; coerce to None.
+    assert clean_optional_str(float("nan")) is None
+    assert clean_optional_str(42) is None
+    assert clean_optional_str(0) is None
+
+
+# ---------------------------------------------------------------------------
+# nan_to_none
+# ---------------------------------------------------------------------------
+
+def test_nan_to_none_converts_nan() -> None:
+    assert nan_to_none(float("nan")) is None
+
+
+def test_nan_to_none_passes_none_through() -> None:
+    assert nan_to_none(None) is None
+
+
+def test_nan_to_none_passes_finite_floats_through() -> None:
+    assert nan_to_none(0.0) == 0.0
+    assert nan_to_none(2.5) == 2.5
+    assert nan_to_none(-3.14) == -3.14
+
+
+def test_nan_to_none_passes_ints_through() -> None:
+    assert nan_to_none(5) == 5
+    assert nan_to_none(0) == 0

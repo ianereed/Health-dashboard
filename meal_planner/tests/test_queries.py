@@ -546,3 +546,38 @@ def test_single_transaction_save_path(db_path: Path) -> None:
             conn.rollback()
     # After rollback the original title should still be there
     assert get_recipe(rid, path=db_path).title == "TxnTest"
+
+
+def test_update_ingredient_clears_text_field_to_empty_string(db_path: Path) -> None:
+    """update_ingredient must accept "" so the UI can clear unit/notes/section."""
+    rid = insert_recipe(title="Clearable", path=db_path)
+    iid = insert_ingredient(
+        recipe_id=rid, name="Salt", unit="cups", notes="taste",
+        todoist_section="pantry", sort_order=0, path=db_path,
+    )
+    update_ingredient(iid, unit="", notes="", todoist_section="", path=db_path)
+    conn = _sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT unit, notes, todoist_section FROM ingredients WHERE id = ?", (iid,)
+    ).fetchone()
+    conn.close()
+    assert row == ("", "", "")
+
+
+def test_delete_recipe_garbage_collects_orphan_tags(db_path: Path) -> None:
+    """When the last recipe using a tag is deleted, the tag row is GC'd."""
+    r_keep = insert_recipe(title="Keeper", path=db_path)
+    r_drop = insert_recipe(title="Goner", path=db_path)
+    add_recipe_tag(r_keep, "shared", path=db_path)
+    add_recipe_tag(r_drop, "shared", path=db_path)
+    add_recipe_tag(r_drop, "lonely", path=db_path)  # only on r_drop
+
+    delete_recipe(r_drop, path=db_path)
+
+    conn = _sqlite3.connect(str(db_path))
+    tag_names = {
+        row[0] for row in conn.execute("SELECT name FROM tags").fetchall()
+    }
+    conn.close()
+    assert "shared" in tag_names  # still linked to r_keep
+    assert "lonely" not in tag_names  # GC'd
