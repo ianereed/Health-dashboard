@@ -90,7 +90,10 @@ class JobsHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/queue-size":
             from jobs import huey as _huey
-            self._send_json(200, {"size": _huey.storage.queue_size()})
+            try:
+                self._send_json(200, {"size": _huey.storage.queue_size()})
+            except Exception as exc:
+                self._send_json(500, {"error": f"queue_size failed: {exc}"})
             return
         if parsed.path.startswith("/jobs/"):
             job_id = parsed.path[len("/jobs/"):]
@@ -99,7 +102,7 @@ class JobsHandler(BaseHTTPRequestHandler):
                 return
             from jobs import huey as _huey
             try:
-                result = _huey.result(job_id, blocking=False)
+                result = _huey.result(job_id, blocking=False, preserve=True)
             except Exception as exc:
                 self._send_json(
                     200,

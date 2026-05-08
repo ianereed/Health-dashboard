@@ -143,7 +143,7 @@ def test_jobs_id_success(monkeypatch):
 
     known_result = {"items_sent": 3, "items_attempted": 3}
 
-    def _return_result(_id, blocking=False):
+    def _return_result(_id, blocking=False, preserve=False):
         return known_result
 
     with patch("jobs.huey.result", side_effect=_return_result):
@@ -166,12 +166,14 @@ def test_jobs_id_error(monkeypatch):
     from unittest.mock import patch
     from huey.exceptions import TaskException
 
-    def _raise(_id, blocking=False):
-        raise TaskException("task crashed", retries=0, traceback="tb")
+    def _raise(_id, blocking=False, preserve=False):
+        # Huey always raises TaskException with a dict metadata (built by
+        # Huey.build_error_result); str(exc) calls metadata.get('error').
+        raise TaskException({"error": "IndexError: list index out of range", "retries": 0, "traceback": "tb"})
 
     with patch("jobs.huey.result", side_effect=_raise):
         status, body = _request("GET", "/jobs/some-id", token="secret")
     assert status == 200
     assert body["status"] == "error"
-    assert "task crashed" in body["error"]
+    assert "IndexError" in body["error"]
     assert body["result"] is None

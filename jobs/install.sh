@@ -35,7 +35,7 @@ case "$ACTION" in
         # Ensure jobs HTTP token exists in keychain (find-then-add; never regenerate).
         if ! security find-generic-password -a home-tools -s jobs_http_token &>/dev/null; then
             TOKEN="$(openssl rand -hex 32)"
-            security add-generic-password -a home-tools -s jobs_http_token -w "$TOKEN"
+            security add-generic-password -a home-tools -s jobs_http_token -w "$TOKEN" || true
             echo "created keychain token: home-tools/jobs_http_token"
         else
             echo "keychain token already present: home-tools/jobs_http_token (not regenerated)"
