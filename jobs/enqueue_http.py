@@ -18,6 +18,7 @@ Bound to tailscale0 only — `--host 100.x.y.z` from the install script.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -58,7 +59,7 @@ class JobsHandler(BaseHTTPRequestHandler):
         if not header.startswith("Bearer "):
             self._send_json(401, {"error": "missing bearer token"})
             return False
-        if header[len("Bearer "):] != token:
+        if not hmac.compare_digest(header[len("Bearer "):], token):
             self._send_json(401, {"error": "bad token"})
             return False
         return True

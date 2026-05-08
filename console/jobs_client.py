@@ -6,7 +6,7 @@ of importing the jobs package.
 
 Env:
   HOME_TOOLS_HTTP_TOKEN  bearer token (required for authenticated calls)
-  HOME_TOOLS_HTTP_URL    base URL (default http://100.66.241.126:8504)
+  HOME_TOOLS_HTTP_URL    base URL (default http://homeserver:8504)
 """
 from __future__ import annotations
 
@@ -15,7 +15,9 @@ import os
 import urllib.error
 import urllib.request
 
-_DEFAULT_BASE_URL = "http://100.66.241.126:8504"
+# Tailscale MagicDNS resolves `homeserver` to the mini's tailnet IP. The
+# console runs on the mini, so this resolves locally via tailscale0.
+_DEFAULT_BASE_URL = "http://homeserver:8504"
 _MAX_RESPONSE_BYTES = 1_048_576  # 1 MB — guard against runaway server responses
 
 
@@ -77,18 +79,31 @@ def result(task_id: str) -> dict | None:
     """Poll for a task result.
 
     Returns:
-      None — task is still pending
-      dict — terminal: either the kind's own result-dict (status=success)
-             or a synthesized error dict shaped for _format_status (status=error)
+      None — task is still pending OR a transient network error occurred
+             (the fragment will retry on the next tick instead of falsely
+             failing the UI for a one-cycle blip)
+      dict — terminal: either the kind's own result-dict (status=success),
+             a synthesized error dict from a server-reported error,
+             or a synthesized error dict from an HTTPError (4xx/5xx)
     """
     try:
         resp = _do_request("GET", f"/jobs/{task_id}")
-    except Exception as exc:
+    except urllib.error.HTTPError as exc:
+        # Server replied with 4xx/5xx — surface as a terminal error.
+        try:
+            detail = json.loads(exc.read()).get("error") or f"HTTP {exc.code}"
+        except Exception:
+            detail = f"HTTP {exc.code}"
         return {
-            "error": f"poll failed: {type(exc).__name__}: {exc}",
+            "error": f"poll failed: {detail}",
             "items_sent": 0,
             "items_attempted": 0,
         }
+    except Exception:
+        # Network blip (URLError / OSError / socket.timeout / JSONDecodeError).
+        # The job is still running on the worker — treat as pending so the
+        # fragment retries on the next tick.
+        return None
     status = resp.get("status", "error")
     if status == "pending":
         return None

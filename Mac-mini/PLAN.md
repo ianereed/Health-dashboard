@@ -746,7 +746,7 @@ Status: NOT STARTED.
 
 ---
 
-### Chunk A1 — Recipe CRUD backend
+### Chunk A1 — Recipe CRUD backend — DONE 2026-05-07 @feat/phase18-a1-recipe-crud-backend
 
 **Branch:** `feat/phase18-a1-recipe-crud-backend`
 **Scope:** ~200 LOC across 3 files. No console changes; backend only.
