@@ -630,7 +630,7 @@ Status: NOT STARTED.
 
 ---
 
-### Chunk B2 — Route all console huey access through HTTP (kills WAL-fd silent-drop) — DONE 2026-05-07
+### Chunk B2 — Route all console huey access through HTTP (kills WAL-fd silent-drop) — DONE 2026-05-07 @ad0718e
 
 **Branch:** `fix/phase18-b2-console-http`
 **Scope:** ~120 LOC across 5 files + 1 new file + 1 new test file.
