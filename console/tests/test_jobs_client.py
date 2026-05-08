@@ -147,6 +147,43 @@ def test_result_network_error_returns_synthesized_dict(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# kinds
+# ---------------------------------------------------------------------------
+
+def test_kinds_success(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "tok")
+    monkeypatch.setenv("HOME_TOOLS_HTTP_URL", "http://localhost:8504")
+    client = _import_client()
+    kind_list = [{"name": "nop", "baseline": None, "requires": []}]
+    resp = _make_response({"kinds": kind_list})
+    with patch("urllib.request.urlopen", return_value=resp):
+        out = client.kinds()
+    assert out == kind_list
+
+
+def test_kinds_network_error_returns_empty(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "tok")
+    monkeypatch.setenv("HOME_TOOLS_HTTP_URL", "http://localhost:8504")
+    client = _import_client()
+    with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
+        out = client.kinds()
+    assert out == []
+
+
+def test_enqueue_missing_id_raises(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "tok")
+    monkeypatch.setenv("HOME_TOOLS_HTTP_URL", "http://localhost:8504")
+    client = _import_client()
+    resp = _make_response({"kind": "nop"})  # no "id" field
+    with patch("urllib.request.urlopen", return_value=resp):
+        try:
+            client.enqueue("nop")
+            assert False, "should have raised"
+        except RuntimeError as exc:
+            assert "no id in response" in str(exc)
+
+
+# ---------------------------------------------------------------------------
 # Hard invariant: no console/ file imports from the jobs package
 # ---------------------------------------------------------------------------
 
