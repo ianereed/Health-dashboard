@@ -118,3 +118,62 @@ def test_unknown_path(monkeypatch):
     monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
     status, body = _request("GET", "/notathing", token="secret")
     assert status == 404
+
+
+def test_queue_size(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    status, body = _request("GET", "/queue-size", token="secret")
+    assert status == 200
+    assert isinstance(body["size"], int)
+
+
+def test_jobs_id_pending(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    # A random UUID will never exist in huey → pending (result=None).
+    status, body = _request("GET", "/jobs/00000000-0000-0000-0000-000000000000", token="secret")
+    assert status == 200
+    assert body["status"] == "pending"
+    assert body["result"] is None
+    assert body["error"] is None
+
+
+def test_jobs_id_success(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    from unittest.mock import patch
+
+    known_result = {"items_sent": 3, "items_attempted": 3}
+
+    def _return_result(_id, blocking=False, preserve=False):
+        return known_result
+
+    with patch("jobs.huey.result", side_effect=_return_result):
+        status, body = _request("GET", "/jobs/some-id", token="secret")
+    assert status == 200
+    assert body["status"] == "success"
+    assert body["result"] == known_result
+    assert body["error"] is None
+
+
+def test_jobs_id_missing_id(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    status, body = _request("GET", "/jobs/", token="secret")
+    assert status == 404
+    assert "missing job id" in body["error"]
+
+
+def test_jobs_id_error(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    from unittest.mock import patch
+    from huey.exceptions import TaskException
+
+    def _raise(_id, blocking=False, preserve=False):
+        # Huey always raises TaskException with a dict metadata (built by
+        # Huey.build_error_result); str(exc) calls metadata.get('error').
+        raise TaskException({"error": "IndexError: list index out of range", "retries": 0, "traceback": "tb"})
+
+    with patch("jobs.huey.result", side_effect=_raise):
+        status, body = _request("GET", "/jobs/some-id", token="secret")
+    assert status == 200
+    assert body["status"] == "error"
+    assert "IndexError" in body["error"]
+    assert body["result"] is None

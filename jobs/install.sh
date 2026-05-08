@@ -32,6 +32,15 @@ case "$ACTION" in
         fi
         "$JOBS/.venv/bin/pip" install -q -r "$JOBS/requirements.txt"
 
+        # Ensure jobs HTTP token exists in keychain (find-then-add; never regenerate).
+        if ! security find-generic-password -a home-tools -s jobs_http_token &>/dev/null; then
+            TOKEN="$(openssl rand -hex 32)"
+            security add-generic-password -a home-tools -s jobs_http_token -w "$TOKEN" || true
+            echo "created keychain token: home-tools/jobs_http_token"
+        else
+            echo "keychain token already present: home-tools/jobs_http_token (not regenerated)"
+        fi
+
         # Drop plists into ~/Library/LaunchAgents and load them.
         for plist in com.home-tools.jobs-consumer com.home-tools.jobs-http; do
             cp "$JOBS/config/$plist.plist" "$LAUNCHAGENTS/$plist.plist"
