@@ -113,6 +113,8 @@ def test_result_terminal_success_returns_dict(monkeypatch):
     with patch("urllib.request.urlopen", return_value=resp):
         out = client.result("some-id")
     assert out == payload
+    # Pin the response-size cap so a future refactor can't silently drop it.
+    resp.read.assert_called_with(client._MAX_RESPONSE_BYTES)
 
 
 def test_result_error_status_returns_synthesized_dict(monkeypatch):
@@ -132,16 +134,57 @@ def test_result_error_status_returns_synthesized_dict(monkeypatch):
     assert out["items_attempted"] == 0
 
 
-def test_result_network_error_returns_synthesized_dict(monkeypatch):
+def test_result_network_error_returns_none(monkeypatch):
+    """Transient network errors must NOT fail the job in the UI — return None
+    so the fragment treats it as pending and retries on the next 2s tick.
+    The job is still running on the worker; only the poll failed."""
     monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "tok")
     monkeypatch.setenv("HOME_TOOLS_HTTP_URL", "http://localhost:8504")
     client = _import_client()
     with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
         out = client.result("some-id")
+    assert out is None
+
+
+def test_result_http_error_returns_synthesized_dict(monkeypatch):
+    """Server-reported HTTP errors (4xx/5xx) DO surface as terminal — the
+    server reached us and said something concrete went wrong."""
+    import urllib.error
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "tok")
+    monkeypatch.setenv("HOME_TOOLS_HTTP_URL", "http://localhost:8504")
+    client = _import_client()
+    err = urllib.error.HTTPError(
+        url="http://localhost:8504/jobs/some-id",
+        code=500,
+        msg="Internal Server Error",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=io.BytesIO(json.dumps({"error": "task crashed: KeyError"}).encode()),
+    )
+    with patch("urllib.request.urlopen", side_effect=err):
+        out = client.result("some-id")
     assert isinstance(out, dict)
-    assert "poll failed" in out["error"]
-    assert "OSError" in out["error"]
+    assert "task crashed" in out["error"]
     assert out["items_sent"] == 0
+    assert out["items_attempted"] == 0
+
+
+def test_result_http_error_with_unparseable_body_falls_back(monkeypatch):
+    """If the HTTPError body isn't JSON, fall back to the status code."""
+    import urllib.error
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "tok")
+    monkeypatch.setenv("HOME_TOOLS_HTTP_URL", "http://localhost:8504")
+    client = _import_client()
+    err = urllib.error.HTTPError(
+        url="http://localhost:8504/jobs/some-id",
+        code=502,
+        msg="Bad Gateway",
+        hdrs=None,  # type: ignore[arg-type]
+        fp=io.BytesIO(b"<html>nginx</html>"),
+    )
+    with patch("urllib.request.urlopen", side_effect=err):
+        out = client.result("some-id")
+    assert isinstance(out, dict)
+    assert "HTTP 502" in out["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -183,22 +226,40 @@ def test_enqueue_missing_id_raises(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_no_jobs_import_in_console():
-    """grep -rE 'from jobs($|\\.|[[:space:]])' console/ must return 0 lines.
+    """No console source file may import the jobs package by any path.
 
-    This ensures no streamlit process opens the huey SQLite WAL fd by
-    importing the jobs package (or any of its subpackages) directly.
+    Catches `from jobs[...]`, `import jobs[...]` (anchored to start-of-line so
+    `efrom jobs` etc. don't false-positive), and dynamic imports via
+    `__import__("jobs...")` or `importlib.import_module("jobs...")`. Any of
+    these would re-open the SQLite WAL fd because jobs/__init__.py auto-imports
+    submodules that construct SqliteHuey() at module-import time.
     """
     repo_root = Path(__file__).resolve().parents[2]
     console_dir = repo_root / "console"
-    result = subprocess.run(
+    static_grep = subprocess.run(
         [
-            "grep", "-rE",
+            "grep", "-rEn",
             "--exclude-dir=tests",
-            r"from jobs($|\.|[[:space:]])",
+            r"^[[:space:]]*(from|import)[[:space:]]+jobs($|\.|[[:space:]])",
             str(console_dir),
         ],
         capture_output=True,
         text=True,
     )
-    matches = result.stdout.strip()
-    assert matches == "", "console/ source still imports from jobs package:\n" + matches
+    assert static_grep.stdout.strip() == "", (
+        "console/ source still imports from jobs package:\n" + static_grep.stdout
+    )
+
+    dynamic_grep = subprocess.run(
+        [
+            "grep", "-rEn",
+            "--exclude-dir=tests",
+            r"""(__import__\(['"]jobs(['"]|\.)|importlib[^(]*\(['"]jobs(['"]|\.))""",
+            str(console_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert dynamic_grep.stdout.strip() == "", (
+        "console/ source uses dynamic jobs import:\n" + dynamic_grep.stdout
+    )
