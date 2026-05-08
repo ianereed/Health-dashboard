@@ -211,9 +211,16 @@ def apply_imports(
             time.sleep(delay)
 
         base_servings = 4
-        parsed = _parse_ingredients(
-            title, base_servings, ingredient_strings, section_names, api_key
-        )
+        try:
+            parsed = _parse_ingredients(
+                title, base_servings, ingredient_strings, section_names, api_key
+            )
+        except Exception as exc:
+            # _call_gemini doesn't wrap requests.post; a transient network error
+            # (ConnectionError, Timeout) would otherwise kill the whole batch.
+            logger.info(f"{prefix} — GEMINI CALL FAILED: {exc}, skipping")
+            failed += 1
+            continue
         if parsed is None:
             logger.info(f"{prefix} — PARSE FAILED, skipping")
             failed += 1
