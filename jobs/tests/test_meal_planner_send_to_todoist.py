@@ -367,7 +367,9 @@ def test_send_missing_meals_section_raises_runtimeerror(monkeypatch, tmp_path: P
     from jobs import huey as _huey_mod
 
     task_result = meal_planner_send_to_todoist([[rid, 4]])
-    synthesized = _read_result_or_synthesize_error(_huey_mod, task_result.id)
+    synthesized = _read_result_or_synthesize_error(
+        lambda tid: _huey_mod.result(tid, blocking=False), task_result.id
+    )
     assert synthesized is not None
     level, msg = _format_status(synthesized)
     assert level == "error"

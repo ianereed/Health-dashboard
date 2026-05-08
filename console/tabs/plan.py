@@ -11,7 +11,7 @@ import time
 import pandas as pd
 import streamlit as st
 
-from jobs import huey as _huey
+from console import jobs_client as _jobs_client
 from meal_planner import db as _db
 from meal_planner import queries
 from meal_planner.tag_categories import CATEGORY_MAP, _partition_tags_by_category
@@ -47,7 +47,7 @@ def _render_job_status(state_key: str, label: str) -> None:
         return
     task_id = state["task_id"]
     started_at = state["started_at"]
-    result = _read_result_or_synthesize_error(_huey, task_id)
+    result = _read_result_or_synthesize_error(_jobs_client.result, task_id)
     if result is None:
         elapsed = int(time.monotonic() - started_at)
         st.info(f"{label}… ({elapsed}s)", icon="⏳")
@@ -152,13 +152,11 @@ def _render_inner() -> None:
             st.warning("No recipes selected. Check at least one box.")
         else:
             try:
-                from jobs.kinds.meal_planner_send_to_todoist import (
-                    meal_planner_send_to_todoist,
+                task_id = _jobs_client.enqueue(
+                    "meal_planner_send_to_todoist", {"checked": checked}
                 )
-
-                result = meal_planner_send_to_todoist(checked)
                 st.session_state["_send_job"] = {
-                    "task_id": result.id,
+                    "task_id": task_id,
                     "started_at": time.monotonic(),
                 }
                 st.rerun()
@@ -204,10 +202,9 @@ def _render_clear_button() -> None:
             if st.button("Yes, clear all meal-planner tasks", type="primary"):
                 del st.session_state["_confirm_clear_at"]
                 try:
-                    from jobs.kinds.meal_planner_clear_todoist import meal_planner_clear_todoist
-                    result = meal_planner_clear_todoist()
+                    task_id = _jobs_client.enqueue("meal_planner_clear_todoist")
                     st.session_state["_clear_job"] = {
-                        "task_id": result.id,
+                        "task_id": task_id,
                         "started_at": time.monotonic(),
                     }
                     st.rerun()

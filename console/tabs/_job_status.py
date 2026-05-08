@@ -28,12 +28,17 @@ def _format_status(result: object) -> tuple[str, str]:
     )
 
 
-def _read_result_or_synthesize_error(huey_, task_id: str):
-    """Read a huey task result, synthesizing an error dict if it raised.
+def _read_result_or_synthesize_error(result_fn, task_id: str):
+    """Call result_fn(task_id) and synthesize an error dict if it raises.
 
-    huey 3.0.0+ `Result.get(blocking=False)` re-raises `TaskException` whenever
-    the consumer task raised. Without this guard a polling `@st.fragment` would
-    exception-loop on every rerun and never clear session_state.
+    result_fn signature: (task_id: str) -> dict | None
+      None  — task is still pending
+      dict  — terminal result (the kind's own result-dict or a pre-synthesized
+              error dict from the HTTP client)
+
+    The try/except is a safety net for unexpected raises (e.g. network errors
+    surfaced by a non-hardened result_fn). Normal callers (jobs_client.result)
+    catch internally and never raise.
 
     Returns:
       None  — task is still pending
@@ -41,7 +46,7 @@ def _read_result_or_synthesize_error(huey_, task_id: str):
               error dict shaped so `_format_status` returns ("error", ...).
     """
     try:
-        return huey_.result(task_id, blocking=False)
+        return result_fn(task_id)
     except Exception as exc:
         return {
             "error": f"task crashed: {type(exc).__name__}: {exc}",

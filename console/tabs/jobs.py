@@ -37,18 +37,16 @@ def _format_age(iso: str) -> str:
 
 
 def render() -> None:
+    from console import jobs_client
     st.subheader("Queue")
-    try:
-        from jobs import huey
-        depth = huey.storage.queue_size()
-    except Exception as exc:
-        st.warning(f"queue unreachable: {exc}")
-        depth = None
-    if depth is not None:
+    depth = jobs_client.queue_size()
+    if depth is None:
+        st.warning("queue unreachable: jobs-http not responding")
+    else:
         col1, col2, col3 = st.columns(3)
         col1.metric("Queue depth", depth)
-        col2.metric("DB", str(huey.storage.filename).rsplit("/", 1)[-1])
-        col3.metric("Backend", "SqliteHuey")
+        col2.metric("URL", jobs_client.base_url())
+        col3.metric("Backend", "HTTP")
 
     st.divider()
 
@@ -87,20 +85,17 @@ def render() -> None:
 
     st.divider()
     st.subheader("Registered kinds")
-    try:
-        from jobs.cli import _registered_kinds
-        kinds = _registered_kinds()
-    except Exception as exc:
-        st.error(f"could not load kinds: {exc}")
+    kind_list = jobs_client.kinds()
+    if not kind_list:
+        st.error("could not load kinds from jobs-http")
         return
     rows = []
-    for name in sorted(kinds):
-        fn = kinds[name]
-        bl = getattr(fn, "_baseline", None)
-        req = getattr(fn, "_requires", None)
+    for k in sorted(kind_list, key=lambda x: x.get("name", "")):
+        bl = k.get("baseline")
+        req = k.get("requires", [])
         rows.append({
-            "name": name,
-            "baseline": f"{bl.metric} (window {bl.divergence_window})" if bl else "—",
-            "requires": ", ".join(req.items) if req and req.items else "—",
+            "name": k.get("name", ""),
+            "baseline": f"{bl['metric']} (window {bl['window']})" if bl else "—",
+            "requires": ", ".join(req) if req else "—",
         })
     st.dataframe(rows, hide_index=True, use_container_width=True)

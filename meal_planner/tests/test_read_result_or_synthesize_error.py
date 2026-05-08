@@ -1,9 +1,9 @@
 """Integration tests for _read_result_or_synthesize_error.
 
-These tests exercise the actual read path (the helper that wraps
-huey.result()), which the pure-format tests in
+These tests exercise the actual read path (the helper that wraps a
+result_fn callable), which the pure-format tests in
 test_render_job_status_pure.py cannot — they feed dicts directly into
-_format_status and bypass huey entirely.
+_format_status and bypass the result_fn entirely.
 
 The third test (taskexception_synthesizes_error_dict) is the regression
 guard for Phase 17 Chunk C's re-fix: huey 3.0.0+ Result.get re-raises
@@ -24,27 +24,9 @@ def _fmt():
     return _format_status
 
 
-class _FakeHueyReturning:
-    def __init__(self, value):
-        self._value = value
-
-    def result(self, task_id, blocking=False):
-        assert blocking is False, "fragment must never block"
-        return self._value
-
-
-class _FakeHueyRaising:
-    def __init__(self, exc):
-        self._exc = exc
-
-    def result(self, task_id, blocking=False):
-        assert blocking is False, "fragment must never block"
-        raise self._exc
-
-
 def test_read_result_pending_returns_none() -> None:
-    huey_ = _FakeHueyReturning(None)
-    out = _read()(huey_, "task-id-pending")
+    result_fn = lambda task_id: None
+    out = _read()(result_fn, "task-id-pending")
     assert out is None
 
 
@@ -56,8 +38,8 @@ def test_read_result_success_returns_dict_unchanged() -> None:
         "consolidate_dropped": 0,
         "error": None,
     }
-    huey_ = _FakeHueyReturning(payload)
-    out = _read()(huey_, "task-id-success")
+    result_fn = lambda task_id: payload
+    out = _read()(result_fn, "task-id-success")
     assert out == payload
     level, _ = _fmt()(out)
     assert level == "success"
@@ -73,11 +55,12 @@ def test_read_result_taskexception_synthesizes_error_dict() -> None:
 
         exc: Exception = TaskException({"error": "KeyError(99999999)"})
     except Exception:
-        # If huey isn't importable, any Exception covers the contract;
-        # the helper catches Exception, not just TaskException.
         exc = RuntimeError("KeyError(99999999)")
-    huey_ = _FakeHueyRaising(exc)
-    out = _read()(huey_, "task-id-failed")
+
+    def _raise(task_id):
+        raise exc
+
+    out = _read()(_raise, "task-id-failed")
     assert isinstance(out, dict)
     assert out["error"]
     assert "task crashed" in out["error"]
@@ -92,8 +75,11 @@ def test_read_result_generic_exception_also_caught() -> None:
     """DB-lock or import-time failures in the future should also surface
     as a red banner, not crash the tab. The helper catches Exception, so
     any subclass works."""
-    huey_ = _FakeHueyRaising(OSError("disk full"))
-    out = _read()(huey_, "task-id-disk-full")
+
+    def _raise(task_id):
+        raise OSError("disk full")
+
+    out = _read()(_raise, "task-id-disk-full")
     assert isinstance(out, dict)
     assert "OSError" in out["error"]
     assert "disk full" in out["error"]
