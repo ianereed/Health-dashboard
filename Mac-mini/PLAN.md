@@ -934,7 +934,7 @@ When done:
 Status: NOT STARTED.
 ```
 
-**Chunk A2 status: DONE 2026-05-08 @29f9e17**
+**Chunk A2 status: DONE 2026-05-08 @6cbce5c**
 
 Commits (stacked on A1, PR targeting feat/phase18-a1-recipe-crud-backend):
 - 85c22a6 — (a) extend A1 mutations to accept conn=None (47 tests)
@@ -944,6 +944,7 @@ Commits (stacked on A1, PR targeting feat/phase18-a1-recipe-crud-backend):
 - 185e82a — pre-landing adversarial fixes (F8 wrong-recipe delete, F4 ghost row, F3 pop, F1 textarea clear)
 - c8ca0af — Opus self-review fix 1 (F-N1 cook_time clear, F-N2 range crash, F-N3+F-N4 stale session keys; 421 tests)
 - 29f9e17 — Opus self-review fix 2 (F-N5 get_recipe_tags collation NOCASE)
+- 6cbce5c — Opus pre-merge review fixes #1-#6 (stale widget state bulk-pop, clear-field no-ops, NaN ingestion, KeyError UX, delete_recipe orphan tag GC; 431 tests)
 
 ---
 
