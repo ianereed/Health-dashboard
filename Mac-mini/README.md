@@ -29,7 +29,7 @@ Tailscale.
 | 2 | Remote access (Homebrew, Tailscale, Tailscale SSH from laptop) | ✅ 2026-04-22 |
 | 3 | Core tools (`git`, `python@3.12`, `uv`, `gh`, `ollama`) | ✅ 2026-04-22 |
 | 4 | Ollama configuration + model pulls | ✅ 2026-04-22 |
-| 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated (event-aggregator staging moved to `~/Home-Tools/event-aggregator/staging/` out of TCC-protected path; laptop instance disabled, mini is sole writer). Medical-records + meal-planner intentionally stay on laptop. |
+| 5 | Port `Home-Tools` repo to server | ✅ 2026-04-22 — event-aggregator + health-dashboard fully migrated (event-aggregator staging moved to `~/Home-Tools/event-aggregator/staging/` out of TCC-protected path; laptop instance disabled, mini is sole writer). Medical-records stays on laptop. Meal-planner migrated to mini as of Phase 14–18 (recipes.db + console + jobs worker live on mini; Google Sheet archived 2026-05-08). |
 | 5c | Service monitor dashboard | ✅ 2026-04-27 — Streamlit at port 8502, shows every loaded LaunchAgent + queues + DBs + Ollama + log tails. `http://homeserver:8502/` |
 | 5d | NAS mount + TCC privacy fix | ✅ 2026-04-29 — Share1 mounted at `~/Share1` via `mount_smbfs //iananny@192.168.4.39/Share1`. Two TCC grants required: `tailscaled` in Local Network + `python3.12` in Full Disk Access. See `feedback_macos_lan_wedge_recovery.md`. |
 | 5e | nas-intake v1 (NAS drop-folder watcher) | ✅ 2026-04-29 — `~/Home-Tools/nas-intake/` LaunchAgent watches `~/Share1/**/[Ii]ntake/`, OCR + classifies via event-aggregator subprocess (NAS_WRITE_DISABLED=1), files under parent (`<parent>/<year>/<doc-type>/<date>_<slug>/`), appends per-parent JOURNAL.md + journal.jsonl, archives source to `intake/_processed/<YYYY-MM>/`. Calendar events come for free via the subprocess (proposed via Slack dashboard). Auto-remounts via `mount-nas.sh` if NAS unavailable. v1 verified end-to-end with a real medical PDF. |
@@ -98,6 +98,13 @@ Tailscale.
   YNAB API sync first, then scans `intake/` for CSVs/PDFs/images). YNAB API
   client is GET-only by design (hard requirement); cutoff `2026-04-24`. Live
   data: `~/Home-Tools/finance-monitor/data/finance.db`
+
+- **meal-planner + mini ops console** at `~/Home-Tools/console` and `~/Home-Tools/meal_planner`. 2 LaunchAgents:
+  `com.home-tools.console` (Streamlit at port 8503, Tailscale-bound, KeepAlive — recipe browser + edit UI + job status tabs)
+  and `com.home-tools.jobs-consumer` (Huey worker that executes `meal_planner_send_to_todoist`, `meal_planner_clear_todoist`,
+  and all other job kinds). `recipes.db` at `~/Home-Tools/meal_planner/recipes.db` is the sole source of truth for recipes.
+  Photo-intake drop folder: `~/Share1/Documents/Recipes/photo-intake/`. Google Sheet archived read-only as of Phase 18
+  (2026-05-08) — use `http://homeserver:8503/?tab=recipes` to create/edit/delete recipes.
 
 ## Key decisions (2026-04-22)
 
