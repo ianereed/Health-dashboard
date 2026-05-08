@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from meal_planner import db as _db
 from meal_planner.models import Recipe
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _row_to_recipe(row) -> Recipe:
@@ -144,3 +150,210 @@ def search_recipes(
                 (f"%{name_substring}%",),
             ).fetchall()
     return [_row_to_recipe(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Mutations
+# ---------------------------------------------------------------------------
+
+def create_recipe(
+    *,
+    title: str,
+    base_servings: int = 4,
+    instructions: str | None = None,
+    cook_time_min: int | None = None,
+    source: str | None = None,
+    path: Path | None = None,
+) -> int:
+    """Create a new recipe. Returns the new recipe id."""
+    return _db.insert_recipe(
+        title=title,
+        base_servings=base_servings,
+        instructions=instructions,
+        cook_time_min=cook_time_min,
+        source=source,
+        path=path,
+    )
+
+
+def update_recipe(
+    recipe_id: int,
+    *,
+    title: str | None = None,
+    base_servings: int | None = None,
+    instructions: str | None = None,
+    cook_time_min: int | None = None,
+    source: str | None = None,
+    path: Path | None = None,
+) -> None:
+    """Partial update: only non-None fields are written. Always bumps updated_at.
+
+    Raises KeyError if recipe_id does not exist.
+    """
+    fields: dict[str, object] = {}
+    if title is not None:
+        fields["title"] = title
+    if base_servings is not None:
+        fields["base_servings"] = base_servings
+    if instructions is not None:
+        fields["instructions"] = instructions
+    if cook_time_min is not None:
+        fields["cook_time_min"] = cook_time_min
+    if source is not None:
+        fields["source"] = source
+    fields["updated_at"] = _now_utc()
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        cur = conn.execute(
+            f"UPDATE recipes SET {set_clause} WHERE id = ?",
+            [*fields.values(), recipe_id],
+        )
+        if cur.rowcount == 0:
+            raise KeyError(recipe_id)
+
+
+def delete_recipe(recipe_id: int, *, path: Path | None = None) -> None:
+    """Delete a recipe and cascade to ingredients + recipe_tags via FK ON DELETE CASCADE.
+
+    Raises KeyError if recipe_id does not exist.
+    """
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        cur = conn.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
+        if cur.rowcount == 0:
+            raise KeyError(recipe_id)
+
+
+def add_ingredient(
+    recipe_id: int,
+    *,
+    name: str,
+    qty_per_serving: float | None = None,
+    unit: str | None = None,
+    notes: str | None = None,
+    todoist_section: str | None = None,
+    sort_order: int = 0,
+    path: Path | None = None,
+) -> int:
+    """Add an ingredient to a recipe. Returns the new ingredient id. Bumps recipe updated_at.
+
+    Raises KeyError if recipe_id does not exist.
+    """
+    now = _now_utc()
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO ingredients
+                  (recipe_id, name, qty_per_serving, unit, notes, todoist_section, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (recipe_id, name, qty_per_serving, unit, notes, todoist_section, sort_order),
+            )
+        except sqlite3.IntegrityError:
+            raise KeyError(recipe_id)
+        ingredient_id = cur.lastrowid
+        conn.execute(
+            "UPDATE recipes SET updated_at = ? WHERE id = ?", (now, recipe_id)
+        )
+    return ingredient_id  # type: ignore[return-value]
+
+
+def update_ingredient(
+    ingredient_id: int,
+    *,
+    name: str | None = None,
+    qty_per_serving: float | None = None,
+    unit: str | None = None,
+    notes: str | None = None,
+    todoist_section: str | None = None,
+    sort_order: int | None = None,
+    path: Path | None = None,
+) -> None:
+    """Partial update: only non-None fields are written. Always bumps parent recipe updated_at.
+
+    Raises KeyError if ingredient_id does not exist.
+    """
+    fields: dict[str, object] = {}
+    if name is not None:
+        fields["name"] = name
+    if qty_per_serving is not None:
+        fields["qty_per_serving"] = qty_per_serving
+    if unit is not None:
+        fields["unit"] = unit
+    if notes is not None:
+        fields["notes"] = notes
+    if todoist_section is not None:
+        fields["todoist_section"] = todoist_section
+    if sort_order is not None:
+        fields["sort_order"] = sort_order
+    now = _now_utc()
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        row = conn.execute(
+            "SELECT recipe_id FROM ingredients WHERE id = ?", (ingredient_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(ingredient_id)
+        if fields:
+            set_clause = ", ".join(f"{k} = ?" for k in fields)
+            conn.execute(
+                f"UPDATE ingredients SET {set_clause} WHERE id = ?",
+                [*fields.values(), ingredient_id],
+            )
+        conn.execute(
+            "UPDATE recipes SET updated_at = ? WHERE id = ?", (now, row["recipe_id"])
+        )
+
+
+def delete_ingredient(ingredient_id: int, *, path: Path | None = None) -> None:
+    """Delete an ingredient. Bumps parent recipe updated_at BEFORE deleting.
+
+    Raises KeyError if ingredient_id does not exist.
+    """
+    now = _now_utc()
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        row = conn.execute(
+            "SELECT recipe_id FROM ingredients WHERE id = ?", (ingredient_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(ingredient_id)
+        conn.execute(
+            "UPDATE recipes SET updated_at = ? WHERE id = ?", (now, row["recipe_id"])
+        )
+        conn.execute("DELETE FROM ingredients WHERE id = ?", (ingredient_id,))
+
+
+def set_recipe_tags(
+    recipe_id: int, tags: list[str], *, path: Path | None = None
+) -> None:
+    """Replace-style tag update: deletes all existing tags for this recipe, inserts fresh set.
+
+    Tags are lowercased and deduplicated. Orphan tag rows (not linked to any recipe)
+    are garbage-collected. Bumps recipe updated_at.
+
+    Raises KeyError if recipe_id does not exist.
+    """
+    normalized = list(dict.fromkeys(t.strip().lower() for t in tags))
+    now = _now_utc()
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        if conn.execute("SELECT 1 FROM recipes WHERE id = ?", (recipe_id,)).fetchone() is None:
+            raise KeyError(recipe_id)
+        conn.execute("DELETE FROM recipe_tags WHERE recipe_id = ?", (recipe_id,))
+        for tag in normalized:
+            conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,))
+            conn.execute(
+                "INSERT OR IGNORE INTO recipe_tags (recipe_id, tag_id)"
+                " SELECT ?, id FROM tags WHERE name = ?",
+                (recipe_id, tag),
+            )
+        conn.execute(
+            "DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM recipe_tags)"
+        )
+        conn.execute(
+            "UPDATE recipes SET updated_at = ? WHERE id = ?", (now, recipe_id)
+        )
