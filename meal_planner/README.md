@@ -106,7 +106,7 @@ clear job from touching event-aggregator or finance-monitor tasks.
 |-----|----------|-------|
 | `GEMINI_API_KEY` | yes | consolidation + seed categorization |
 | `TODOIST_API_TOKEN` | yes | pulled from keychain in consumer |
-| `TODOIST_SECTIONS` | yes | JSON map of section name → section_id |
+| `TODOIST_SECTIONS` | yes | JSON map of section name → section_id. Must include a `"Meals"` key (id `6g34CGWFCmJjQrgr` in the household Grocery List project) — Phase 17 Chunk D emits one recipe-header task per recipe into that section. See `reference_todoist_meal_planner_sections.md` for the full live map. |
 | `TODOIST_PROJECT_ID` | no | defaults to Todoist inbox |
 | `MEAL_PLANNER_SHEET_ID` | seed only | Google Sheet ID |
 | `GOOGLE_SERVICE_ACCOUNT_PATH` | seed only | path to service account JSON |
