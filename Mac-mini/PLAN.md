@@ -1065,7 +1065,7 @@ When done:
   5. Print "A3 complete — Phase 18 ready for /compact + Opus review.
      Operator steps for Sheet archival are in the journal." Stop.
 
-Status: DONE 2026-05-08 @a82db46
+Status: DONE 2026-05-08 @a82db46 + Opus-review fixup @7b5ab77 (wrap Gemini call in apply_imports for network resilience)
 ```
 
 ---
