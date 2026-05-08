@@ -258,6 +258,12 @@ def test_update_recipe_missing_raises(db_path: Path) -> None:
         update_recipe(99999, title="X", path=db_path)
 
 
+def test_update_recipe_clears_cook_time_min_to_zero(db_path: Path) -> None:
+    rid = insert_recipe(title="Soup", base_servings=4, cook_time_min=15, path=db_path)
+    update_recipe(rid, cook_time_min=0, path=db_path)
+    assert get_recipe(rid, path=db_path).cook_time_min == 0
+
+
 def test_delete_recipe_removes_row_and_cascades(db_path: Path) -> None:
     rid = insert_recipe(title="To Delete", path=db_path)
     insert_ingredient(recipe_id=rid, name="Flour", sort_order=0, path=db_path)

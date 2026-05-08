@@ -254,7 +254,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     # -----------------------------------------------------------------------
     new_title = st.text_input("Title", value=recipe.title, key=f"edit_title_{recipe_id}")
     new_servings = st.number_input(
-        "Base servings", min_value=1, max_value=100, value=recipe.base_servings,
+        "Base servings", min_value=1, max_value=max(100, recipe.base_servings), value=recipe.base_servings,
         step=1, key=f"edit_servings_{recipe_id}",
     )
     new_instructions = st.text_area(
@@ -263,7 +263,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     col_cook, col_source = st.columns(2)
     with col_cook:
         new_cook_time = st.number_input(
-            "Cook time (min)", min_value=0, max_value=600,
+            "Cook time (min)", min_value=0, max_value=max(600, recipe.cook_time_min or 0),
             value=recipe.cook_time_min or 0,
             step=5, key=f"edit_cook_time_{recipe_id}",
         )
@@ -326,7 +326,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
                 "title": new_title,
                 "base_servings": new_servings,
                 "instructions": new_instructions,
-                "cook_time_min": new_cook_time if new_cook_time else None,
+                "cook_time_min": int(new_cook_time),
                 "source": new_source,
             }
             ok, errs = validate_recipe_form(payload)
@@ -372,7 +372,7 @@ def _save_recipe(
                 # a textarea actually updates the DB instead of silently keeping
                 # the old value. update_recipe skips None only, not empty string.
                 instructions=payload["instructions"] if payload["instructions"] is not None else None,
-                cook_time_min=payload["cook_time_min"] or None,
+                cook_time_min=payload["cook_time_min"],
                 source=payload["source"] if payload["source"] is not None else None,
                 conn=conn,
             )
@@ -404,6 +404,8 @@ def _save_recipe(
                     )
         st.success("Recipe saved.")
         del st.session_state["_edit_recipe_id"]
+        st.session_state.pop(f"_confirm_delete_at_{recipe_id}", None)
+        st.session_state.pop(f"edit_new_tag_{recipe_id}", None)
         st.rerun()
     except Exception as exc:
         st.error(f"Save failed: {exc}")
