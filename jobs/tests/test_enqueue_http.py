@@ -139,17 +139,19 @@ def test_jobs_id_pending(monkeypatch):
 
 def test_jobs_id_success(monkeypatch):
     monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
-    # Enqueue a nop job and immediately look up its result.
-    enqueue_status, enqueue_body = _request(
-        "POST", "/jobs", {"kind": "nop", "params": {"echo": {"x": 42}}}, token="secret"
-    )
-    assert enqueue_status == 202
-    job_id = enqueue_body["id"]
-    # The nop task runs in-process during enqueue in test harness — result
-    # may or may not be available immediately; we accept pending or success.
-    status, body = _request("GET", f"/jobs/{job_id}", token="secret")
+    from unittest.mock import patch
+
+    known_result = {"items_sent": 3, "items_attempted": 3}
+
+    def _return_result(_id, blocking=False):
+        return known_result
+
+    with patch("jobs.huey.result", side_effect=_return_result):
+        status, body = _request("GET", "/jobs/some-id", token="secret")
     assert status == 200
-    assert body["status"] in ("pending", "success")
+    assert body["status"] == "success"
+    assert body["result"] == known_result
+    assert body["error"] is None
 
 
 def test_jobs_id_missing_id(monkeypatch):
