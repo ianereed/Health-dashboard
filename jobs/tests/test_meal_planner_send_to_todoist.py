@@ -26,7 +26,13 @@ from meal_planner.db import init_db, insert_ingredient, insert_recipe
 # Helpers
 # ---------------------------------------------------------------------------
 
-_SECTIONS = {"Produce": "sec-prod", "Pantry": "sec-pantry", "Other": "sec-other"}
+_MEALS_SECTION_ID = "sec-meals"
+_SECTIONS = {
+    "Produce": "sec-prod",
+    "Pantry": "sec-pantry",
+    "Other": "sec-other",
+    "Meals": _MEALS_SECTION_ID,
+}
 _SECTIONS_JSON = json.dumps(_SECTIONS)
 
 
@@ -88,7 +94,7 @@ def _adapter_mock(monkeypatch: Any) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def test_happy_path_emits_one_task_per_scaled_ingredient(monkeypatch, tmp_path: Path) -> None:
-    """1 recipe × 2 ingredients × target_servings=4 → 2 adapter calls, both meal-planner."""
+    """1 recipe × 2 ingredients → 3 adapter calls (1 header + 2 ingredients), all meal-planner."""
     import meal_planner.db as _db_mod
     db_path = tmp_path / "recipes.db"
     monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
@@ -100,9 +106,9 @@ def test_happy_path_emits_one_task_per_scaled_ingredient(monkeypatch, tmp_path: 
     result = meal_planner_send_to_todoist([[rid, 4]])
     out = result(blocking=True, timeout=5)
 
-    assert out["items_sent"] == 2
-    assert out["items_attempted"] == 2
-    assert len(captured) == 2
+    assert out["items_sent"] == 3
+    assert out["items_attempted"] == 3
+    assert len(captured) == 3
     for call in captured:
         assert call["output_config"]["labels"] == ["meal-planner"]
 
@@ -149,8 +155,10 @@ def test_title_includes_scaled_qty_and_recipe_suffix(monkeypatch, tmp_path: Path
     result = meal_planner_send_to_todoist([[rid, 4]])
     result(blocking=True, timeout=5)
 
-    assert len(captured) == 1
-    title = captured[0]["payload"]["title"]
+    # captured[0] = header task; captured[1] = ingredient task
+    assert len(captured) == 2
+    ingredient_call = next(c for c in captured if c["output_config"]["section_id"] != _MEALS_SECTION_ID)
+    title = ingredient_call["payload"]["title"]
     # scaled qty: 0.25 × 4 = 1.0 → "1" (:.4g)
     assert "1" in title
     assert "cup" in title
@@ -180,9 +188,11 @@ def test_section_drift_falls_back_to_first_section(monkeypatch, tmp_path: Path) 
     result = meal_planner_send_to_todoist([[rid, 4]])
     out = result(blocking=True, timeout=5)
 
-    assert out["items_sent"] == 1
+    assert out["items_sent"] == 2  # header + 1 ingredient
     first_section_id = list(_SECTIONS.values())[0]  # "sec-prod"
-    assert captured[0]["output_config"]["section_id"] == first_section_id
+    # captured[0] is the header (Meals); captured[1] is the ingredient (fallback)
+    ingredient_call = next(c for c in captured if c["output_config"]["section_id"] != _MEALS_SECTION_ID)
+    assert ingredient_call["output_config"]["section_id"] == first_section_id
 
 
 def test_priority_is_string_normal_maps_to_int_2(monkeypatch, tmp_path: Path) -> None:
@@ -243,18 +253,179 @@ def test_multiple_recipes_emit_separate_tasks(monkeypatch, tmp_path: Path) -> No
     result = meal_planner_send_to_todoist([[rid_a, 2], [rid_b, 4]])
     out = result(blocking=True, timeout=5)
 
-    # recipe A has 2 ingredients, recipe B has 1 → 3 total
-    assert out["items_attempted"] == 3
-    assert out["items_sent"] == 3
-    assert len(captured) == 3
+    # recipe A: 1 header + 2 ingredients = 3; recipe B: 1 header + 1 ingredient = 2 → 5 total
+    assert out["items_attempted"] == 5
+    assert out["items_sent"] == 5
+    assert len(captured) == 5
 
     titles = [c["payload"]["title"] for c in captured]
+    # ingredient titles end with " (Pasta A)" / " (Soup B)"; headers do not
     pasta_a_titles = [t for t in titles if t.endswith(" (Pasta A)")]
     soup_b_titles = [t for t in titles if t.endswith(" (Soup B)")]
     assert len(pasta_a_titles) == 2
     assert len(soup_b_titles) == 1
 
-    # source_id matches the recipe that produced each line
+    # ingredient source_ids use recipes:{rid}; header source_ids use recipes:{rid}:header
     source_ids = [c["payload"]["source_id"] for c in captured]
     assert source_ids.count(f"recipes:{rid_a}") == 2
     assert source_ids.count(f"recipes:{rid_b}") == 1
+    assert source_ids.count(f"recipes:{rid_a}:header") == 1
+    assert source_ids.count(f"recipes:{rid_b}:header") == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 Chunk D — recipe-title header task tests
+# ---------------------------------------------------------------------------
+
+def test_send_emits_recipe_header_in_meals_section(monkeypatch, tmp_path: Path) -> None:
+    """Single recipe with 3 ingredients → 4 adapter calls; exactly 1 goes to Meals section."""
+    import meal_planner.db as _db_mod
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    init_db(db_path)
+    rid = insert_recipe(title="Tomato Soup", base_servings=4, path=db_path)
+    for name, section in [("tomatoes", "Produce"), ("cream", "Dairy"), ("salt", "Pantry")]:
+        insert_ingredient(recipe_id=rid, name=name, qty_per_serving=1.0, unit=None,
+                          todoist_section=section, path=db_path)
+    _make_env(monkeypatch)
+    captured = _adapter_mock(monkeypatch)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    result = meal_planner_send_to_todoist([[rid, 4]])
+    result(blocking=True, timeout=5)
+
+    assert len(captured) == 4
+
+    meals_calls = [c for c in captured if c["output_config"]["section_id"] == _MEALS_SECTION_ID]
+    assert len(meals_calls) == 1
+    header = meals_calls[0]
+    assert header["output_config"]["labels"] == ["meal-planner"]
+    assert "Tomato Soup" in header["payload"]["title"]
+    assert "servings" in header["payload"]["title"]
+    assert header["payload"]["source_id"] == f"recipes:{rid}:header"
+
+
+def test_send_two_recipes_emits_two_headers(monkeypatch, tmp_path: Path) -> None:
+    """Two recipes → exactly 2 header calls in Meals section."""
+    import meal_planner.db as _db_mod
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    init_db(db_path)
+    rid_a = insert_recipe(title="Pasta X", base_servings=4, path=db_path)
+    insert_ingredient(recipe_id=rid_a, name="pasta", qty_per_serving=100.0,
+                      unit="g", todoist_section="Pantry", path=db_path)
+    rid_b = insert_recipe(title="Soup Y", base_servings=4, path=db_path)
+    insert_ingredient(recipe_id=rid_b, name="broth", qty_per_serving=250.0,
+                      unit="ml", todoist_section="Pantry", path=db_path)
+    _make_env(monkeypatch)
+    captured = _adapter_mock(monkeypatch)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    result = meal_planner_send_to_todoist([[rid_a, 2], [rid_b, 4]])
+    result(blocking=True, timeout=5)
+
+    meals_calls = [c for c in captured if c["output_config"]["section_id"] == _MEALS_SECTION_ID]
+    assert len(meals_calls) == 2
+    header_titles = {c["payload"]["title"] for c in meals_calls}
+    assert any("Pasta X" in t for t in header_titles)
+    assert any("Soup Y" in t for t in header_titles)
+
+
+def test_send_header_uses_target_servings_in_title(monkeypatch, tmp_path: Path) -> None:
+    """Recipe with base_servings=4 sent at target=8 → header title contains '8 servings', not '4'."""
+    import meal_planner.db as _db_mod
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    init_db(db_path)
+    rid = insert_recipe(title="Big Batch Chili", base_servings=4, path=db_path)
+    insert_ingredient(recipe_id=rid, name="beans", qty_per_serving=0.5,
+                      unit="cup", todoist_section="Pantry", path=db_path)
+    _make_env(monkeypatch)
+    captured = _adapter_mock(monkeypatch)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    result = meal_planner_send_to_todoist([[rid, 8]])
+    result(blocking=True, timeout=5)
+
+    header = next(c for c in captured if c["output_config"]["section_id"] == _MEALS_SECTION_ID)
+    assert "(8 servings)" in header["payload"]["title"]
+    assert "(4 servings)" not in header["payload"]["title"]
+
+
+def test_send_missing_meals_section_raises_runtimeerror(monkeypatch, tmp_path: Path) -> None:
+    """TODOIST_SECTIONS without 'Meals' → RuntimeError; no ingredient tasks emitted."""
+    import meal_planner.db as _db_mod
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    rid = _setup_db_one_recipe(db_path)
+    sections_no_meals = {"Produce": "sec-prod", "Pantry": "sec-pantry"}
+    _make_env(monkeypatch, sections_json=json.dumps(sections_no_meals))
+    captured = _adapter_mock(monkeypatch)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    from console.tabs._job_status import _format_status, _read_result_or_synthesize_error
+    from jobs import huey as _huey_mod
+
+    task_result = meal_planner_send_to_todoist([[rid, 4]])
+    synthesized = _read_result_or_synthesize_error(_huey_mod, task_result.id)
+    assert synthesized is not None
+    level, msg = _format_status(synthesized)
+    assert level == "error"
+    assert "Meals" in msg
+
+    # validation runs before the recipe loop — no ingredient tasks emitted
+    assert len(captured) == 0
+
+
+def test_send_header_counts_toward_items_sent_and_attempted(monkeypatch, tmp_path: Path) -> None:
+    """1 recipe, 5 ingredients, all create succeed → items_sent=6, items_attempted=6."""
+    import meal_planner.db as _db_mod
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    init_db(db_path)
+    rid = insert_recipe(title="Full Dinner", base_servings=4, path=db_path)
+    for i in range(5):
+        insert_ingredient(recipe_id=rid, name=f"ingredient_{i}", qty_per_serving=1.0,
+                          unit=None, todoist_section="Pantry", path=db_path)
+    _make_env(monkeypatch)
+    _adapter_mock(monkeypatch)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    result = meal_planner_send_to_todoist([[rid, 4]])
+    out = result(blocking=True, timeout=5)
+
+    assert out["items_sent"] == 6
+    assert out["items_attempted"] == 6
+
+
+def test_send_header_create_failure_does_not_block_ingredients(monkeypatch, tmp_path: Path) -> None:
+    """Header create_task returns {'created': False}; ingredients succeed → attempted=6, sent=5."""
+    import meal_planner.db as _db_mod
+    import jobs.adapters.todoist as _todoist_adapter
+    db_path = tmp_path / "recipes.db"
+    monkeypatch.setattr(_db_mod, "DB_PATH", db_path)
+    init_db(db_path)
+    rid = insert_recipe(title="Partial Recipe", base_servings=4, path=db_path)
+    for i in range(5):
+        insert_ingredient(recipe_id=rid, name=f"item_{i}", qty_per_serving=1.0,
+                          unit=None, todoist_section="Pantry", path=db_path)
+    _make_env(monkeypatch)
+
+    call_count = [0]
+
+    def fake_create_task(output_config: dict, payload: dict) -> dict:
+        call_count[0] += 1
+        # First call is the header (section_id == Meals) → simulate create failure
+        if output_config.get("section_id") == _MEALS_SECTION_ID:
+            return {"created": False}
+        return {"created": True}
+
+    monkeypatch.setattr(_todoist_adapter, "create_task", fake_create_task)
+
+    from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist
+    result = meal_planner_send_to_todoist([[rid, 4]])
+    out = result(blocking=True, timeout=5)
+
+    assert out["items_attempted"] == 6
+    assert out["items_sent"] == 5  # header failed, 5 ingredients succeeded
+    assert call_count[0] == 6  # all 6 calls were made

@@ -4,11 +4,15 @@ For each selected recipe, scales ingredients to the requested serving count
 and creates one Todoist task per ingredient. Ingredients are NOT merged across
 recipes; duplicates appear as separate tasks with a (Recipe Name) suffix.
 
+Phase 17 Chunk D: also creates one recipe-header task per recipe in the Meals
+section, titled "<recipe> (<servings> servings)", with the meal-planner label.
+Header counts toward items_sent / items_attempted.
+
 Result-dict contract (forward-compatible with future Consolidate + Send phase):
   items_sent:          int   — tasks successfully created
   items_attempted:     int   — tasks attempted
-  consolidate_failed:  str | None — None (reserved for future D2 phase)
-  consolidate_dropped: int   — 0 (reserved for future D2 phase)
+  consolidate_failed:  str | None — None (reserved for future phase)
+  consolidate_dropped: int   — 0 (reserved for future phase)
   error:               str | None — top-level error string, None on success
 """
 from __future__ import annotations
@@ -24,6 +28,8 @@ from meal_planner.scaling import scale_ingredients
 
 logger = logging.getLogger(__name__)
 
+MEALS_SECTION_NAME = "Meals"
+
 
 @huey.task()
 def meal_planner_send_to_todoist(recipe_scales: list[list]) -> dict:
@@ -33,13 +39,21 @@ def meal_planner_send_to_todoist(recipe_scales: list[list]) -> dict:
     (JSON-serialised as lists, not tuples).
 
     Required env vars:
-        TODOIST_SECTIONS   — JSON object mapping section name → section_id
+        TODOIST_SECTIONS   — JSON object mapping section name → section_id.
+                             MUST include a "Meals" section (recipe-header tasks land there).
 
     Optional:
         TODOIST_PROJECT_ID — target Todoist project; defaults to inbox
     """
     sections: dict[str, str] = json.loads(os.environ["TODOIST_SECTIONS"])
     fallback_name: str = next(iter(sections))
+
+    if MEALS_SECTION_NAME not in sections:
+        raise RuntimeError(
+            f"TODOIST_SECTIONS is missing '{MEALS_SECTION_NAME}' section. "
+            "Add it to meal_planner/.env and kickstart the consumer."
+        )
+    meals_section_id = sections[MEALS_SECTION_NAME]
 
     project_id = os.environ.get("TODOIST_PROJECT_ID")
     sent = 0
@@ -48,6 +62,25 @@ def meal_planner_send_to_todoist(recipe_scales: list[list]) -> dict:
     for rid, target_servings in recipe_scales:
         recipe = get_recipe(int(rid))
         scaled = scale_ingredients(recipe, int(target_servings))
+
+        attempted += 1
+        header_title = f"{recipe.title} ({int(target_servings)} servings)"
+        header_result = todoist_adapter.create_task(
+            output_config={
+                "project_id": project_id,
+                "section_id": meals_section_id,
+                "labels": ["meal-planner"],
+            },
+            payload={
+                "title": header_title,
+                "source": "meal-planner",
+                "source_id": f"recipes:{recipe.id}:header",
+                "priority": "normal",
+                "confidence": 1.0,
+            },
+        )
+        if header_result.get("created"):
+            sent += 1
 
         for ingredient in scaled:
             attempted += 1
