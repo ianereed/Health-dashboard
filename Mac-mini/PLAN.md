@@ -551,7 +551,7 @@ Branch names below.
 
 ---
 
-### Chunk B1 — Bug-fix infra: nas-intake timeout, jobs-http token, queue-size + result endpoints — DONE 2026-05-07
+### Chunk B1 — Bug-fix infra: nas-intake timeout, jobs-http token, queue-size + result endpoints — DONE 2026-05-07 @e34f45b
 
 **Branch:** `fix/phase18-b1-jobs-http-infra`
 **Scope:** ~80 LOC across 4 files + 1 install.sh edit. No console changes.
