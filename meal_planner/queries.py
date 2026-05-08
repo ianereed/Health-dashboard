@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from meal_planner import db as _db
-from meal_planner.models import Recipe
+from meal_planner.models import Ingredient, Recipe
 
 
 def _now_utc() -> str:
@@ -80,6 +80,45 @@ def list_all_tags(*, path: Path | None = None) -> list[str]:
             JOIN recipe_tags rt ON rt.tag_id = t.id
             ORDER BY t.name
             """
+        ).fetchall()
+    return [r["name"] for r in rows]
+
+
+def list_ingredients(recipe_id: int, *, path: Path | None = None) -> list[Ingredient]:
+    """Return all ingredients for a recipe ordered by sort_order, name."""
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        rows = conn.execute(
+            "SELECT * FROM ingredients WHERE recipe_id = ? ORDER BY sort_order, name COLLATE NOCASE",
+            (recipe_id,),
+        ).fetchall()
+    return [
+        Ingredient(
+            id=r["id"],
+            recipe_id=r["recipe_id"],
+            name=r["name"],
+            qty_per_serving=r["qty_per_serving"],
+            unit=r["unit"],
+            notes=r["notes"],
+            todoist_section=r["todoist_section"],
+            sort_order=r["sort_order"],
+        )
+        for r in rows
+    ]
+
+
+def get_recipe_tags(recipe_id: int, *, path: Path | None = None) -> list[str]:
+    """Return tag names linked to a recipe, sorted alphabetically."""
+    p = path or _db.DB_PATH
+    with _db._get_conn(p) as conn:
+        rows = conn.execute(
+            """
+            SELECT t.name FROM tags t
+            JOIN recipe_tags rt ON rt.tag_id = t.id
+            WHERE rt.recipe_id = ?
+            ORDER BY t.name
+            """,
+            (recipe_id,),
         ).fetchall()
     return [r["name"] for r in rows]
 
