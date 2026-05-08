@@ -116,7 +116,7 @@ def get_recipe_tags(recipe_id: int, *, path: Path | None = None) -> list[str]:
             SELECT t.name FROM tags t
             JOIN recipe_tags rt ON rt.tag_id = t.id
             WHERE rt.recipe_id = ?
-            ORDER BY t.name
+            ORDER BY t.name COLLATE NOCASE
             """,
             (recipe_id,),
         ).fetchall()
