@@ -118,3 +118,58 @@ def test_unknown_path(monkeypatch):
     monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
     status, body = _request("GET", "/notathing", token="secret")
     assert status == 404
+
+
+def test_queue_size(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    status, body = _request("GET", "/queue-size", token="secret")
+    assert status == 200
+    assert isinstance(body["size"], int)
+
+
+def test_jobs_id_pending(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    # A random UUID will never exist in huey → pending (result=None).
+    status, body = _request("GET", "/jobs/00000000-0000-0000-0000-000000000000", token="secret")
+    assert status == 200
+    assert body["status"] == "pending"
+    assert body["result"] is None
+    assert body["error"] is None
+
+
+def test_jobs_id_success(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    # Enqueue a nop job and immediately look up its result.
+    enqueue_status, enqueue_body = _request(
+        "POST", "/jobs", {"kind": "nop", "params": {"echo": {"x": 42}}}, token="secret"
+    )
+    assert enqueue_status == 202
+    job_id = enqueue_body["id"]
+    # The nop task runs in-process during enqueue in test harness — result
+    # may or may not be available immediately; we accept pending or success.
+    status, body = _request("GET", f"/jobs/{job_id}", token="secret")
+    assert status == 200
+    assert body["status"] in ("pending", "success")
+
+
+def test_jobs_id_missing_id(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    status, body = _request("GET", "/jobs/", token="secret")
+    assert status == 404
+    assert "missing job id" in body["error"]
+
+
+def test_jobs_id_error(monkeypatch):
+    monkeypatch.setenv("HOME_TOOLS_HTTP_TOKEN", "secret")
+    from unittest.mock import patch
+    from huey.exceptions import TaskException
+
+    def _raise(_id, blocking=False):
+        raise TaskException("task crashed", retries=0, traceback="tb")
+
+    with patch("jobs.huey.result", side_effect=_raise):
+        status, body = _request("GET", "/jobs/some-id", token="secret")
+    assert status == 200
+    assert body["status"] == "error"
+    assert "task crashed" in body["error"]
+    assert body["result"] is None

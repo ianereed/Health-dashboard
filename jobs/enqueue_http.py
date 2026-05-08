@@ -88,14 +88,32 @@ class JobsHandler(BaseHTTPRequestHandler):
                 })
             self._send_json(200, {"kinds": out})
             return
+        if parsed.path == "/queue-size":
+            from jobs import huey as _huey
+            self._send_json(200, {"size": _huey.storage.queue_size()})
+            return
         if parsed.path.startswith("/jobs/"):
             job_id = parsed.path[len("/jobs/"):]
-            # huey doesn't expose result-by-id lookup directly; tell the
-            # caller to use the consumer logs / console for now.
-            self._send_json(
-                501,
-                {"error": "result lookup not implemented in v1; check Mini Ops :8503/Jobs"},
-            )
+            if not job_id:
+                self._send_json(404, {"error": "missing job id"})
+                return
+            from jobs import huey as _huey
+            try:
+                result = _huey.result(job_id, blocking=False)
+            except Exception as exc:
+                self._send_json(
+                    200,
+                    {
+                        "status": "error",
+                        "result": None,
+                        "error": f"task crashed: {type(exc).__name__}: {exc}",
+                    },
+                )
+                return
+            if result is None:
+                self._send_json(200, {"status": "pending", "result": None, "error": None})
+            else:
+                self._send_json(200, {"status": "success", "result": result, "error": None})
             return
         self._send_json(404, {"error": f"unknown path {parsed.path!r}"})
 

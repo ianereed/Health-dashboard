@@ -490,127 +490,572 @@ Production `meal_planner_ingest_photo` runs on the mini's
 `com.home-tools.jobs-consumer` LaunchAgent. Live test: Nanaimo Bars PDF
 processed end-to-end 2026-05-06.
 
-## Phase 18 — Edit recipes via web GUI + Sheet decommission + jobs-queue bug fix (SCOPED 2026-05-07, not yet started)
+## Phase 18 — Edit recipes via web GUI + Sheet decommission + jobs-queue bug fix (SCOPED 2026-05-07; chunked 2026-05-07 for Sonnet 200k execution)
 
-Two workstreams in one phase. Lands on
-`fix/phase18-recipe-edit-and-jobs-queue` (or sibling branches that
-merge together), separate from Phase 17 so UI polish isn't
-destabilized.
+Two workstreams (A = recipe edit + Sheet retire, B = jobs-queue bug
+fixes), decomposed into **5 chunks** sized for a Sonnet 200k context
+window. Each chunk is a single shippable deliverable with green tests
+and an explicit `/ship` gate. **Between chunks: `/compact`, then Opus
+reviews the diff before the next Sonnet kickoff.**
 
-### Workstream A — Edit recipes via web GUI + Sheet decommission
+### Why chunked?
 
-Move recipe-row editing into the Recipes tab so `recipes.db` becomes
-the sole source-of-truth. Today the Apps Script Sheet is a read-only
-fallback (Phase 14); after Phase 18 it's retired. Detailed scope to be
-filled in at the Phase 18 office-hours session — likely an inline
-edit-row affordance per recipe in `console/tabs/plan.py`, persistence
-via `meal_planner.queries.update_recipe(...)`, and a one-shot script
-that exports the current Sheet state into `recipes.db` then archives
-the Sheet to read-only.
+Auto-mode Sonnet at 200k can do ~150 LOC of new code + ~10 file reads +
+pytest output noise comfortably. Past 200k the working memory degrades
+and tool outputs (pytest tracebacks, lsof, launchctl) start to push
+context. The chunks below each fit ≤200k by construction; A2 (UI
+rewrite) is the largest and most fragile.
 
-### Workstream B — Jobs-queue bug fix
+### Bug context (so each chunk's prompt can stay tight)
 
-Two bugs surfaced same session — both real, both confirmed live on the
-mini:
-
-1. **nas_intake_scan starves the shared huey worker.** A multi-page
-   healthcare PDF held Worker-1 for ~25 min while 13+ periodic tasks
-   queued behind it. v1.1 large-file escalation never armed because the
-   small-file path completed in one shot — the `timeout_counts >= 3`
-   rule only increments on `subprocess.TimeoutExpired`, so a 590s
-   successful run never triggers escalation. Single-worker consumer
-   (`-w 1`) means any slow non-model kind starves every other kind.
+1. **`nas_intake_scan` starves the shared huey worker.** Multi-page
+   healthcare PDF held Worker-1 ~25 min; v1.1 large-file escalation
+   never armed because the small-file path completed in one shot
+   (escalation only triggers on `subprocess.TimeoutExpired`). Single-
+   worker consumer means any slow non-model kind starves every other
+   kind. **Primary fix (1A):** `nas-intake/config.py
+   SUBPROCESS_TIMEOUT_S = 600 → 90`. After 3×90s timeouts (~5 min)
+   escalation arms and the file routes to `ingest-image-large`. Fits
+   in chunk B1.
 2. **Streamlit holds orphan SQLite WAL fd, silently drops enqueues.**
-   Long-running mini console (`com.home-tools.console`, started May 5)
-   held WAL/shm fds on inodes that no longer existed in any directory
-   entry. INSERT INTO task returned cleanly, huey returned a Result.id,
-   "Job enqueued" banner showed — but the row landed in a deleted WAL
-   the consumer could never read. Two clicks (`c5ab896e`, `346474b6`)
-   both fell into the hole; Todoist confirmed never received the items.
-   Immediate fix was a `launchctl kickstart -kp` of the streamlit; real
-   fix is to remove the in-process huey import.
+   Long-running console held WAL/shm fds on inodes that no longer
+   existed; `INSERT INTO task` succeeded into a deleted WAL the
+   consumer could never read. Two clicks fell into the hole. The fix
+   is to remove every `from jobs import huey` from `console/` and
+   route both **enqueue** *and* **result polling** through the HTTP
+   server (`jobs/enqueue_http.py`, port 8504, already running but
+   dormant — token missing from keychain). Originally scoped as
+   "enqueue only" — extended in chunking review because
+   `console/tabs/plan.py` *also* polls `_huey.result(task_id)` every
+   2s in `_render_job_status`, which is the same WAL-fd vector.
+   Greppable post-condition after chunk B2:
+   `grep -r "from jobs import huey" console/` returns ZERO lines.
 
-### Bug 1 — primary fix (1A)
+### Chunk ordering and dependencies
 
-`nas-intake/config.py`: `SUBPROCESS_TIMEOUT_S = 600 → 90`. After 3×90s
-timeouts (~5 min) v1.1 escalation arms automatically and the file moves
-to `ingest-image-large` (page-resumable, heartbeat-watchdog).
+```
+B1 (bug fixes infra) ──┬──> B2 (console route-through) ──┐
+                       │                                 │
+                       └──> A1 (CRUD backend) ──> A2 ────┴──> A3 (Sheet decom)
+                                                  (UI)
+```
 
-- **LOC:** 1.
-- **Risk:** false-positive timeouts on slow-but-not-wedged PDFs — but
-  those simply re-queue at the next 5-min tick and eventually escalate,
-  which is the right outcome anyway.
-- **Test:** replay the wedged healthcare PDF; expect 3× ~90s timeouts
-  then escalation; large-file path completes the OCR.
+- B1 ships first (smallest, clears infra prereqs for B2).
+- B2 second (closes WAL-fd silent-drop window before any new console code lands).
+- A1, A2, A3 sequential (A2 needs A1's CRUD, A3 needs both).
+- B1+B2 are independent of A1/A2/A3 — they could be reordered if Anny
+  reports an urgent edit need, but B-then-A is the recommended path.
 
-### Bug 1 — deferred class fix (1B, separate follow-up branch)
+Each chunk lands on its own branch and merges to `main` independently.
+Branch names below.
 
-Split queues — second `SqliteHuey(name="home-tools-jobs-bg")` for non-
-model kinds, second consumer plist. Don't block Phase 18 on this; if 1A
-holds, defer indefinitely. See full tradeoff write-up in journal-136.md.
+---
 
-### Bug 2 — primary fix (2A)
+### Chunk B1 — Bug-fix infra: nas-intake timeout, jobs-http token, queue-size + result endpoints — DONE 2026-05-07
 
-Route console enqueues through `jobs.enqueue_http` on port 8504 (the
-service is already running but currently dormant — auth blocked because
-`HOME_TOOLS_HTTP_TOKEN` keychain entry is missing).
+**Branch:** `fix/phase18-b1-jobs-http-infra`
+**Scope:** ~80 LOC across 4 files + 1 install.sh edit. No console changes.
 
-Pre-req: `jobs/install.sh` adds an idempotent `add-generic-password`
-step that creates `home-tools/jobs_http_token` (random 32-byte hex if
-missing). Then `launchctl kickstart -kp gui/501/com.home-tools.jobs-http`
-to pick up the env.
+**Deliverables:**
+1. `nas-intake/config.py`: `SUBPROCESS_TIMEOUT_S = 600 → 90`.
+2. `jobs/install.sh`: idempotent `add-generic-password` step that creates
+   `home-tools/jobs_http_token` (random 32-byte hex via `openssl rand -hex 32`)
+   ONLY if `find-generic-password` doesn't already return one. Never
+   regenerates an existing token (would invalidate every running consumer).
+3. `jobs/enqueue_http.py`: add `GET /queue-size` (returns
+   `{"size": int}`); promote `GET /jobs/<id>` from its 501-stub to
+   functional — calls `huey.result(id, blocking=False)`, catches
+   `TaskException`, returns `{"status": "pending|success|error",
+   "result": ..., "error": ...}` (server-side synthesize-error so
+   the client doesn't need to import huey).
+4. `jobs/tests/test_enqueue_http.py`: cases for `/queue-size` (200,
+   integer body), `/jobs/<id>` pending (200, status=pending), success
+   (200, status=success, result echoes), error (200, status=error,
+   error string), missing id (404). Use the existing `FakeRequest`
+   harness.
+5. `Mac-mini/PLAN.md` Phase 18 marker: change Chunk B1 status line to
+   "DONE <date>" with the commit short SHA.
 
-Code change:
+**Test gate:**
+```
+cd ~/Home-Tools && jobs/.venv/bin/pytest jobs/tests/test_enqueue_http.py -q
+```
+All previously passing tests still pass. New endpoint tests pass.
 
-- New `console/jobs_client.py` — POST to
-  `http://100.66.241.126:8504/jobs` with bearer auth. ~50 LOC.
-- `console/tabs/plan.py:96` and `:141` — replace
-  `from jobs.kinds.X import X; X(...)` with
-  `jobs_client.enqueue("X", {...})`. ~10 LOC delta.
-- Add `GET /queue-size` endpoint to `jobs/enqueue_http.py` (~15 LOC),
-  swap `console/tabs/jobs.py:42` and `console/sidebar/settings.py:17`
-  to use HTTP. Removes the entire long-lived fd surface from the
-  streamlit.
+**Validation on mini (after merge, before declaring done):**
+```
+ssh homeserver@homeserver
+bash ~/Home-Tools/jobs/install.sh    # idempotent; creates token if missing
+launchctl kickstart -kp gui/501/com.home-tools.jobs-http
+curl -s -H "Authorization: Bearer $(security find-generic-password -a home-tools -s jobs_http_token -w)" http://100.66.241.126:8504/queue-size
+# expect: {"size": <int>}
+```
 
-**Risk:** HTTP server outage → enqueues fail visibly with toast (which
-is *better* than today's silent drop).
+**Sonnet kickoff prompt — paste verbatim into a fresh session:**
+```
+We are starting Phase 18 Chunk B1 of meal_planner — bug-fix infra
+groundwork. Read the following to orient (do NOT read the whole
+codebase):
 
-**Test:**
+  1. Mac-mini/PLAN.md — find the "Phase 18" section and read just
+     "Chunk B1" (Bug-fix infra) plus the bug-context block above it.
+  2. jobs/enqueue_http.py — full file.
+  3. jobs/tests/test_enqueue_http.py — full file (FakeRequest harness).
+  4. jobs/install.sh — full file.
+  5. nas-intake/config.py — line 27 only (SUBPROCESS_TIMEOUT_S).
+  6. Memory: project_event_aggregator.md, project_meal_planner.md,
+     feedback_keychain_audit_session_unlock_scope.md.
 
-- `python -m jobs.cli doctor` sanity check.
-- Console "Send checked recipes to Todoist" → Todoist actually
-  populates within 30s.
-- `lsof -p $(pgrep streamlit) | grep jobs.db` returns empty after
-  shipping.
-- Restart `com.home-tools.jobs-http`; verify console enqueues fail
-  visibly (failure-path test).
-- Long-soak: leave streamlit up overnight, re-run lsof — still empty.
+Goal: ship the 5 deliverables listed in Chunk B1. Branch name:
+fix/phase18-b1-jobs-http-infra.
 
-### Bug 2 — fallback (2B)
+Constraints:
+  - Do NOT touch console/ in this chunk. Bug-2 fix is Chunk B2.
+  - Do NOT regenerate an existing keychain token; install.sh must be
+    safe to re-run.
+  - GET /jobs/<id> must do server-side synthesize-error so the client
+    never needs to import huey.
 
-If 2A blocks on infra, add a `jobs/__init__.py` helper that builds a
-fresh `SqliteHuey` on demand and closes it after each call; replace the
-three console-side imports with this helper. ~25 LOC, in-process pattern
-preserved but fd is short-lived. Don't ship both 2A and 2B — they
-conflict in maintenance burden.
+When done:
+  1. All tests in jobs/tests/test_enqueue_http.py pass.
+  2. Update PLAN.md Chunk B1 status to "DONE <YYYY-MM-DD> @<sha>".
+  3. Append a journal entry summarizing the diff + verbatim pytest
+     output.
+  4. Run /ship with branch fix/phase18-b1-jobs-http-infra.
+  5. Hand off: print "B1 complete — ready for /compact + Opus review."
+     Stop. Do not start B2.
 
-### Cross-cutting
+Status: NOT STARTED.
+```
 
-- Add memory `feedback_streamlit_in_process_huey` — "don't import a
-  SQLite-WAL backend in a long-lived Streamlit process; route writes
-  via HTTP."
-- Update `Mac-mini/PHASE12.md` to document the keychain entry
-  expectation for `jobs_http_token` and the rule "console writes go
-  through 8504, not in-process huey".
-- Flag follow-up: `health-dashboard/data/health.db` has the same long-
-  lived-streamlit + WAL pattern (4 LaunchAgent collectors writing).
-  Same vulnerability class; consider an analogous fix in a separate
-  branch.
+---
 
-### Total scope
+### Chunk B2 — Route all console huey access through HTTP (kills WAL-fd silent-drop)
 
-~120 LOC across 6 files + 1 plist (no new plist needed; jobs-http
-already exists) + 1 install.sh edit. Primary path is 1A + 2A.
+**Branch:** `fix/phase18-b2-console-http`
+**Scope:** ~120 LOC across 5 files + 1 new file + 1 new test file.
+**Depends on:** Chunk B1 must be merged + deployed on mini.
+
+**Deliverables:**
+1. New `console/jobs_client.py` — bearer-auth HTTP client with
+   `enqueue(kind: str, params: dict) -> str` (returns task_id),
+   `queue_size() -> int | None`, and `result(task_id: str) -> dict |
+   None` (None=pending, dict=terminal). Reads token from env
+   `HOME_TOOLS_HTTP_TOKEN`; base URL from env
+   `HOME_TOOLS_HTTP_URL` (default `http://100.66.241.126:8504`). All
+   network errors caught and surfaced as a synthesized error dict
+   shaped for `_format_status`. ~80 LOC.
+2. `console/tests/test_jobs_client.py` — new file. Mock `httpx`/
+   `requests` (whichever the client uses; prefer stdlib `urllib` to
+   avoid a new dep). Test enqueue success, enqueue 5xx → error dict,
+   queue_size 200, queue_size network error → returns None,
+   result-pending, result-terminal, result-error.
+3. `console/tabs/plan.py` — replace:
+   - `from jobs.kinds.meal_planner_send_to_todoist import meal_planner_send_to_todoist` + the `meal_planner_send_to_todoist(checked)` call (~line 155–164)
+   - `from jobs.kinds.meal_planner_clear_todoist import meal_planner_clear_todoist` + the `meal_planner_clear_todoist()` call (~line 207–215)
+   - `from jobs import huey as _huey` (top of file) — DELETE
+   - `_read_result_or_synthesize_error(_huey, task_id)` (~line 50)
+     → `_read_result_or_synthesize_error(jobs_client, task_id)` *or*
+     refactor `_read_result_or_synthesize_error` to take a `result_fn`
+     callable instead of a huey module. The latter is cleaner.
+4. `console/tabs/_job_status.py` — refactor
+   `_read_result_or_synthesize_error` to accept a callable
+   `result_fn(task_id) -> dict | None | raises`. Update its tests
+   in `meal_planner/tests/test_read_result_or_synthesize_error.py`
+   to pass a fake fn instead of a fake huey module.
+5. `console/tabs/jobs.py` — replace `huey.storage.queue_size()` (~line 42–43) with `jobs_client.queue_size()`; remove `from jobs import huey` import.
+6. `console/sidebar/settings.py` — replace `huey.storage.queue_size()` (~line 17–19) with `jobs_client.queue_size()`; the `jobs db · …/jobs.db` line becomes `jobs http · {url}` (or remove entirely — your call). Remove `from jobs import huey` import.
+7. `Mac-mini/PLAN.md` Phase 18 Chunk B2 status update.
+
+**Greppable post-condition (must enforce in tests + manual check):**
+```
+grep -r "from jobs import huey" console/   # → 0 lines
+```
+
+**Test gate:**
+```
+cd ~/Home-Tools && jobs/.venv/bin/pytest console/tests/test_jobs_client.py meal_planner/tests/test_read_result_or_synthesize_error.py jobs/tests/test_enqueue_http.py -q
+```
+Plus full suite:
+```
+jobs/.venv/bin/pytest -q
+```
+
+**Validation on mini (after merge):**
+```
+launchctl kickstart -kp gui/501/com.home-tools.console
+sleep 5
+lsof -p $(pgrep -f streamlit | head -1) | grep -E "jobs\.db|home-tools-jobs" || echo "OK: no jobs.db fd in streamlit"
+# Open http://homeserver:8503/?tab=recipes → check a recipe → click Send
+# → confirm Todoist receives within 30s.
+# Then: launchctl bootout gui/501/com.home-tools.jobs-http
+# Click Send again → verify visible error toast (failure-path).
+# Then: launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.home-tools.jobs-http.plist
+```
+
+**Sonnet kickoff prompt — paste verbatim:**
+```
+We are starting Phase 18 Chunk B2 of meal_planner — route the console's
+huey access through HTTP so the streamlit process no longer holds a
+WAL fd. Chunk B1 must be DONE on main before you begin (verify with
+`grep "DONE" Mac-mini/PLAN.md` for Chunk B1).
+
+Read to orient:
+  1. Mac-mini/PLAN.md — Phase 18 "Chunk B2" subsection plus the bug
+     context.
+  2. console/tabs/plan.py — full file. Note the two enqueue sites
+     (~line 155 send, ~line 207 clear) and the result-poll fragment
+     (~line 37 _render_job_status calling _read_result_or_synthesize_error
+     at ~line 50).
+  3. console/tabs/_job_status.py — full file (the helper to refactor).
+  4. console/tabs/jobs.py — line 42 only.
+  5. console/sidebar/settings.py — full file.
+  6. jobs/enqueue_http.py — full file (B1 added /queue-size and
+     functional /jobs/<id>).
+  7. meal_planner/tests/test_read_result_or_synthesize_error.py — full
+     file (so you know what tests need to migrate).
+  8. Memory: feedback_streamlit_fragment_huey_polling.md,
+     feedback_sqlite_wal_copy_sidecars.md.
+
+Goal: ship the 7 deliverables listed in Chunk B2. Branch name:
+fix/phase18-b2-console-http.
+
+Hard invariants:
+  - `grep -r "from jobs import huey" console/` returns 0 lines after
+    your change. Add this as an automated test in
+    console/tests/test_jobs_client.py (subprocess grep + assert empty).
+  - Prefer stdlib `urllib.request` over a new dep. If you reach for
+    `requests`, justify it in the journal.
+  - Refactor `_read_result_or_synthesize_error` to take a callable, not
+    a huey module — keeps it pure and testable without mocking imports.
+  - The `@st.fragment(run_every="2s")` polling cadence stays unchanged.
+
+When done:
+  1. Full test suite green: jobs/.venv/bin/pytest -q.
+  2. PLAN.md Chunk B2 status → "DONE <date> @<sha>".
+  3. Journal entry with diff summary + verbatim pytest tail.
+  4. /ship with branch fix/phase18-b2-console-http.
+  5. After /ship lands and CI is green, write the post-merge mini
+     validation checklist to the journal as a TODO for the user (do
+     NOT ssh into the mini yourself — that's an operator step).
+  6. Print "B2 complete — ready for /compact + Opus review.
+     Mini-validation checklist is in the journal." Stop.
+
+Status: NOT STARTED.
+```
+
+---
+
+### Chunk A1 — Recipe CRUD backend
+
+**Branch:** `feat/phase18-a1-recipe-crud-backend`
+**Scope:** ~200 LOC across 3 files. No console changes; backend only.
+
+**Deliverables:**
+1. `meal_planner/queries.py` (or split into `meal_planner/mutations.py`
+   if the file grows past ~250 lines — your call): add
+   - `update_recipe(recipe_id: int, *, title: str | None = None, base_servings: int | None = None, instructions: str | None = None, cook_time_min: int | None = None, source: str | None = None) -> None` — partial update; only non-None fields are written; bumps `updated_at`. Raises `KeyError` on missing id.
+   - `delete_recipe(recipe_id: int) -> None` — single `DELETE`; cascades ingredients + recipe_tags via existing FK ON DELETE CASCADE (`foreign_keys=ON` already set). Raises `KeyError` on missing id.
+   - `add_ingredient(recipe_id: int, *, name: str, qty_per_serving: float | None, unit: str | None, notes: str | None, todoist_section: str | None, sort_order: int) -> int` — returns new ingredient id; bumps recipe `updated_at`.
+   - `update_ingredient(ingredient_id: int, *, name=None, qty_per_serving=None, unit=None, notes=None, todoist_section=None, sort_order=None) -> None` — partial update; bumps parent recipe `updated_at`. Raises `KeyError`.
+   - `delete_ingredient(ingredient_id: int) -> None` — bumps parent recipe `updated_at` BEFORE deleting (read-then-write in one tx).
+   - `set_recipe_tags(recipe_id: int, tags: list[str]) -> None` — replace-style: deletes all existing recipe_tags rows for this recipe, then inserts fresh ones (lowercased, deduped). Garbage-collects orphan tag rows not linked to any recipe (optional; add a `_gc_orphan_tags(conn)` helper). Bumps recipe `updated_at`.
+   - `create_recipe(*, title: str, base_servings: int = 4, instructions: str | None = None, cook_time_min: int | None = None, source: str | None = None) -> int` — wraps existing `db.insert_recipe`; this is the public/UI-facing name. (Don't rename insert_recipe — photo intake uses it.)
+2. `meal_planner/tests/test_queries.py` (or `test_mutations.py`): one
+   test per CRUD fn covering happy path + sad path (KeyError on bad
+   id, validation on empty title, etc.). Total ~15 new test cases.
+3. `meal_planner/db.py`: only if needed — add an `_update_recipe_updated_at(conn, recipe_id)` helper if multiple call sites converge on the same one-liner. Don't add a trigger; explicit > implicit for V1.
+
+**Test gate:**
+```
+jobs/.venv/bin/pytest meal_planner/tests/ -q
+```
+Plus full suite stays green.
+
+**Sonnet kickoff prompt — paste verbatim:**
+```
+We are starting Phase 18 Chunk A1 of meal_planner — recipe CRUD
+backend. This adds the database mutation primitives the Chunk A2 web
+UI will call. No UI changes in A1.
+
+Read to orient:
+  1. Mac-mini/PLAN.md — Phase 18 "Chunk A1" subsection.
+  2. meal_planner/db.py — full file (schema + insert_recipe +
+     insert_ingredient + add_recipe_tag).
+  3. meal_planner/queries.py — full file.
+  4. meal_planner/models.py — full file (Recipe, Ingredient,
+     GroceryLine).
+  5. meal_planner/tests/test_queries.py — full file (so you know the
+     test patterns).
+  6. Memory: feedback_no_abstraction_for_simple_fixes.md,
+     feedback_insert_or_ignore_silent_failure.md.
+
+Goal: ship the 7 CRUD functions listed in Chunk A1 plus tests. Branch:
+feat/phase18-a1-recipe-crud-backend.
+
+Hard invariants:
+  - Every mutation that changes a recipe OR its children (ingredients,
+    tags) bumps `recipes.updated_at` to NOW. Test it.
+  - delete_recipe is one DELETE; rely on FK cascade. Verify
+    `foreign_keys=ON` is in db._PRAGMAS — it is.
+  - update_* are partial: pass only the fields you want to change.
+    None means "do not change."
+  - set_recipe_tags is replace-style. Lowercase + dedup. Don't break
+    existing add_recipe_tag callers (photo intake) — additive only.
+  - Every fn raises KeyError on a non-existent id. Use cur.rowcount
+    check after the UPDATE/DELETE to detect (memory:
+    feedback_insert_or_ignore_silent_failure.md).
+  - Don't import streamlit, pandas, or anything UI-y in this chunk.
+
+When done:
+  1. meal_planner/tests/* green; full suite green.
+  2. PLAN.md Chunk A1 status → "DONE <date> @<sha>".
+  3. Journal entry summarizing fns added + verbatim pytest tail.
+  4. /ship with branch feat/phase18-a1-recipe-crud-backend.
+  5. Print "A1 complete — ready for /compact + Opus review." Stop.
+
+Status: NOT STARTED.
+```
+
+---
+
+### Chunk A2 — Recipe-edit web UI
+
+**Branch:** `feat/phase18-a2-recipe-edit-ui`
+**Scope:** ~250 LOC. The largest chunk; pre-factor `_recipe_form.py` to keep `plan.py` readable.
+**Depends on:** A1 merged (CRUD primitives must exist) + B2 merged (no in-process huey in console).
+
+**Deliverables:**
+1. New `console/tabs/_recipe_form.py` — pure-fn helpers for form state
+   serialization/validation (no streamlit at top level so it's unit-
+   testable). `validate_recipe_form(payload: dict) -> tuple[bool, list[str]]`,
+   `diff_ingredients(before: list, after: list) -> dict[str, list]` (adds/
+   updates/deletes).
+2. `console/tabs/plan.py`:
+   - Add a "selected recipe" panel below the grid: when exactly one row
+     is checked AND user clicks "Edit selected", expand a form with
+     fields: title (text), base_servings (number), instructions
+     (textarea), tags (`st.pills` multi or `st.multiselect` over
+     `list_all_tags()` + free-text tag-add input), and an editable
+     ingredients sub-grid (`st.data_editor` with `num_rows="dynamic"`,
+     columns: name, qty_per_serving, unit, notes, todoist_section,
+     sort_order).
+   - "Save changes" button → calls `queries.update_recipe`,
+     `queries.set_recipe_tags`, and the diffed ingredient mutations
+     (`add_ingredient` / `update_ingredient` / `delete_ingredient`)
+     in a single transaction (open one conn, pass through). Show a
+     success toast.
+   - "Delete this recipe" two-click confirm (mirror the existing
+     `_render_clear_button` pattern), → `queries.delete_recipe`.
+   - "+ New recipe" button (above grid) → blank form path; on save,
+     calls `queries.create_recipe`, then redirects to edit-mode for
+     the new id.
+3. `meal_planner/tests/test_recipe_form_helpers.py` — new file. Tests
+   for `validate_recipe_form` and `diff_ingredients` (pure fns).
+4. `Mac-mini/PLAN.md` Chunk A2 status update.
+
+**UX guardrails:**
+- Edit mode is only available when **exactly one** row is checked.
+  Multi-checked rows go to Send-to-Todoist as before.
+- Concurrent-edit risk (Anny + Ian both editing the same recipe at
+  once) is accepted as last-write-wins for V1. Don't add optimistic
+  locking.
+- Tag pill UI: existing tag pills above the grid are FILTER. The edit
+  form's tag selector is SEPARATE — different widget keys to avoid
+  state collision.
+
+**Test gate:**
+```
+jobs/.venv/bin/pytest meal_planner/tests/ -q
+```
+Plus a manual gstack /browse smoke test (see validation below).
+
+**Validation on mini (after merge):**
+```
+# In your local Claude Code session, NOT on the mini:
+/browse http://homeserver:8503/?tab=recipes
+# Manually:
+#   1. Click ☐ on one recipe → click "Edit selected".
+#   2. Change a tag, change one ingredient qty, click "Save changes".
+#   3. Re-load the page → confirm change persisted.
+#   4. Click "+ New recipe", fill in a test recipe "DELETE_ME_TEST",
+#      save, then click delete-confirm. Verify it's gone.
+#   5. Hit Send-to-Todoist on a different recipe → confirm B2 plumbing
+#      still works (regression check).
+```
+
+**Sonnet kickoff prompt — paste verbatim:**
+```
+We are starting Phase 18 Chunk A2 of meal_planner — recipe-edit web
+UI. This is the largest chunk in Phase 18; A1 (CRUD backend) and B2
+(console-http route-through) MUST be merged on main before you start.
+Verify with `grep -E "Chunk A1|Chunk B2" -A1 Mac-mini/PLAN.md` that
+both show DONE.
+
+Read to orient:
+  1. Mac-mini/PLAN.md — Phase 18 "Chunk A2" subsection.
+  2. console/tabs/plan.py — full file (POST B2 state — no `from jobs
+     import huey`; uses jobs_client).
+  3. console/tabs/_job_status.py — full file (style pattern for
+     pure-fn helpers).
+  4. meal_planner/queries.py — full file (the CRUD fns A1 added).
+  5. meal_planner/models.py — full file.
+  6. meal_planner/tag_categories.py — quick scan.
+  7. README at meal_planner/README.md.
+  8. Memory: feedback_streamlit_fragment_huey_polling.md.
+
+Goal: ship the 4 deliverables in Chunk A2. Branch:
+feat/phase18-a2-recipe-edit-ui.
+
+Hard invariants:
+  - Pure-fn form helpers live in _recipe_form.py — NO `import
+    streamlit` at top level of that file. Streamlit imports go in
+    plan.py only.
+  - Edit mode requires exactly-one-row checked. Document this in a
+    short st.caption.
+  - Save path runs as a single SQLite transaction — open one conn via
+    db._get_conn, pass it to the mutation fns (A1's signatures should
+    accept conn=None or you'll need to extend them; if extension is
+    needed, do it minimally and update A1's tests in the same chunk).
+  - "+ New recipe" creates the row first, then redirects via
+    st.session_state to edit mode for the new id.
+  - Delete uses the two-click confirm pattern from
+    _render_clear_button. 10s TTL reset.
+
+When done:
+  1. meal_planner/tests/test_recipe_form_helpers.py + full suite green.
+  2. Manual /browse walkthrough recorded in journal with one screenshot
+     per scenario (5 scenarios). Use the gstack /browse skill — do NOT
+     use mcp__claude-in-chrome__*.
+  3. PLAN.md Chunk A2 status → "DONE <date> @<sha>".
+  4. /ship with branch feat/phase18-a2-recipe-edit-ui.
+  5. Print "A2 complete — ready for /compact + Opus review." Stop.
+
+Status: NOT STARTED.
+```
+
+---
+
+### Chunk A3 — Sheet→DB sync script + Apps Script Sheet decommission
+
+**Branch:** `feat/phase18-a3-sheet-decommission`
+**Scope:** ~150 LOC + docs. New script + README/docs updates only.
+**Depends on:** A1 + A2 merged.
+
+**Deliverables:**
+1. New `meal_planner/scripts/export_sheet_to_db.py`:
+   - Pulls live Sheet via gspread (re-uses `seed_from_sheet._open_sheet`).
+   - For each recipe in the Sheet: looks up by title in recipes.db. Reports:
+     - in-Sheet-not-in-DB (count + titles)
+     - in-DB-not-in-Sheet (count + titles, e.g. photo-intake recipes that
+       were never in the Sheet — informational)
+     - title-match-but-ingredient-mismatch (DB count vs Sheet count;
+       prints first 3 differences)
+   - Default mode: dry-run, prints diff report only.
+   - With `--apply`: imports new-from-Sheet recipes via
+     `queries.create_recipe` + `queries.add_ingredient` + the existing
+     Gemini categorization from `seed_from_sheet`. Logs each insert.
+   - Logs go to stdout AND a file at `~/Home-Tools/logs/export-sheet-<utc>.log`.
+2. `meal_planner/scripts/__init__.py` (empty if missing).
+3. `meal_planner/tests/test_export_sheet_to_db.py`: gspread mocked.
+   Test the diff function with synthetic before/after states.
+4. `meal_planner/README.md`:
+   - Remove "kept as fallback through Phase 18" language.
+   - Mark Apps Script Sheet as ARCHIVED (read-only) effective the
+     deploy date.
+   - Update the ASCII flow diagram to show recipes.db as the sole
+     source-of-truth.
+5. `meal_planner/legacy/apps-script/SETUP.md` — prepend a `## ARCHIVED`
+   block explaining "this fallback was decommissioned in Phase 18 on
+   <date>; the Sheet is read-only; edits go through
+   http://homeserver:8503/?tab=recipes".
+6. `Mac-mini/PLAN.md`: Phase 18 Chunk A3 status update + add a
+   "Phase 18 — DONE <date>" summary block at the top of the section.
+
+**Operator steps (manual, NOT in code; document in PLAN.md and journal):**
+- Run `python -m meal_planner.scripts.export_sheet_to_db` (dry-run);
+  review diff report.
+- If diff is acceptable, run with `--apply`; verify recipe count in DB.
+- In Google Drive UI, change the meal-planner Sheet's permissions to
+  "Anyone with the link → Viewer" (no editors). Owner: Ian. Move it
+  to a `_Archive/` folder.
+- In `meal_planner/.env` on the mini, comment out `MEAL_PLANNER_SHEET_ID`
+  and `GOOGLE_SERVICE_ACCOUNT_PATH` (or remove). Document the change
+  in the journal.
+
+**Test gate:**
+```
+jobs/.venv/bin/pytest meal_planner/tests/test_export_sheet_to_db.py -q
+```
+Plus full suite green.
+
+**Sonnet kickoff prompt — paste verbatim:**
+```
+We are starting Phase 18 Chunk A3 of meal_planner — Sheet decommission.
+A1 + A2 must both be merged on main before you start.
+
+Read to orient:
+  1. Mac-mini/PLAN.md — Phase 18 "Chunk A3" subsection.
+  2. meal_planner/seed_from_sheet.py — full file (the Sheet read path
+     to reuse).
+  3. meal_planner/queries.py — full file (CRUD fns from A1).
+  4. meal_planner/README.md — full file.
+  5. meal_planner/legacy/apps-script/SETUP.md — full file (to prepend
+     archive notice).
+  6. Memory: feedback_privacy.md, feedback_mock_dryrun.md (the
+     export script must default to dry-run; --apply is opt-in).
+
+Goal: ship the 6 deliverables in Chunk A3 + write the operator-steps
+checklist into PLAN.md. Branch: feat/phase18-a3-sheet-decommission.
+
+Hard invariants:
+  - The export script defaults to DRY-RUN. --apply is the explicit
+    opt-in.
+  - Don't run the script live in this session — the user runs it on
+    the mini after merge. Tests use mocked gspread + mocked DB only.
+  - The Apps Script Sheet permission change is an OPERATOR step — do
+    not attempt it programmatically.
+
+When done:
+  1. New tests + full suite green.
+  2. PLAN.md Chunk A3 status → "DONE <date> @<sha>" AND add the
+     "Phase 18 — DONE" summary block above all 5 chunks.
+  3. Journal entry with the operator-steps checklist clearly flagged
+     for the user.
+  4. /ship with branch feat/phase18-a3-sheet-decommission.
+  5. Print "A3 complete — Phase 18 ready for /compact + Opus review.
+     Operator steps for Sheet archival are in the journal." Stop.
+
+Status: NOT STARTED.
+```
+
+---
+
+### Phase 18 done criteria
+
+- All 5 chunks merged to main with green CI.
+- `grep -r "from jobs import huey" console/` returns 0 lines.
+- `lsof -p $(pgrep -f streamlit | head -1) | grep jobs.db` empty after
+  console restart.
+- recipes.db is sole source-of-truth; Sheet archived read-only.
+- Apps Script Sheet decommissioned per README.
+- nas-intake `SUBPROCESS_TIMEOUT_S` is 90; one wedged-PDF replay
+  confirms escalation arms.
+- Test count grew (~15 from A1 + ~5 from A2 + ~5 from A3 + ~5 from
+  B1 + ~6 from B2 = ~36 new tests; 587 → ~620+).
+
+### Cross-cutting follow-ups (not blocking Phase 18)
+
+- Memory entry to write after B2: `feedback_streamlit_in_process_huey`
+  ("never `from jobs import huey` in a long-lived Streamlit process;
+   route through the HTTP server instead").
+- Health-dashboard has the same WAL+streamlit pattern (4 LaunchAgent
+  collectors writing to `health-dashboard/data/health.db`). Same
+  vulnerability class. File a separate phase after Phase 18 ships.
+- Bug 1B (split queues — `SqliteHuey(name="home-tools-jobs-bg")`) is
+  deferred indefinitely. If 1A holds in production for ≥1 week without
+  a starvation incident, leave it deferred. See journal-136.md for
+  full tradeoff.
 
 ---
 

@@ -24,7 +24,7 @@ LOCKS_DIR = PROJECT_ROOT / "locks"  # per-parent journal locks
 # Watcher tuning
 INTAKE_DEPTH_MAX = 4
 DEDUP_HISTORY = 5000
-SUBPROCESS_TIMEOUT_S = 600  # qwen2.5vl per-page can be 30-60s; multi-page allowance
+SUBPROCESS_TIMEOUT_S = 90   # 3×90s ≈ 5 min before escalation arms; was 600 (starved worker 25 min)
 MOUNT_HELPER_TIMEOUT_S = 30
 
 # Large-file pipeline (escalation path — see large_file_pipeline.py)
