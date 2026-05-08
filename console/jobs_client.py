@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 
 _DEFAULT_BASE_URL = "http://100.66.241.126:8504"
+_MAX_RESPONSE_BYTES = 1_048_576  # 1 MB — guard against runaway server responses
 
 
 def base_url() -> str:
@@ -34,7 +35,7 @@ def _do_request(method: str, path: str, body: dict | None = None) -> dict:
     if data is not None:
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+        return json.loads(resp.read(_MAX_RESPONSE_BYTES))
 
 
 def enqueue(kind: str, params: dict | None = None) -> str:

@@ -9,9 +9,10 @@ from __future__ import annotations
 import io
 import json
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -61,11 +62,8 @@ def test_enqueue_5xx_raises(monkeypatch):
         fp=io.BytesIO(json.dumps({"error": "boom"}).encode()),
     )
     with patch("urllib.request.urlopen", side_effect=err):
-        try:
+        with pytest.raises(RuntimeError, match="boom"):
             client.enqueue("nop")
-            assert False, "should have raised"
-        except RuntimeError as exc:
-            assert "boom" in str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -176,11 +174,8 @@ def test_enqueue_missing_id_raises(monkeypatch):
     client = _import_client()
     resp = _make_response({"kind": "nop"})  # no "id" field
     with patch("urllib.request.urlopen", return_value=resp):
-        try:
+        with pytest.raises(RuntimeError, match="no id in response"):
             client.enqueue("nop")
-            assert False, "should have raised"
-        except RuntimeError as exc:
-            assert "no id in response" in str(exc)
 
 
 # ---------------------------------------------------------------------------

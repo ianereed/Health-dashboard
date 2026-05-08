@@ -55,6 +55,8 @@ def test_read_result_taskexception_synthesizes_error_dict() -> None:
 
         exc: Exception = TaskException({"error": "KeyError(99999999)"})
     except Exception:
+        # If huey is not importable, any Exception stands in;
+        # the helper catches Exception, not just TaskException.
         exc = RuntimeError("KeyError(99999999)")
 
     def _raise(task_id):

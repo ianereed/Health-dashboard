@@ -36,7 +36,7 @@ def render() -> None:
 
 @st.fragment(run_every="2s")
 def _render_job_status(state_key: str, label: str) -> None:
-    """Poll huey for the job stored at session_state[state_key].
+    """Poll jobs_client for the job stored at session_state[state_key].
 
     Renders a spinner while pending; renders terminal status (success/warning/
     error) with the result-dict summary when complete. Clears state_key on
