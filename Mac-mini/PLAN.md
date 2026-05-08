@@ -551,6 +551,33 @@ Branch names below.
 
 ---
 
+### Phase 18 — DONE 2026-05-08
+
+All 5 chunks merged to `main`.
+
+| Chunk | Branch | Merged SHA | Summary |
+|-------|--------|-----------|---------|
+| B1 | `fix/phase18-b1-jobs-http-infra` | `2e340bf` | nas-intake timeout 600→90; jobs-http token; `/queue-size` + `/jobs/<id>` endpoints |
+| B2 | `fix/phase18-b2-console-http` | `4b54402` | console routed through enqueue_http; `from jobs import huey` gone from console/ |
+| A1 | `feat/phase18-a1-recipe-crud-backend` | `921e014` | `queries.py` CRUD (create/update/delete recipe+ingredient+tags); 431 tests |
+| A2 | `feat/phase18-a2-recipe-edit-ui` | `b738804` | recipe edit/new/delete web UI in console; `_recipe_form.py` pure helpers |
+| A3 | `feat/phase18-a3-sheet-decommission` | `a82db46` | `export_sheet_to_db.py` diff+import script; Sheet archived read-only |
+
+Done criteria met:
+- `grep -r "from jobs import huey" console/` → 0 lines ✓
+- `recipes.db` is sole source-of-truth; Sheet archived read-only ✓
+- Apps Script SETUP.md prepended with ARCHIVED block ✓
+- nas-intake `SUBPROCESS_TIMEOUT_S = 90` ✓
+
+**Operator steps (run on mini after merge — see also journal-164.md):**
+1. `cd ~/Home-Tools && python -m meal_planner.scripts.export_sheet_to_db` (dry-run; review diff)
+2. If diff is acceptable: `python -m meal_planner.scripts.export_sheet_to_db --apply`
+3. In Google Drive UI: change Sheet permissions to "Viewer (Anyone with link)"; move to `_Archive/` folder.
+4. In `meal_planner/.env` on the mini: comment out `MEAL_PLANNER_SHEET_ID` and `GOOGLE_SERVICE_ACCOUNT_PATH`.
+5. Restart `com.home-tools.console` to pick up the updated console code.
+
+---
+
 ### Chunk B1 — Bug-fix infra: nas-intake timeout, jobs-http token, queue-size + result endpoints — DONE 2026-05-07 @e34f45b
 
 **Branch:** `fix/phase18-b1-jobs-http-infra`
@@ -1038,7 +1065,7 @@ When done:
   5. Print "A3 complete — Phase 18 ready for /compact + Opus review.
      Operator steps for Sheet archival are in the journal." Stop.
 
-Status: NOT STARTED.
+Status: DONE 2026-05-08 @a82db46
 ```
 
 ---
