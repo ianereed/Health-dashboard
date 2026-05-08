@@ -3,6 +3,11 @@
 Renders an editable grid of all recipes. Each row has a Send checkbox and a
 Servings input. Clicking "Send checked recipes to Todoist" consolidates the
 selected recipes via Gemini and creates one Todoist task per grocery line.
+
+Phase 18 A2 adds inline recipe editing: check exactly one row and click
+"Edit selected" to expand a form with fields, editable ingredient sub-grid,
+and tag selector. "+ New recipe" creates a blank recipe row then redirects
+to edit-mode. "Delete this recipe" uses a two-click confirm (10 s TTL).
 """
 from __future__ import annotations
 
@@ -12,6 +17,14 @@ import pandas as pd
 import streamlit as st
 
 from console import jobs_client as _jobs_client
+from console.tabs._recipe_form import (
+    clean_optional_str,
+    diff_ingredients,
+    ingredients_to_rows,
+    nan_to_none,
+    normalize_tags,
+    validate_recipe_form,
+)
 from meal_planner import db as _db
 from meal_planner import queries
 from meal_planner.tag_categories import CATEGORY_MAP, _partition_tags_by_category
@@ -22,6 +35,23 @@ from console.tabs._job_status import (
 )
 
 _CONFIRM_CLEAR_TTL = 10  # seconds before the confirm state resets
+_CONFIRM_DELETE_TTL = 10  # seconds before the delete confirm state resets
+
+# Widget key prefixes for the edit panel. Streamlit ignores `value=` /
+# `default=` on re-render when `key=` is already in session_state, so leaving
+# these populated would silently overwrite the DB on the next save (and hide
+# concurrent writes from another browser session). Pop all of them on every
+# panel-close path.
+_EDIT_WIDGET_KEY_PREFIXES = (
+    "edit_title",
+    "edit_servings",
+    "edit_instructions",
+    "edit_cook_time",
+    "edit_source",
+    "edit_tags",
+    "edit_new_tag",
+    "edit_ingr",
+)
 
 __all__ = ["render", "_format_status", "_read_result_or_synthesize_error"]
 
@@ -72,6 +102,15 @@ def _render_inner() -> None:
         )
         return
 
+    # If we just created a new recipe, jump straight into edit mode for it
+    if st.session_state.get("_new_recipe_id"):
+        rid = st.session_state.pop("_new_recipe_id", None)
+        if rid is not None:
+            st.session_state["_edit_recipe_id"] = rid
+
+    # -----------------------------------------------------------------------
+    # Tag filter pills
+    # -----------------------------------------------------------------------
     all_tags = queries.list_all_tags()
     if all_tags:
         grouped = _partition_tags_by_category(all_tags, CATEGORY_MAP)
@@ -108,14 +147,27 @@ def _render_inner() -> None:
         tag_logic=tag_logic.lower(),
         sort="alpha" if sort_alpha else "recent",
     )
+
+    # -----------------------------------------------------------------------
+    # "+ New recipe" button (above grid)
+    # -----------------------------------------------------------------------
+    if st.button("+ New recipe", type="secondary"):
+        try:
+            new_id = queries.create_recipe(title="New Recipe")
+            st.session_state["_new_recipe_id"] = new_id
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Failed to create recipe: {exc}")
+        return
+
     if not recipes:
         if selected_tags:
             st.info(
                 "No recipes match the current tag filter. "
                 "Adjust selection above."
             )
-            return
-        st.info("Recipe database exists but contains no recipes yet.")
+        else:
+            st.info("Recipe database exists but contains no recipes yet.")
         return
 
     recipe_ids = [r.id for r in recipes]
@@ -140,34 +192,292 @@ def _render_inner() -> None:
         hide_index=True,
     )
 
-    if st.button(
-        "Send checked recipes to Todoist", type="primary", use_container_width=True
-    ):
-        checked = [
-            [recipe_ids[i], int(row["Servings"])]
-            for i, row in edited_df.iterrows()
-            if row["Send"]
-        ]
-        if not checked:
-            st.warning("No recipes selected. Check at least one box.")
-        else:
-            try:
-                task_id = _jobs_client.enqueue(
-                    "meal_planner_send_to_todoist", {"checked": checked}
-                )
-                st.session_state["_send_job"] = {
-                    "task_id": task_id,
-                    "started_at": time.monotonic(),
-                }
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Failed to enqueue: {exc}")
+    st.caption("Check exactly one recipe row and click **Edit selected** to edit it.")
+
+    # -----------------------------------------------------------------------
+    # Row-selection state
+    # -----------------------------------------------------------------------
+    checked_indices = [i for i, row in edited_df.iterrows() if row["Send"]]
+    exactly_one = len(checked_indices) == 1
+
+    col_send, col_edit = st.columns([3, 1])
+    with col_send:
+        if st.button(
+            "Send checked recipes to Todoist", type="primary", use_container_width=True
+        ):
+            checked = [
+                [recipe_ids[i], int(row["Servings"])]
+                for i, row in edited_df.iterrows()
+                if row["Send"]
+            ]
+            if not checked:
+                st.warning("No recipes selected. Check at least one box.")
+            else:
+                try:
+                    task_id = _jobs_client.enqueue(
+                        "meal_planner_send_to_todoist", {"checked": checked}
+                    )
+                    st.session_state["_send_job"] = {
+                        "task_id": task_id,
+                        "started_at": time.monotonic(),
+                    }
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Failed to enqueue: {exc}")
+
+    with col_edit:
+        edit_clicked = st.button(
+            "Edit selected",
+            type="secondary",
+            use_container_width=True,
+            disabled=not exactly_one,
+        )
+        if edit_clicked and exactly_one:
+            rid = recipe_ids[checked_indices[0]]
+            st.session_state["_edit_recipe_id"] = rid
+            st.rerun()
 
     _render_job_status("_send_job", "Send to Todoist")
+
+    # -----------------------------------------------------------------------
+    # Edit panel
+    # -----------------------------------------------------------------------
+    edit_id = st.session_state.get("_edit_recipe_id")
+    if edit_id is not None:
+        st.divider()
+        _render_edit_panel(edit_id, recipe_ids)
 
     st.divider()
     _render_clear_button()
     _render_job_status("_clear_job", "Clear Todoist")
+
+
+def _close_edit_panel(recipe_id: int) -> None:
+    """Close the edit panel and pop all per-recipe widget state.
+
+    Streamlit ignores `value=` / `default=` once a widget's `key=` exists in
+    session_state, so re-opening the panel without this cleanup would show
+    the user's previous (possibly cancelled) edits — and a follow-up Save
+    would silently overwrite the DB with stale values. Always call this on
+    any close path (Cancel, Save success, Delete success, recipe-vanished).
+    """
+    st.session_state.pop("_edit_recipe_id", None)
+    st.session_state.pop(f"_confirm_delete_at_{recipe_id}", None)
+    for prefix in _EDIT_WIDGET_KEY_PREFIXES:
+        st.session_state.pop(f"{prefix}_{recipe_id}", None)
+
+
+def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
+    """Render the inline edit form for a single recipe."""
+    try:
+        recipe = queries.get_recipe(recipe_id)
+    except KeyError:
+        st.error(f"Recipe id {recipe_id} not found — it may have been deleted.")
+        _close_edit_panel(recipe_id)
+        return
+
+    current_tags = queries.get_recipe_tags(recipe_id)
+    current_ingredients = queries.list_ingredients(recipe_id)
+    before_rows = ingredients_to_rows(current_ingredients)
+
+    st.subheader(f"Editing: {recipe.title}")
+
+    # -----------------------------------------------------------------------
+    # Form fields
+    # -----------------------------------------------------------------------
+    new_title = st.text_input("Title", value=recipe.title, key=f"edit_title_{recipe_id}")
+    new_servings = st.number_input(
+        "Base servings", min_value=1, max_value=max(100, recipe.base_servings), value=recipe.base_servings,
+        step=1, key=f"edit_servings_{recipe_id}",
+    )
+    new_instructions = st.text_area(
+        "Instructions", value=recipe.instructions or "", key=f"edit_instructions_{recipe_id}",
+    )
+    col_cook, col_source = st.columns(2)
+    with col_cook:
+        new_cook_time = st.number_input(
+            "Cook time (min)", min_value=0, max_value=max(600, recipe.cook_time_min or 0),
+            value=recipe.cook_time_min or 0,
+            step=5, key=f"edit_cook_time_{recipe_id}",
+        )
+    with col_source:
+        new_source = st.text_input(
+            "Source", value=recipe.source or "", key=f"edit_source_{recipe_id}",
+        )
+
+    # -----------------------------------------------------------------------
+    # Tag selector — uses _edit_tags_ key prefix, NOT tag_pills_* (filter pills)
+    # -----------------------------------------------------------------------
+    all_known_tags = queries.list_all_tags()
+    tag_options = sorted(set(all_known_tags) | set(current_tags))
+    selected_edit_tags: list[str] = st.pills(
+        "Tags",
+        options=tag_options,
+        selection_mode="multi",
+        default=current_tags,
+        key=f"edit_tags_{recipe_id}",
+    ) or []
+    new_free_tag = st.text_input(
+        "Add new tag", value="", key=f"edit_new_tag_{recipe_id}",
+        placeholder="type a tag and press Enter",
+    )
+    if new_free_tag.strip():
+        merged = normalize_tags(selected_edit_tags + [new_free_tag])
+    else:
+        merged = normalize_tags(selected_edit_tags)
+
+    # -----------------------------------------------------------------------
+    # Ingredients sub-grid
+    # -----------------------------------------------------------------------
+    st.markdown("**Ingredients**")
+    ingr_df = pd.DataFrame(before_rows)
+    edited_ingr = st.data_editor(
+        ingr_df,
+        column_config={
+            "id": st.column_config.NumberColumn("id", disabled=True),
+            "name": st.column_config.TextColumn("Name"),
+            "qty_per_serving": st.column_config.NumberColumn("Qty/serving", format="%.2f"),
+            "unit": st.column_config.TextColumn("Unit"),
+            "notes": st.column_config.TextColumn("Notes"),
+            "todoist_section": st.column_config.TextColumn("Todoist section"),
+            "sort_order": st.column_config.NumberColumn("Sort", step=1),
+        },
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+        key=f"edit_ingr_{recipe_id}",
+    )
+
+    # -----------------------------------------------------------------------
+    # Save / Cancel / Delete
+    # -----------------------------------------------------------------------
+    col_save, col_cancel, col_delete = st.columns([2, 1, 1])
+
+    with col_save:
+        if st.button("Save changes", type="primary", use_container_width=True, key=f"save_{recipe_id}"):
+            payload = {
+                "title": new_title,
+                "base_servings": new_servings,
+                "instructions": new_instructions,
+                "cook_time_min": int(new_cook_time),
+                "source": new_source,
+            }
+            ok, errs = validate_recipe_form(payload)
+            if not ok:
+                for e in errs:
+                    st.error(e)
+            else:
+                _save_recipe(recipe_id, payload, merged, before_rows, edited_ingr)
+
+    with col_cancel:
+        if st.button("Cancel", use_container_width=True, key=f"cancel_{recipe_id}"):
+            _close_edit_panel(recipe_id)
+            st.rerun()
+
+    with col_delete:
+        _render_delete_button(recipe_id)
+
+
+def _save_recipe(
+    recipe_id: int,
+    payload: dict,
+    tags: list[str],
+    before_rows: list[dict],
+    edited_ingr,
+) -> None:
+    """Write recipe + tags + ingredient diff in a single transaction."""
+    after_rows = edited_ingr.to_dict("records") if hasattr(edited_ingr, "to_dict") else []
+    # Normalize NaN/None ids to 0 so diff_ingredients treats those rows as adds.
+    for row in after_rows:
+        if nan_to_none(row.get("id")) is None:
+            row["id"] = 0
+
+    diff = diff_ingredients(before_rows, after_rows)
+
+    try:
+        with _db._get_conn(_db.DB_PATH) as conn:
+            queries.update_recipe(
+                recipe_id,
+                title=payload["title"].strip(),
+                base_servings=int(payload["base_servings"]),
+                # Pass string fields directly (don't coerce "" → None) so clearing
+                # a textarea actually updates the DB instead of silently keeping
+                # the old value. update_recipe skips None only, not empty string.
+                instructions=payload["instructions"] if payload["instructions"] is not None else None,
+                cook_time_min=payload["cook_time_min"],
+                source=payload["source"] if payload["source"] is not None else None,
+                conn=conn,
+            )
+            queries.set_recipe_tags(recipe_id, tags, conn=conn)
+            for row in diff["deletes"]:
+                queries.delete_ingredient(row["id"], conn=conn)
+            for row in diff["updates"]:
+                queries.update_ingredient(
+                    row["id"],
+                    name=row.get("name") or None,
+                    qty_per_serving=nan_to_none(row.get("qty_per_serving")),
+                    unit=clean_optional_str(row.get("unit")),
+                    notes=clean_optional_str(row.get("notes")),
+                    todoist_section=clean_optional_str(row.get("todoist_section")),
+                    sort_order=nan_to_none(row.get("sort_order")),
+                    conn=conn,
+                )
+            for row in diff["adds"]:
+                if row.get("name", "").strip():
+                    queries.add_ingredient(
+                        recipe_id,
+                        name=row["name"].strip(),
+                        qty_per_serving=nan_to_none(row.get("qty_per_serving")),
+                        unit=clean_optional_str(row.get("unit")),
+                        notes=clean_optional_str(row.get("notes")),
+                        todoist_section=clean_optional_str(row.get("todoist_section")),
+                        sort_order=int(nan_to_none(row.get("sort_order")) or 0),
+                        conn=conn,
+                    )
+        st.success("Recipe saved.")
+        _close_edit_panel(recipe_id)
+        st.rerun()
+    except KeyError:
+        st.error("Recipe was deleted by another session — closing editor.")
+        _close_edit_panel(recipe_id)
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Save failed: {exc}")
+
+
+def _render_delete_button(recipe_id: int) -> None:
+    """Two-click delete confirm. 10 s TTL resets the confirm window."""
+    _key = f"_confirm_delete_at_{recipe_id}"
+    confirm_at = st.session_state.get(_key)
+    now = time.monotonic()
+
+    if confirm_at is not None and now - confirm_at > _CONFIRM_DELETE_TTL:
+        del st.session_state[_key]
+        confirm_at = None
+
+    if confirm_at is None:
+        if st.button(
+            "Delete", type="secondary", use_container_width=True,
+            key=f"delete_btn_{recipe_id}",
+        ):
+            st.session_state[_key] = time.monotonic()
+            st.rerun()
+    else:
+        remaining = int(_CONFIRM_DELETE_TTL - (now - confirm_at))
+        st.warning(f"Delete in {remaining}s?")
+        if st.button(
+            "Confirm delete", type="primary", use_container_width=True,
+            key=f"confirm_delete_{recipe_id}",
+        ):
+            try:
+                queries.delete_recipe(recipe_id)
+                _close_edit_panel(recipe_id)
+                st.success("Recipe deleted.")
+                st.rerun()
+            except Exception as exc:
+                # Reset the confirm window so a retry starts from a clean slate
+                st.session_state.pop(_key, None)
+                st.error(f"Delete failed: {exc}")
 
 
 def _render_clear_button() -> None:

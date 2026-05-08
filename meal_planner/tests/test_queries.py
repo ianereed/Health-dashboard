@@ -11,7 +11,9 @@ from meal_planner.queries import (
     delete_ingredient,
     delete_recipe,
     get_recipe,
+    get_recipe_tags,
     list_all_tags,
+    list_ingredients,
     list_recipes,
     search_recipes,
     set_recipe_tags,
@@ -256,6 +258,12 @@ def test_update_recipe_missing_raises(db_path: Path) -> None:
         update_recipe(99999, title="X", path=db_path)
 
 
+def test_update_recipe_clears_cook_time_min_to_zero(db_path: Path) -> None:
+    rid = insert_recipe(title="Soup", base_servings=4, cook_time_min=15, path=db_path)
+    update_recipe(rid, cook_time_min=0, path=db_path)
+    assert get_recipe(rid, path=db_path).cook_time_min == 0
+
+
 def test_delete_recipe_removes_row_and_cascades(db_path: Path) -> None:
     rid = insert_recipe(title="To Delete", path=db_path)
     insert_ingredient(recipe_id=rid, name="Flour", sort_order=0, path=db_path)
@@ -415,3 +423,161 @@ def test_update_recipe_multi_field(db_path: Path) -> None:
     assert r.instructions == "New steps."
     assert r.cook_time_min == 30
     assert r.source == "cookbook"
+
+
+# ---------------------------------------------------------------------------
+# conn-passed path tests (single-transaction save invariant for A2 UI)
+# ---------------------------------------------------------------------------
+
+
+def test_list_ingredients_empty(db_path: Path) -> None:
+    rid = insert_recipe(title="Empty Recipe", path=db_path)
+    result = list_ingredients(rid, path=db_path)
+    assert result == []
+
+
+def test_list_ingredients_populated(db_path: Path) -> None:
+    from meal_planner.db import insert_ingredient
+    rid = insert_recipe(title="Pasta", path=db_path)
+    insert_ingredient(recipe_id=rid, name="Flour", sort_order=1, path=db_path)
+    insert_ingredient(recipe_id=rid, name="Egg", sort_order=0, path=db_path)
+    result = list_ingredients(rid, path=db_path)
+    assert len(result) == 2
+    # Ordered by sort_order first, then name
+    assert result[0].name == "Egg"
+    assert result[1].name == "Flour"
+    assert all(r.recipe_id == rid for r in result)
+
+
+def test_get_recipe_tags_empty(db_path: Path) -> None:
+    rid = insert_recipe(title="Untagged", path=db_path)
+    assert get_recipe_tags(rid, path=db_path) == []
+
+
+def test_get_recipe_tags_populated(db_path: Path) -> None:
+    rid = insert_recipe(title="Tagged", path=db_path)
+    add_recipe_tag(rid, "italian", path=db_path)
+    add_recipe_tag(rid, "asian", path=db_path)
+    tags = get_recipe_tags(rid, path=db_path)
+    assert tags == ["asian", "italian"]  # sorted alpha
+
+
+def test_update_recipe_conn_passed(db_path: Path) -> None:
+    """update_recipe uses caller-supplied conn and does not commit/close it."""
+    from meal_planner.db import _get_conn
+    rid = insert_recipe(title="ConnTest", path=db_path)
+    with _get_conn(db_path) as conn:
+        update_recipe(rid, title="ConnUpdated", conn=conn)
+    r = get_recipe(rid, path=db_path)
+    assert r.title == "ConnUpdated"
+
+
+def test_delete_recipe_conn_passed(db_path: Path) -> None:
+    """delete_recipe uses caller-supplied conn."""
+    from meal_planner.db import _get_conn
+    rid = insert_recipe(title="ToDeleteConn", path=db_path)
+    with _get_conn(db_path) as conn:
+        delete_recipe(rid, conn=conn)
+    with pytest.raises(KeyError):
+        get_recipe(rid, path=db_path)
+
+
+def test_add_ingredient_conn_passed(db_path: Path) -> None:
+    """add_ingredient uses caller-supplied conn and returns the new id."""
+    from meal_planner.db import _get_conn
+    rid = insert_recipe(title="ConnIngredient", path=db_path)
+    with _get_conn(db_path) as conn:
+        iid = add_ingredient(rid, name="Salt", sort_order=0, conn=conn)
+    assert isinstance(iid, int)
+
+
+def test_update_ingredient_conn_passed(db_path: Path) -> None:
+    """update_ingredient uses caller-supplied conn."""
+    from meal_planner.db import _get_conn, insert_ingredient
+    rid = insert_recipe(title="ConnUpdateIngr", path=db_path)
+    iid = insert_ingredient(recipe_id=rid, name="Pepper", sort_order=0, path=db_path)
+    with _get_conn(db_path) as conn:
+        update_ingredient(iid, name="Black Pepper", conn=conn)
+    conn2 = _sqlite3.connect(str(db_path))
+    row = conn2.execute("SELECT name FROM ingredients WHERE id = ?", (iid,)).fetchone()
+    conn2.close()
+    assert row[0] == "Black Pepper"
+
+
+def test_delete_ingredient_conn_passed(db_path: Path) -> None:
+    """delete_ingredient uses caller-supplied conn."""
+    from meal_planner.db import _get_conn, insert_ingredient
+    rid = insert_recipe(title="ConnDeleteIngr", path=db_path)
+    iid = insert_ingredient(recipe_id=rid, name="Garlic", sort_order=0, path=db_path)
+    with _get_conn(db_path) as conn:
+        delete_ingredient(iid, conn=conn)
+    conn2 = _sqlite3.connect(str(db_path))
+    row = conn2.execute("SELECT id FROM ingredients WHERE id = ?", (iid,)).fetchone()
+    conn2.close()
+    assert row is None
+
+
+def test_set_recipe_tags_conn_passed(db_path: Path) -> None:
+    """set_recipe_tags uses caller-supplied conn."""
+    from meal_planner.db import _get_conn
+    rid = insert_recipe(title="ConnTags", path=db_path)
+    with _get_conn(db_path) as conn:
+        set_recipe_tags(rid, ["italian", "pasta"], conn=conn)
+    tags = list_all_tags(path=db_path)
+    assert "italian" in tags
+    assert "pasta" in tags
+
+
+def test_single_transaction_save_path(db_path: Path) -> None:
+    """All mutation fns share one conn — either all commit or none do."""
+    from meal_planner.db import _get_conn, insert_ingredient
+    rid = insert_recipe(title="TxnTest", path=db_path)
+    iid = insert_ingredient(recipe_id=rid, name="Flour", sort_order=0, path=db_path)
+    # Simulate a mid-transaction failure — raise after update_recipe, before set_recipe_tags
+    with _get_conn(db_path) as conn:
+        update_recipe(rid, title="TxnUpdated", conn=conn)
+        # Verify the update is visible within the same connection
+        row = conn.execute("SELECT title FROM recipes WHERE id = ?", (rid,)).fetchone()
+        assert row[0] == "TxnUpdated"
+        # Rollback by raising
+        try:
+            conn.execute("INVALID SQL")
+        except Exception:
+            conn.rollback()
+    # After rollback the original title should still be there
+    assert get_recipe(rid, path=db_path).title == "TxnTest"
+
+
+def test_update_ingredient_clears_text_field_to_empty_string(db_path: Path) -> None:
+    """update_ingredient must accept "" so the UI can clear unit/notes/section."""
+    rid = insert_recipe(title="Clearable", path=db_path)
+    iid = insert_ingredient(
+        recipe_id=rid, name="Salt", unit="cups", notes="taste",
+        todoist_section="pantry", sort_order=0, path=db_path,
+    )
+    update_ingredient(iid, unit="", notes="", todoist_section="", path=db_path)
+    conn = _sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT unit, notes, todoist_section FROM ingredients WHERE id = ?", (iid,)
+    ).fetchone()
+    conn.close()
+    assert row == ("", "", "")
+
+
+def test_delete_recipe_garbage_collects_orphan_tags(db_path: Path) -> None:
+    """When the last recipe using a tag is deleted, the tag row is GC'd."""
+    r_keep = insert_recipe(title="Keeper", path=db_path)
+    r_drop = insert_recipe(title="Goner", path=db_path)
+    add_recipe_tag(r_keep, "shared", path=db_path)
+    add_recipe_tag(r_drop, "shared", path=db_path)
+    add_recipe_tag(r_drop, "lonely", path=db_path)  # only on r_drop
+
+    delete_recipe(r_drop, path=db_path)
+
+    conn = _sqlite3.connect(str(db_path))
+    tag_names = {
+        row[0] for row in conn.execute("SELECT name FROM tags").fetchall()
+    }
+    conn.close()
+    assert "shared" in tag_names  # still linked to r_keep
+    assert "lonely" not in tag_names  # GC'd
