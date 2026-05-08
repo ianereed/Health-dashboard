@@ -118,7 +118,7 @@ added to `search_recipes()`; validated before SQL composition. 5 new tests; 566 
 with `@st.fragment(run_every="2s")` polling `huey.result(task_id, blocking=False)`. Spinner while
 pending ("Send to Todoist… (Ns)"); green/yellow/red on terminal state. Applies to both Send and
 Clear buttons. Result-dict contract locked: `{items_sent, items_attempted, consolidate_failed,
-consolidate_dropped, error}`; D2 (deferred Consolidate+Send) inherits unchanged. `clear_todoist`
+consolidate_dropped, error}`; `consolidate_*` keys default to `None`/`0` (the never-built Consolidate+Send was moved to the future-ideas catalogue as M9 on 2026-05-07). `clear_todoist`
 contract updated to `{items_cleared, error}`. +11 tests; 577 pass. Re-fix `39d53bc` (Opus review caught
 on Check #9): wrapped `_huey.result()` in try/except via new `_read_result_or_synthesize_error` helper
 in `console/tabs/_job_status.py` — huey 3.0.0 re-raises `TaskException` on failed tasks; without the guard
