@@ -934,6 +934,13 @@ When done:
 Status: NOT STARTED.
 ```
 
+**Chunk A2 status: DONE 2026-05-08 @98035a6**
+
+Commits (stacked on A1, PR targeting feat/phase18-a1-recipe-crud-backend):
+- 85c22a6 — (a) extend A1 mutations to accept conn=None (47 tests)
+- 2c07712 — (b) _recipe_form.py pure helpers + 26 tests
+- 98035a6 — (c) plan.py UI wiring + list_ingredients/get_recipe_tags
+
 ---
 
 ### Chunk A3 — Sheet→DB sync script + Apps Script Sheet decommission
