@@ -11,7 +11,9 @@ from meal_planner.queries import (
     delete_ingredient,
     delete_recipe,
     get_recipe,
+    get_recipe_tags,
     list_all_tags,
+    list_ingredients,
     list_recipes,
     search_recipes,
     set_recipe_tags,
@@ -420,6 +422,38 @@ def test_update_recipe_multi_field(db_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # conn-passed path tests (single-transaction save invariant for A2 UI)
 # ---------------------------------------------------------------------------
+
+
+def test_list_ingredients_empty(db_path: Path) -> None:
+    rid = insert_recipe(title="Empty Recipe", path=db_path)
+    result = list_ingredients(rid, path=db_path)
+    assert result == []
+
+
+def test_list_ingredients_populated(db_path: Path) -> None:
+    from meal_planner.db import insert_ingredient
+    rid = insert_recipe(title="Pasta", path=db_path)
+    insert_ingredient(recipe_id=rid, name="Flour", sort_order=1, path=db_path)
+    insert_ingredient(recipe_id=rid, name="Egg", sort_order=0, path=db_path)
+    result = list_ingredients(rid, path=db_path)
+    assert len(result) == 2
+    # Ordered by sort_order first, then name
+    assert result[0].name == "Egg"
+    assert result[1].name == "Flour"
+    assert all(r.recipe_id == rid for r in result)
+
+
+def test_get_recipe_tags_empty(db_path: Path) -> None:
+    rid = insert_recipe(title="Untagged", path=db_path)
+    assert get_recipe_tags(rid, path=db_path) == []
+
+
+def test_get_recipe_tags_populated(db_path: Path) -> None:
+    rid = insert_recipe(title="Tagged", path=db_path)
+    add_recipe_tag(rid, "italian", path=db_path)
+    add_recipe_tag(rid, "asian", path=db_path)
+    tags = get_recipe_tags(rid, path=db_path)
+    assert tags == ["asian", "italian"]  # sorted alpha
 
 
 def test_update_recipe_conn_passed(db_path: Path) -> None:
