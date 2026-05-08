@@ -6,22 +6,21 @@ in the Mini Ops console with a Send-to-Todoist grocery list flow.
 ## What it is
 
 ```
-  Google Sheet (legacy — kept as fallback through Phase 18)
-        │
-        ▼
-  seed_from_sheet.py  (Gemini batch) → recipes.db
-        │
-        ▼
+  recipes.db  ←  seed_from_sheet.py (one-time Sheet import, Gemini batch)
+      │        ←  photo-intake job (ongoing; NAS drop-folder → Ollama → DB)
+      │        ←  web edit UI (http://homeserver:8503/?tab=recipes — CRUD)
+      ▼
   console/tabs/plan.py  (Streamlit Recipes tab at :8503/?tab=recipes)
-        │
-        ▼
+      ▼
   meal_planner_send_to_todoist Job kind → scale_ingredients() → Todoist tasks (one per ingredient)
 ```
 
+`recipes.db` is the sole source of truth for recipes. The Google Sheet is
+**ARCHIVED (read-only)** as of Phase 18 — use the web edit UI at
+`http://homeserver:8503/?tab=recipes` for any new recipes or edits.
+
 Phase 14 introduced the Python package (renamed from `meal-planner/`) and
-wired the entire flow from Sheet seed to Todoist write. The Apps Script
-frontend still works as a read-only fallback; it will be decommissioned in
-Phase 18.
+wired the entire flow from Sheet seed to Todoist write.
 
 ## Audience
 
@@ -67,12 +66,10 @@ qty/unit-fusion class of LLM bugs deterministically.
 
 Phase 17 direction (UI polish): `Mac-mini/PLAN.md`.
 
-**Phase 18 in progress (2026-05-08).** Three workstreams interleaved:
-B1+B2 (jobs-queue bug fixes — nas_intake_scan worker starvation +
-streamlit orphan-WAL-fd silent drops; PRs #4 + #5 open), A1 (recipe CRUD
-backend in `queries.py`; PR #6 open, stacked on B2), and upcoming A2
-(recipe-edit web UI) + A3 (Sheet→DB sync + Apps Script decommission).
-See `Mac-mini/PLAN.md` Phase 18 section for chunk details.
+**Phase 18 done (2026-05-08).** B1+B2 (jobs-queue bug fixes), A1 (recipe
+CRUD backend in `queries.py`), A2 (recipe-edit web UI), A3 (Sheet→DB sync
+script + Apps Script Sheet decommissioned). The Google Sheet is now
+read-only/archived. See `Mac-mini/PLAN.md` Phase 18 section for details.
 
 ## ⚠️ Critical model rules
 
@@ -95,14 +92,14 @@ meal_planner/
                         list_all_tags) + recipe/ingredient/tag CRUD
                         (create_recipe, update_recipe, delete_recipe,
                         add_ingredient, update_ingredient, delete_ingredient,
-                        set_recipe_tags). Phase 18 A1 added the mutation half;
-                        every mutation bumps recipes.updated_at.
+                        set_recipe_tags). Every mutation bumps recipes.updated_at.
   scaling.py          — scale_ingredients(recipe, target_servings)
   consolidation.py    — consolidate_for_grocery() via Gemini
-  seed_from_sheet.py  — one-shot importer from Google Sheet
-  legacy/             — archived Apps Script + old consolidate.py
+  seed_from_sheet.py  — one-shot importer from Google Sheet (historical; Sheet now archived)
+  scripts/
+    export_sheet_to_db.py — diff Sheet vs DB + optional import (--apply)
+  legacy/             — ARCHIVED: Apps Script source (read-only; decommissioned Phase 18)
   tests/
-apps-script/          — legacy Google Apps Script source (read-only fallback)
 ```
 
 Job kinds:
@@ -121,18 +118,25 @@ clear job from touching event-aggregator or finance-monitor tasks.
 | `TODOIST_API_TOKEN` | yes | pulled from keychain in consumer |
 | `TODOIST_SECTIONS` | yes | JSON map of section name → section_id. Must include a `"Meals"` key (id `6g34CGWFCmJjQrgr` in the household Grocery List project) — Phase 17 Chunk D emits one recipe-header task per recipe into that section. See `reference_todoist_meal_planner_sections.md` for the full live map. |
 | `TODOIST_PROJECT_ID` | no | defaults to Todoist inbox |
-| `MEAL_PLANNER_SHEET_ID` | seed only | Google Sheet ID |
-| `GOOGLE_SERVICE_ACCOUNT_PATH` | seed only | path to service account JSON |
+| `MEAL_PLANNER_SHEET_ID` | archived | Google Sheet ID (Sheet is now read-only; comment out after A3 deploy) |
+| `GOOGLE_SERVICE_ACCOUNT_PATH` | archived | path to service account JSON (comment out after A3 deploy) |
 
-## Running the seeder
+## Sheet → DB sync (Phase 18 A3)
+
+The one-time Sheet migration is complete. The Sheet is now **read-only/archived**.
+Use `export_sheet_to_db.py` if you ever need to re-diff or re-import:
 
 ```bash
 cd ~/Home-Tools
-source meal_planner/.env
-python -m meal_planner.seed_from_sheet
+# Dry-run: prints diff only
+python -m meal_planner.scripts.export_sheet_to_db
+
+# Live import: runs Gemini + writes to DB
+python -m meal_planner.scripts.export_sheet_to_db --apply
 ```
 
-This hits the live Google Sheet and has a Gemini API cost. Don't run in CI.
+The original seeder (`seed_from_sheet.py`) is preserved for reference but
+should not be re-run — it has no duplicate-title guard beyond the progress sidecar.
 
 ## Reference
 

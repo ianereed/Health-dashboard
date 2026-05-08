@@ -1,5 +1,15 @@
 # Apps Script Setup
 
+## ARCHIVED
+
+This Apps Script frontend was decommissioned in Phase 18 (2026-05-08).
+The Google Sheet is now **read-only**. Do not add or edit recipes here.
+
+**Use instead:** `http://homeserver:8503/?tab=recipes` — the web edit UI
+added in Phase 18 A2 is the canonical way to create, edit, and delete recipes.
+
+---
+
 ## One-time setup
 
 ### 1. Create the Google Sheet
