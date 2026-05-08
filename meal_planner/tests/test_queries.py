@@ -364,3 +364,54 @@ def test_set_recipe_tags_gc_orphans(db_path: Path) -> None:
 def test_set_recipe_tags_missing_recipe_raises(db_path: Path) -> None:
     with pytest.raises(KeyError):
         set_recipe_tags(99999, ["tag"], path=db_path)
+
+
+def test_set_recipe_tags_empty_list_clears_all_tags(db_path: Path) -> None:
+    """Passing [] removes every tag from the recipe and GCs orphans."""
+    rid = insert_recipe(title="Stew", path=db_path)
+    add_recipe_tag(rid, "hearty", path=db_path)
+    add_recipe_tag(rid, "winter", path=db_path)
+    set_recipe_tags(rid, [], path=db_path)
+    conn = _sqlite3.connect(str(db_path))
+    rt_count = conn.execute(
+        "SELECT COUNT(*) FROM recipe_tags WHERE recipe_id = ?", (rid,)
+    ).fetchone()[0]
+    tag_count = conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+    conn.close()
+    assert rt_count == 0
+    assert tag_count == 0  # GC removed both orphaned tags
+
+
+def test_delete_recipe_cascades_to_recipe_tags(db_path: Path) -> None:
+    """delete_recipe relies on FK ON DELETE CASCADE to clear recipe_tags rows."""
+    rid = insert_recipe(title="Tagged", path=db_path)
+    add_recipe_tag(rid, "asian", path=db_path)
+    add_recipe_tag(rid, "soup", path=db_path)
+    delete_recipe(rid, path=db_path)
+    conn = _sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    rows = conn.execute(
+        "SELECT 1 FROM recipe_tags WHERE recipe_id = ?", (rid,)
+    ).fetchall()
+    conn.close()
+    assert rows == []
+
+
+def test_update_recipe_multi_field(db_path: Path) -> None:
+    """A single update_recipe call can change several columns at once."""
+    rid = insert_recipe(title="Original", base_servings=4, path=db_path)
+    update_recipe(
+        rid,
+        title="Updated",
+        base_servings=8,
+        instructions="New steps.",
+        cook_time_min=30,
+        source="cookbook",
+        path=db_path,
+    )
+    r = get_recipe(rid, path=db_path)
+    assert r.title == "Updated"
+    assert r.base_servings == 8
+    assert r.instructions == "New steps."
+    assert r.cook_time_min == 30
+    assert r.source == "cookbook"

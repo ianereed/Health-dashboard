@@ -216,6 +216,9 @@ def update_recipe(
 def delete_recipe(recipe_id: int, *, path: Path | None = None) -> None:
     """Delete a recipe and cascade to ingredients + recipe_tags via FK ON DELETE CASCADE.
 
+    photos_intake.recipe_id is SET NULL (per schema), not deleted — the
+    photo-intake row remains catalogued but no longer references a recipe.
+
     Raises KeyError if recipe_id does not exist.
     """
     p = path or _db.DB_PATH
@@ -253,6 +256,10 @@ def add_ingredient(
                 (recipe_id, name, qty_per_serving, unit, notes, todoist_section, sort_order),
             )
         except sqlite3.IntegrityError:
+            # FK violation is the only realistic IntegrityError here: name is
+            # NOT NULL but typed `str` (no None default), and ingredients has
+            # no UNIQUE constraints. If a UNIQUE is added later, this catch
+            # would silently misreport "missing recipe" — narrow it then.
             raise KeyError(recipe_id)
         ingredient_id = cur.lastrowid
         conn.execute(

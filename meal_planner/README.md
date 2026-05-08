@@ -65,9 +65,14 @@ Job kinds: `meal_planner_photo_intake_scan` + `meal_planner_ingest_photo`.
 Post-extraction normalizer at `meal_planner/vision/_normalize.py` fixes the
 qty/unit-fusion class of LLM bugs deterministically.
 
-Phase 17 direction (UI polish) and Phase 18 (jobs-queue bug fix —
-nas_intake_scan worker starvation + streamlit orphan-WAL-fd silent
-drops): `Mac-mini/PLAN.md`.
+Phase 17 direction (UI polish): `Mac-mini/PLAN.md`.
+
+**Phase 18 in progress (2026-05-08).** Three workstreams interleaved:
+B1+B2 (jobs-queue bug fixes — nas_intake_scan worker starvation +
+streamlit orphan-WAL-fd silent drops; PRs #4 + #5 open), A1 (recipe CRUD
+backend in `queries.py`; PR #6 open, stacked on B2), and upcoming A2
+(recipe-edit web UI) + A3 (Sheet→DB sync + Apps Script decommission).
+See `Mac-mini/PLAN.md` Phase 18 section for chunk details.
 
 ## ⚠️ Critical model rules
 
@@ -86,7 +91,12 @@ meal_planner/
   __init__.py
   db.py               — SQLite schema, init_db, insert_recipe/ingredient
   models.py           — Recipe, Ingredient, GroceryLine dataclasses
-  queries.py          — list_recipes(), get_recipe()
+  queries.py          — read API (list_recipes, get_recipe, search_recipes,
+                        list_all_tags) + recipe/ingredient/tag CRUD
+                        (create_recipe, update_recipe, delete_recipe,
+                        add_ingredient, update_ingredient, delete_ingredient,
+                        set_recipe_tags). Phase 18 A1 added the mutation half;
+                        every mutation bumps recipes.updated_at.
   scaling.py          — scale_ingredients(recipe, target_servings)
   consolidation.py    — consolidate_for_grocery() via Gemini
   seed_from_sheet.py  — one-shot importer from Google Sheet
