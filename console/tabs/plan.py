@@ -86,8 +86,9 @@ def _render_inner() -> None:
 
     # If we just created a new recipe, jump straight into edit mode for it
     if st.session_state.get("_new_recipe_id"):
-        rid = st.session_state.pop("_new_recipe_id")
-        st.session_state["_edit_recipe_id"] = rid
+        rid = st.session_state.pop("_new_recipe_id", None)
+        if rid is not None:
+            st.session_state["_edit_recipe_id"] = rid
 
     # -----------------------------------------------------------------------
     # Tag filter pills
@@ -296,10 +297,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     # Ingredients sub-grid
     # -----------------------------------------------------------------------
     st.markdown("**Ingredients**")
-    ingr_df = pd.DataFrame(
-        before_rows if before_rows else
-        [{"id": 0, "name": "", "qty_per_serving": None, "unit": "", "notes": "", "todoist_section": "", "sort_order": 0}]
-    )
+    ingr_df = pd.DataFrame(before_rows)
     edited_ingr = st.data_editor(
         ingr_df,
         column_config={
@@ -341,7 +339,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     with col_cancel:
         if st.button("Cancel", use_container_width=True, key=f"cancel_{recipe_id}"):
             del st.session_state["_edit_recipe_id"]
-            st.session_state.pop("_confirm_delete_at", None)
+            st.session_state.pop(f"_confirm_delete_at_{recipe_id}", None)
             st.rerun()
 
     with col_delete:
@@ -370,9 +368,12 @@ def _save_recipe(
                 recipe_id,
                 title=payload["title"].strip(),
                 base_servings=int(payload["base_servings"]),
-                instructions=payload["instructions"] or None,
+                # Pass string fields directly (don't coerce "" → None) so clearing
+                # a textarea actually updates the DB instead of silently keeping
+                # the old value. update_recipe skips None only, not empty string.
+                instructions=payload["instructions"] if payload["instructions"] is not None else None,
                 cook_time_min=payload["cook_time_min"] or None,
-                source=payload["source"] or None,
+                source=payload["source"] if payload["source"] is not None else None,
                 conn=conn,
             )
             queries.set_recipe_tags(recipe_id, tags, conn=conn)
@@ -410,11 +411,12 @@ def _save_recipe(
 
 def _render_delete_button(recipe_id: int) -> None:
     """Two-click delete confirm. 10 s TTL resets the confirm window."""
-    confirm_at = st.session_state.get("_confirm_delete_at")
+    _key = f"_confirm_delete_at_{recipe_id}"
+    confirm_at = st.session_state.get(_key)
     now = time.monotonic()
 
     if confirm_at is not None and now - confirm_at > _CONFIRM_DELETE_TTL:
-        del st.session_state["_confirm_delete_at"]
+        del st.session_state[_key]
         confirm_at = None
 
     if confirm_at is None:
@@ -422,7 +424,7 @@ def _render_delete_button(recipe_id: int) -> None:
             "Delete", type="secondary", use_container_width=True,
             key=f"delete_btn_{recipe_id}",
         ):
-            st.session_state["_confirm_delete_at"] = time.monotonic()
+            st.session_state[_key] = time.monotonic()
             st.rerun()
     else:
         remaining = int(_CONFIRM_DELETE_TTL - (now - confirm_at))
@@ -434,7 +436,7 @@ def _render_delete_button(recipe_id: int) -> None:
             try:
                 queries.delete_recipe(recipe_id)
                 del st.session_state["_edit_recipe_id"]
-                del st.session_state["_confirm_delete_at"]
+                del st.session_state[_key]
                 st.success("Recipe deleted.")
                 st.rerun()
             except Exception as exc:
