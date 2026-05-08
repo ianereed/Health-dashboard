@@ -3,7 +3,6 @@ in YAML files; this is just visibility."""
 from __future__ import annotations
 
 import socket
-from pathlib import Path
 
 import streamlit as st
 
@@ -12,13 +11,14 @@ def render() -> None:
     st.markdown("### Status")
     st.caption(f"host · `{socket.gethostname()}`")
 
-    # huey storage
-    try:
-        from jobs import huey
-        st.caption(f"jobs db · `…/{Path(huey.storage.filename).name}`")
-        st.caption(f"queue · {huey.storage.queue_size()} pending")
-    except Exception as exc:
-        st.caption(f"jobs db · :x: {exc}")
+    # jobs-http
+    from console import jobs_client
+    depth = jobs_client.queue_size()
+    if depth is None:
+        st.caption("jobs http · :x: unreachable")
+    else:
+        st.caption(f"jobs http · `{jobs_client.base_url()}`")
+        st.caption(f"queue · {depth} pending")
 
     # ollama
     try:
