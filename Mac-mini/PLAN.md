@@ -114,12 +114,17 @@ over-fire guards, retry-path normalization, and DB-persisted normalize warnings.
 above the grid. Default on = alpha by title; off = id DESC (most-recently-added). `sort` param
 added to `search_recipes()`; validated before SQL composition. 5 new tests; 566 pass.
 
-**Chunk C DONE 2026-05-07** (`9b065c9`) — Todoist-success indicator: replaced immediate toast
+**Chunk C DONE 2026-05-07** (`9b065c9` + re-fix `39d53bc`) — Todoist-success indicator: replaced immediate toast
 with `@st.fragment(run_every="2s")` polling `huey.result(task_id, blocking=False)`. Spinner while
 pending ("Send to Todoist… (Ns)"); green/yellow/red on terminal state. Applies to both Send and
 Clear buttons. Result-dict contract locked: `{items_sent, items_attempted, consolidate_failed,
 consolidate_dropped, error}`; D2 (deferred Consolidate+Send) inherits unchanged. `clear_todoist`
-contract updated to `{items_cleared, error}`. +11 tests; 577 pass.
+contract updated to `{items_cleared, error}`. +11 tests; 577 pass. Re-fix `39d53bc` (Opus review caught
+on Check #9): wrapped `_huey.result()` in try/except via new `_read_result_or_synthesize_error` helper
+in `console/tabs/_job_status.py` — huey 3.0.0 re-raises `TaskException` on failed tasks; without the guard
+the fragment exception-looped every 2s and never cleared `session_state`. +4 integration tests; 581 pass.
+Live failure-path verified end-to-end via `TODOIST_SECTIONS` corruption: red banner reading
+`Send to Todoist: failed: task crashed: TaskException: JSONDecodeError(...) (sent 0/0)`.
 
 **Then: Phase 18 — Edit recipes via web GUI + Sheet decommission +
 jobs-queue bug fix.** Two workstreams bundled in one phase:
