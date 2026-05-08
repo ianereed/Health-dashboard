@@ -126,6 +126,15 @@ the fragment exception-looped every 2s and never cleared `session_state`. +4 int
 Live failure-path verified end-to-end via `TODOIST_SECTIONS` corruption: red banner reading
 `Send to Todoist: failed: task crashed: TaskException: JSONDecodeError(...) (sent 0/0)`.
 
+**Chunk D DONE 2026-05-07** — Recipe-header tasks: `meal_planner_send_to_todoist` now emits one
+extra Todoist task per recipe in the "Meals" section (`id=6g34CGWFCmJjQrgr`), titled
+`<recipe.title> (<N> servings)` with the `meal-planner` label. Counts toward `items_sent` /
+`items_attempted` (e.g. 12-ingredient recipe → banner shows "13/13 items"). Validation raises
+`RuntimeError` if `TODOIST_SECTIONS` is missing the `"Meals"` key; `_format_status` converts this
+to a red banner. +6 tests; 587 pass. Live-verified: header tasks appear in Meals section; failure
+path confirmed via consumer stderr (`RuntimeError: TODOIST_SECTIONS is missing 'Meals' section`);
+clear scope unchanged (header tasks carry `meal-planner` label, swept by existing clear job). Phase 18 WAL-fd bug blocked the UI error banner; confirmed working at consumer layer.
+
 **Then: Phase 18 — Edit recipes via web GUI + Sheet decommission +
 jobs-queue bug fix.** Two workstreams bundled in one phase:
 
