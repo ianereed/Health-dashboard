@@ -8,6 +8,20 @@ from meal_planner import db as _db
 from meal_planner.models import Ingredient, Recipe
 
 
+class _Unset:
+    """Sentinel for partial-update kwargs.
+
+    `None` means "set this field to NULL". `_UNSET` means "do not change
+    this field". Distinguishes "explicitly clear" from "not provided".
+    """
+    __slots__ = ()
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET: _Unset = _Unset()
+
+
 def _now_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -218,30 +232,33 @@ def create_recipe(
 def update_recipe(
     recipe_id: int,
     *,
-    title: str | None = None,
-    base_servings: int | None = None,
-    instructions: str | None = None,
-    cook_time_min: int | None = None,
-    source: str | None = None,
+    title: str | None | _Unset = _UNSET,
+    base_servings: int | None | _Unset = _UNSET,
+    instructions: str | None | _Unset = _UNSET,
+    cook_time_min: int | None | _Unset = _UNSET,
+    source: str | None | _Unset = _UNSET,
     path: Path | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
-    """Partial update: only non-None fields are written. Always bumps updated_at.
+    """Partial update: only non-_UNSET fields are written. Always bumps updated_at.
+
+    Pass None to explicitly clear a nullable field to NULL.
+    Omit a kwarg (or pass _UNSET) to leave it unchanged.
 
     When conn is passed, uses it without committing or closing (caller owns the
     transaction). When conn is None, opens and commits its own connection.
     Raises KeyError if recipe_id does not exist.
     """
     fields: dict[str, object] = {}
-    if title is not None:
+    if title is not _UNSET:
         fields["title"] = title
-    if base_servings is not None:
+    if base_servings is not _UNSET:
         fields["base_servings"] = base_servings
-    if instructions is not None:
+    if instructions is not _UNSET:
         fields["instructions"] = instructions
-    if cook_time_min is not None:
+    if cook_time_min is not _UNSET:
         fields["cook_time_min"] = cook_time_min
-    if source is not None:
+    if source is not _UNSET:
         fields["source"] = source
     fields["updated_at"] = _now_utc()
     set_clause = ", ".join(f"{k} = ?" for k in fields)
@@ -347,33 +364,37 @@ def add_ingredient(
 def update_ingredient(
     ingredient_id: int,
     *,
-    name: str | None = None,
-    qty_per_serving: float | None = None,
-    unit: str | None = None,
-    notes: str | None = None,
-    todoist_section: str | None = None,
-    sort_order: int | None = None,
+    name: str | None | _Unset = _UNSET,
+    qty_per_serving: float | None | _Unset = _UNSET,
+    unit: str | None | _Unset = _UNSET,
+    notes: str | None | _Unset = _UNSET,
+    todoist_section: str | None | _Unset = _UNSET,
+    sort_order: int | None | _Unset = _UNSET,
     path: Path | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> None:
-    """Partial update: only non-None fields are written. Always bumps parent recipe updated_at.
+    """Partial update: only non-_UNSET fields are written. Always bumps parent recipe updated_at.
+
+    Pass None to explicitly clear a nullable field to NULL.
+    Omit a kwarg (or pass _UNSET) to leave it unchanged.
+    Note: name is NOT NULL in the schema — passing name=None will raise IntegrityError.
 
     When conn is passed, uses it without committing or closing (caller owns the
     transaction). When conn is None, opens and commits its own connection.
     Raises KeyError if ingredient_id does not exist.
     """
     fields: dict[str, object] = {}
-    if name is not None:
+    if name is not _UNSET:
         fields["name"] = name
-    if qty_per_serving is not None:
+    if qty_per_serving is not _UNSET:
         fields["qty_per_serving"] = qty_per_serving
-    if unit is not None:
+    if unit is not _UNSET:
         fields["unit"] = unit
-    if notes is not None:
+    if notes is not _UNSET:
         fields["notes"] = notes
-    if todoist_section is not None:
+    if todoist_section is not _UNSET:
         fields["todoist_section"] = todoist_section
-    if sort_order is not None:
+    if sort_order is not _UNSET:
         fields["sort_order"] = sort_order
     now = _now_utc()
 

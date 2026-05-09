@@ -37,6 +37,16 @@ from console.tabs._job_status import (
 _CONFIRM_CLEAR_TTL = 10  # seconds before the confirm state resets
 _CONFIRM_DELETE_TTL = 10  # seconds before the delete confirm state resets
 
+# Tracks recipe IDs created by "+ New recipe" that have not yet been saved.
+# Cancel on a pending recipe deletes the stub row instead of leaving an orphan.
+_PENDING_KEY = "_new_recipe_pending_ids"
+
+
+def _pending_ids() -> set[int]:
+    if _PENDING_KEY not in st.session_state:
+        st.session_state[_PENDING_KEY] = set()
+    return st.session_state[_PENDING_KEY]  # type: ignore[return-value]
+
 # Widget key prefixes for the edit panel. Streamlit ignores `value=` /
 # `default=` on re-render when `key=` is already in session_state, so leaving
 # these populated would silently overwrite the DB on the next save (and hide
@@ -154,6 +164,7 @@ def _render_inner() -> None:
     if st.button("+ New recipe", type="secondary"):
         try:
             new_id = queries.create_recipe(title="New Recipe")
+            _pending_ids().add(new_id)
             st.session_state["_new_recipe_id"] = new_id
             st.rerun()
         except Exception as exc:
@@ -371,6 +382,12 @@ def _render_edit_panel(recipe_id: int) -> None:
 
     with col_cancel:
         if st.button("Cancel", use_container_width=True, key=f"cancel_{recipe_id}"):
+            if recipe_id in _pending_ids():
+                try:
+                    queries.delete_recipe(recipe_id)
+                except Exception:
+                    pass
+                _pending_ids().discard(recipe_id)
             _close_edit_panel(recipe_id)
             st.rerun()
 
@@ -400,12 +417,9 @@ def _save_recipe(
                 recipe_id,
                 title=payload["title"].strip(),
                 base_servings=int(payload["base_servings"]),
-                # Pass string fields directly (don't coerce "" → None) so clearing
-                # a textarea actually updates the DB instead of silently keeping
-                # the old value. update_recipe skips None only, not empty string.
-                instructions=payload["instructions"],
+                instructions=payload["instructions"] or None,  # "" → NULL
                 cook_time_min=payload["cook_time_min"],
-                source=payload["source"],
+                source=payload["source"] or None,              # "" → NULL
                 conn=conn,
             )
             queries.set_recipe_tags(recipe_id, tags, conn=conn)
@@ -434,6 +448,7 @@ def _save_recipe(
                         sort_order=int(nan_to_none(row.get("sort_order")) or 0),
                         conn=conn,
                     )
+        _pending_ids().discard(recipe_id)
         st.success("Recipe saved.")
         _close_edit_panel(recipe_id)
         st.rerun()

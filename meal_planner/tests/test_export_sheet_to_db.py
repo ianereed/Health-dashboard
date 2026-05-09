@@ -4,7 +4,14 @@ All tests use synthetic data — no gspread, no real DB, no live Gemini.
 """
 from __future__ import annotations
 
-from meal_planner.scripts.export_sheet_to_db import compute_diff
+import logging
+from pathlib import Path
+
+import pytest
+
+from meal_planner.db import init_db, insert_recipe
+from meal_planner.queries import list_recipes
+from meal_planner.scripts.export_sheet_to_db import apply_imports, compute_diff
 
 
 # Helpers
@@ -106,3 +113,66 @@ def test_whitespace_title_skipped() -> None:
     sheet = [("Mains", "   ", [])]  # blank title should be ignored
     result = compute_diff(sheet, {})
     assert result["only_in_sheet"] == []
+
+
+# ---------------------------------------------------------------------------
+# apply_imports — duplicate-guard (TOCTOU defense, Finding 3)
+# ---------------------------------------------------------------------------
+
+_CANNED_PARSED = [
+    {"name": "beef", "qty": 4, "unit": "oz", "notes": "", "todoist_section": "Meat"}
+]
+
+
+@pytest.fixture
+def _db_path(tmp_path: Path) -> Path:
+    p = tmp_path / "recipes.db"
+    init_db(p)
+    return p
+
+
+def _null_logger() -> logging.Logger:
+    lg = logging.getLogger("test_apply_imports")
+    lg.addHandler(logging.NullHandler())
+    return lg
+
+
+def test_apply_imports_skips_existing_title(monkeypatch, _db_path: Path) -> None:
+    """Title already in DB → skipped; imported=0, failed=1, row count unchanged."""
+    insert_recipe(title="Beef Stew", base_servings=4, path=_db_path)
+    monkeypatch.setattr(
+        "meal_planner.scripts.export_sheet_to_db._parse_ingredients",
+        lambda *a, **kw: _CANNED_PARSED,
+    )
+    imported, failed = apply_imports(
+        only_in_sheet=[("Mains", "Beef Stew", ["beef"])],
+        api_key="test-key",
+        section_names=["Meat"],
+        delay=0,
+        db_path=_db_path,
+        logger=_null_logger(),
+    )
+    assert imported == 0
+    assert failed == 1
+    assert len(list_recipes(path=_db_path)) == 1  # original row, no duplicate
+
+
+def test_apply_imports_inserts_new_title(monkeypatch, _db_path: Path) -> None:
+    """Title not in DB → insert succeeds; imported=1, failed=0."""
+    monkeypatch.setattr(
+        "meal_planner.scripts.export_sheet_to_db._parse_ingredients",
+        lambda *a, **kw: _CANNED_PARSED,
+    )
+    imported, failed = apply_imports(
+        only_in_sheet=[("Mains", "New Dish", ["beef"])],
+        api_key="test-key",
+        section_names=["Meat"],
+        delay=0,
+        db_path=_db_path,
+        logger=_null_logger(),
+    )
+    assert imported == 1
+    assert failed == 0
+    recipes = list_recipes(path=_db_path)
+    assert len(recipes) == 1
+    assert recipes[0].title == "New Dish"

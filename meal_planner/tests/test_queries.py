@@ -581,3 +581,55 @@ def test_delete_recipe_garbage_collects_orphan_tags(db_path: Path) -> None:
     conn.close()
     assert "shared" in tag_names  # still linked to r_keep
     assert "lonely" not in tag_names  # GC'd
+
+
+# ---------------------------------------------------------------------------
+# Sentinel (_UNSET) tests — verify None means "clear" and omission means "skip"
+# ---------------------------------------------------------------------------
+
+
+def test_update_recipe_clears_cook_time_to_null(db_path: Path) -> None:
+    rid = insert_recipe(title="Soup", base_servings=4, cook_time_min=30, path=db_path)
+    update_recipe(rid, cook_time_min=None, path=db_path)
+    assert get_recipe(rid, path=db_path).cook_time_min is None
+
+
+def test_update_recipe_clears_instructions_to_null(db_path: Path) -> None:
+    rid = insert_recipe(title="Stew", base_servings=4, instructions="Stir well.", path=db_path)
+    update_recipe(rid, instructions=None, path=db_path)
+    assert get_recipe(rid, path=db_path).instructions is None
+
+
+def test_update_recipe_omitted_kwarg_does_not_clear(db_path: Path) -> None:
+    rid = insert_recipe(title="Pasta", base_servings=4, cook_time_min=20, path=db_path)
+    # Update only the title — cook_time_min not passed, must stay 20
+    update_recipe(rid, title="Pasta Updated", path=db_path)
+    r = get_recipe(rid, path=db_path)
+    assert r.title == "Pasta Updated"
+    assert r.cook_time_min == 20
+
+
+def test_update_ingredient_clears_qty_to_null(db_path: Path) -> None:
+    from meal_planner.db import insert_ingredient
+    rid = insert_recipe(title="Curry", path=db_path)
+    iid = insert_ingredient(
+        recipe_id=rid, name="Coconut milk", qty_per_serving=2.5,
+        unit="cups", sort_order=0, path=db_path,
+    )
+    update_ingredient(iid, qty_per_serving=None, path=db_path)
+    ing = list_ingredients(rid, path=db_path)[0]
+    assert ing.qty_per_serving is None
+
+
+def test_update_ingredient_omitted_kwarg_does_not_clear(db_path: Path) -> None:
+    from meal_planner.db import insert_ingredient
+    rid = insert_recipe(title="Risotto", path=db_path)
+    iid = insert_ingredient(
+        recipe_id=rid, name="Arborio rice", qty_per_serving=1.5,
+        unit="cups", sort_order=0, path=db_path,
+    )
+    # Update only the name — qty_per_serving not passed, must stay 1.5
+    update_ingredient(iid, name="Carnaroli rice", path=db_path)
+    ing = list_ingredients(rid, path=db_path)[0]
+    assert ing.name == "Carnaroli rice"
+    assert ing.qty_per_serving == 1.5
