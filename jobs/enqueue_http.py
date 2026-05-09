@@ -9,7 +9,7 @@ Why a separate server (vs the Mini Ops console at :8503):
 
 Endpoints:
   GET  /kinds                  list registered Job kinds
-  GET  /jobs/<id>              fetch a result by id (in-memory; huey owns it)
+  GET  /jobs/<id>              fetch a result: {status: pending|success|error, result, error}
   POST /jobs                   enqueue {kind, params}; returns {id}
   GET  /healthz                liveness for the LaunchAgent
 

@@ -245,7 +245,7 @@ def _render_inner() -> None:
     edit_id = st.session_state.get("_edit_recipe_id")
     if edit_id is not None:
         st.divider()
-        _render_edit_panel(edit_id, recipe_ids)
+        _render_edit_panel(edit_id)
 
     st.divider()
     _render_clear_button()
@@ -267,7 +267,7 @@ def _close_edit_panel(recipe_id: int) -> None:
         st.session_state.pop(f"{prefix}_{recipe_id}", None)
 
 
-def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
+def _render_edit_panel(recipe_id: int) -> None:
     """Render the inline edit form for a single recipe."""
     try:
         recipe = queries.get_recipe(recipe_id)
@@ -287,7 +287,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     # -----------------------------------------------------------------------
     new_title = st.text_input("Title", value=recipe.title, key=f"edit_title_{recipe_id}")
     new_servings = st.number_input(
-        "Base servings", min_value=1, max_value=max(100, recipe.base_servings), value=recipe.base_servings,
+        "Base servings", min_value=1, max_value=max(9999, recipe.base_servings), value=recipe.base_servings,
         step=1, key=f"edit_servings_{recipe_id}",
     )
     new_instructions = st.text_area(
@@ -296,7 +296,7 @@ def _render_edit_panel(recipe_id: int, all_recipe_ids: list[int]) -> None:
     col_cook, col_source = st.columns(2)
     with col_cook:
         new_cook_time = st.number_input(
-            "Cook time (min)", min_value=0, max_value=max(600, recipe.cook_time_min or 0),
+            "Cook time (min)", min_value=0, max_value=max(9999, recipe.cook_time_min or 0),
             value=recipe.cook_time_min or 0,
             step=5, key=f"edit_cook_time_{recipe_id}",
         )
@@ -403,9 +403,9 @@ def _save_recipe(
                 # Pass string fields directly (don't coerce "" → None) so clearing
                 # a textarea actually updates the DB instead of silently keeping
                 # the old value. update_recipe skips None only, not empty string.
-                instructions=payload["instructions"] if payload["instructions"] is not None else None,
+                instructions=payload["instructions"],
                 cook_time_min=payload["cook_time_min"],
-                source=payload["source"] if payload["source"] is not None else None,
+                source=payload["source"],
                 conn=conn,
             )
             queries.set_recipe_tags(recipe_id, tags, conn=conn)
@@ -419,7 +419,7 @@ def _save_recipe(
                     unit=clean_optional_str(row.get("unit")),
                     notes=clean_optional_str(row.get("notes")),
                     todoist_section=clean_optional_str(row.get("todoist_section")),
-                    sort_order=nan_to_none(row.get("sort_order")),
+                    sort_order=int(nan_to_none(row.get("sort_order")) or 0),
                     conn=conn,
                 )
             for row in diff["adds"]:

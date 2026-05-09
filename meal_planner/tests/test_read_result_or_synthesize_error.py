@@ -6,10 +6,9 @@ test_render_job_status_pure.py cannot — they feed dicts directly into
 _format_status and bypass the result_fn entirely.
 
 The third test (taskexception_synthesizes_error_dict) is the regression
-guard for Phase 17 Chunk C's re-fix: huey 3.0.0+ Result.get re-raises
-TaskException when the consumer task raised, and an unguarded
-huey.result() call inside a @st.fragment would exception-loop forever
-without ever clearing session_state.
+guard for the result_fn safety net: any exception raised by the result_fn
+(formerly a raw huey.result() call) is caught and synthesized into an
+error dict, so a crashing poll never exception-loops a @st.fragment.
 """
 from __future__ import annotations
 
