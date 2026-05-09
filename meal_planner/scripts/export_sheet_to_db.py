@@ -229,6 +229,14 @@ def apply_imports(
         tag = tab.strip().lower()
         conn = _db._get_conn(db_path)
         try:
+            existing = conn.execute(
+                "SELECT id FROM recipes WHERE LOWER(title) = LOWER(?)",
+                (title,),
+            ).fetchone()
+            if existing:
+                logger.info(f"{prefix} — title already in DB (id={existing[0]}), skipping")
+                failed += 1
+                continue
             recipe_id = insert_recipe(
                 title=title,
                 base_servings=base_servings,
