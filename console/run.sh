@@ -17,6 +17,10 @@ if [ ! -d "$VENV" ]; then
 fi
 source "$VENV/bin/activate"
 
+KEYCHAIN_PATH="${KEYCHAIN_PATH:-$HOME/Library/Keychains/login.keychain-db}"
+security unlock-keychain -p "" "$KEYCHAIN_PATH" 2>/dev/null || true
+export HOME_TOOLS_HTTP_TOKEN="$(security find-generic-password -a 'home-tools' -s 'jobs_http_token' -w "$KEYCHAIN_PATH" 2>/dev/null || echo '')"
+
 # Tailscale IP (so we don't expose console on en0/lo0). Don't let a missing
 # ifconfig kill the script — fall back to localhost.
 set +e
