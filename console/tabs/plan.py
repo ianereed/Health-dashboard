@@ -226,7 +226,7 @@ def _render_inner() -> None:
             else:
                 try:
                     task_id = _jobs_client.enqueue(
-                        "meal_planner_send_to_todoist", {"checked": checked}
+                        "meal_planner_send_to_todoist", {"recipe_scales": checked}
                     )
                     st.session_state["_send_job"] = {
                         "task_id": task_id,
