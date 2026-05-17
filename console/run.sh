@@ -24,6 +24,10 @@ TAILSCALE_IP="$(ifconfig 2>/dev/null | awk '/inet 100\./ {print $2; exit}')"
 set -e
 TAILSCALE_IP="${TAILSCALE_IP:-127.0.0.1}"
 
+# jobs-http binds to the Tailscale IP; MagicDNS self-resolution doesn't work
+# on macOS, so point the jobs client directly at the detected IP.
+export HOME_TOOLS_HTTP_URL="http://${TAILSCALE_IP}:8504"
+
 exec "$VENV/bin/streamlit" run console/app.py \
     --server.port 8503 \
     --server.address "$TAILSCALE_IP" \
